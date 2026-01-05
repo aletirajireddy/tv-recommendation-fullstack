@@ -1,0 +1,219 @@
+.deckContainer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    height: 100%;
+    gap: 16px;
+    padding-right: 0;
+    /* Remove padding as container */
+    border-radius: 8px;
+}
+
+/* Remove hover from main container */
+
+.deckLoading {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    font-style: italic;
+    animation: pulse 2s infinite;
+    width: 100%;
+    text-align: center;
+}
+
+/* Base Card Style */
+.card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 16px;
+    height: 100%;
+    /* Removed border-right to fix double lines */
+}
+
+/* New Interactive Wrapper */
+.interactiveZone {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    /* Take all available space minus system card */
+    height: 100%;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background-color 0.2s;
+    margin-right: 16px;
+    /* Gap before system card */
+}
+
+.interactiveZone:hover {
+    background-color: var(--bg-hover);
+}
+
+/* SECTION SPECIFIC SIZING */
+
+/* Mood & Breadth: Fixed defaults or small flex */
+.sectionMood,
+.sectionBreadth {
+    flex: 1;
+    min-width: 140px;
+}
+
+/* Opportunities: Flexible (Grows to fill space) */
+.sectionMovers {
+    flex: 3;
+    /* Grows to take available space */
+    min-width: 200px;
+    align-items: flex-start;
+    /* Align list to left */
+}
+
+/* System Info: Fixed 1/5 (20%) & Right Aligned */
+.sectionSystem {
+    flex: 0 0 20%;
+    /* Fixed 20% width */
+    align-items: flex-end;
+    /* Right align content */
+    text-align: right;
+    background: linear-gradient(90deg, transparent, var(--bg-secondary));
+}
+
+.cardLabel {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--text-tertiary);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border-subtle);
+}
+
+@keyframes deckSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animatedValue {
+    animation: deckSlideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    will-change: transform, opacity;
+}
+
+/* MOOD */
+.moodDisplay {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 800;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    /* Prevent jumping */
+}
+
+.moodScore {
+    font-size: 0.75rem;
+    opacity: 0.7;
+    background: rgba(0, 0, 0, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* BREADTH */
+.breadthGrid {
+    display: flex;
+    gap: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.breadthItem {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* MOVERS */
+.moversList {
+    display: flex;
+    gap: 8px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    /* Hide overflow if too many movers */
+    text-overflow: ellipsis;
+}
+
+.bullText {
+    color: var(--success);
+}
+
+.bearText {
+    color: var(--error);
+}
+
+.empty {
+    color: var(--text-tertiary);
+}
+
+/* SYSTEM TIME CARD */
+.timeDisplay {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    white-space: nowrap;
+}
+
+.timeRow {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 0.8rem;
+}
+
+.timeLabel {
+    color: var(--text-tertiary);
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.timeValueSmall {
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.timeValueMain {
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 0.5;
+    }
+
+    50% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0.5;
+    }
+}

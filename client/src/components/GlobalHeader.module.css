@@ -1,0 +1,173 @@
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 100%;
+    /* Parent handles padding */
+}
+
+.deckSection {
+    flex: 2;
+    height: 100%;
+    display: flex;
+    align-items: center;
+}
+
+/* LEFT: BRAND */
+.brandSection {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+}
+
+.logo {
+    font-weight: 900;
+    font-size: 1.2rem;
+    letter-spacing: -0.05em;
+    color: var(--text-primary);
+}
+
+.modeSwitch {
+    display: flex;
+    gap: 0;
+    background: var(--gray-200);
+    border-radius: 4px;
+    padding: 2px;
+}
+
+.modeSwitch button {
+    border: none;
+    background: transparent;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 4px 12px;
+    cursor: pointer;
+    border-radius: 3px;
+    color: var(--text-tertiary);
+    transition: all 0.2s ease;
+}
+
+.modeSwitch .activeMode {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.modeSwitch .inactiveMode:hover {
+    color: var(--text-secondary);
+}
+
+/* CENTER: META & MINI PLAYBACK */
+.centerMeta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.dataWindow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+}
+
+.windowValue {
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.miniPlayback {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-card);
+    padding: 2px 8px;
+    border-radius: 12px;
+    border: 1px solid var(--border-subtle);
+}
+
+.miniPlayBtn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    padding: 0;
+}
+
+.miniPlayBtn:hover {
+    color: var(--primary);
+}
+
+.miniSlider {
+    width: 100px;
+    height: 4px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+.statusBadge {
+    font-size: 0.6rem;
+    font-weight: 800;
+    padding: 1px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+}
+
+.live {
+    background-color: var(--error);
+    color: white;
+    /* No pulse animation for mini badge to reduce distraction */
+}
+
+.replay {
+    background-color: var(--gray-500);
+    color: white;
+}
+
+/* RIGHT: TIME */
+.metaSection {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+}
+
+.timeBlock {
+    text-align: right;
+    display: flex;
+    flex-direction: column;
+}
+
+.label {
+    font-size: 0.65rem;
+    color: var(--text-tertiary);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+.timeValue {
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.infoGroup {
+    display: flex;
+    gap: 12px;
+    border-left: 1px solid var(--border-subtle);
+    padding-left: 12px;
+}
+
+.latency {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Roboto Mono', monospace;
+}

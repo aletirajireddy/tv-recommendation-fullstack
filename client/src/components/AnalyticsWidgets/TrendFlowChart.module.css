@@ -1,0 +1,53 @@
+.container {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 8px;
+}
+
+.header h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+
+.chartWrapper {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Custom Scrollbar */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
+}
+
+.svg {
+    display: block;
+    /* Ensure min width so bars don't crush */
+    min-width: 100%;
+}
+
+.rect {
+    transition: opacity 0.2s;
+    cursor: pointer;
+}
+
+.barGroup:hover .rect {
+    filter: brightness(1.2);
+}
+
+.barGroup:hover rect {
+    opacity: 0.8;
+}

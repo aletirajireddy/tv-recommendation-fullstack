@@ -1,0 +1,107 @@
+.container {
+    position: fixed;
+    /* Left/Top handled by inline styles */
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 50px;
+    padding: 15px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+}
+
+.labelGroup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    color: var(--accent-primary);
+}
+
+.icon {
+    opacity: 0.8;
+}
+
+.valueDisplay {
+    font-size: 13px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.label {
+    font-size: 8px;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    letter-spacing: 1px;
+}
+
+.sliderTrack {
+    height: 180px;
+    width: 32px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Vertical Slider Styling */
+.verticalSlider {
+    writing-mode: bt-lr;
+    /* IE/Edge */
+    /* Standard way to make a vertical slider */
+    writing-mode: bt-lr;
+    /* IE */
+    -webkit-appearance: slider-vertical;
+    /* Keep for legacy WebKit if needed, but warning suggests removal */
+    writing-mode: vertical-lr;
+    /* Standard */
+    direction: rtl;
+    /* Typically needed for bottom-to-top */
+    width: 8px;
+    height: 100%;
+    appearance: slider-vertical;
+    /* Standard */
+    width: 8px;
+    height: 100%;
+    background: var(--bg-secondary);
+    outline: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+/* Custom Thumb (Note: Vertical styling varies by browser, using standard webkit for now) */
+.verticalSlider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    background: var(--accent-primary);
+    border-radius: 50%;
+    border: 2px solid var(--bg-card);
+    cursor: grab;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.verticalSlider::-webkit-slider-thumb:active {
+    background: var(--text-primary);
+    transform: scale(1.1);
+}
+
+.maxBtn {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--bg-card);
+    background: var(--accent-secondary);
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.maxBtn:hover {
+    background: var(--text-primary);
+}

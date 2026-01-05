@@ -1,0 +1,565 @@
+const express = require('express');
+const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
+const db = require('./database');
+const path = require('path');
+const dayjs = require('dayjs');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: "*", methods: ["GET", "POST"] }
+});
+
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+
+// ---------------------------------------------------------
+// WebSocket Logic
+// ---------------------------------------------------------
+io.on('connection', (socket) => {
+    console.log('Client connected:', socket.id);
+});
+
+// ---------------------------------------------------------
+// V2 API Routes
+// ---------------------------------------------------------
+
+// RETENTION POLICY (98 Hours)
+const RETENTION_HOURS = 98;
+function cleanupOldData() {
+    try {
+        const cutoff = new Date(Date.now() - RETENTION_HOURS * 60 * 60 * 1000).toISOString();
+        const result = db.prepare('DELETE FROM scans WHERE timestamp < ?').run(cutoff);
+        if (result.changes > 0) {
+            console.log(`🧹 Cleanup: Removed ${result.changes} scans older than ${RETENTION_HOURS}h.`);
+        }
+    } catch (err) {
+        console.error('Cleanup Error:', err);
+    }
+}
+// Run cleanup every hour and on startup
+setInterval(cleanupOldData, 60 * 60 * 1000);
+cleanupOldData();
+
+// 1. INGEST SCAN (Master Handler)
+app.post('/scan-report', (req, res) => {
+    const payload = req.body;
+    console.log(`[POST] /scan-report | ID: ${payload.id} | Trigger: ${payload.trigger}`);
+
+    try {
+        const saveTransaction = db.transaction(() => {
+            // A. MASTER SCAN
+            db.prepare(`
+                INSERT INTO scans (id, timestamp, trigger_type, latency, change_reason)
+                VALUES (@id, @timestamp, @trigger, @latency, @reason)
+            `).run({
+                id: payload.id,
+                timestamp: payload.timestamp,
+                trigger: payload.trigger,
+                latency: payload.metadata ? payload.metadata.timeSinceLastSend : null,
+                reason: payload.metadata ? payload.metadata.changeReason : null
+            });
+
+            // B. MARKET SENTIMENT (Section 4)
+            if (payload.market_sentiment) {
+                const ms = payload.market_sentiment;
+                db.prepare(`
+                    INSERT INTO market_states (scan_id, mood, mood_score, counts_json, tickers_json)
+                    VALUES (@id, @mood, @score, @counts, @tickers)
+                `).run({
+                    id: payload.id,
+                    mood: ms.mood,
+                    score: ms.moodScore,
+                    counts: JSON.stringify({
+                        bullish: ms.bullish,
+                        bearish: ms.bearish,
+                        neutral: ms.neutral,
+                        total: ms.totalCoins
+                    }),
+                    tickers: JSON.stringify(ms.tickers || {})
+                });
+            }
+
+            // C. SCAN RESULTS (Section 2)
+            if (payload.results && Array.isArray(payload.results)) {
+                const insertEntry = db.prepare(`
+                    INSERT INTO scan_entries (scan_id, ticker, status, strategies_json, missed_reason, raw_data_json, label, direction)
+                    VALUES (@scanId, @ticker, @status, @strategies, @missed, @raw, @label, @direction)
+                `);
+
+                for (const item of payload.results) {
+                    insertEntry.run({
+                        scanId: payload.id,
+                        ticker: item.ticker,
+                        status: item.status,
+                        strategies: JSON.stringify(item.matchedStrategies || []),
+                        missed: item.missedReason,
+                        raw: JSON.stringify(item),
+                        label: item.label || null,
+                        direction: item.direction || null
+                    });
+                }
+            }
+
+            // D. PULSE EVENTS (Section 1)
+            if (payload.institutional_pulse && payload.institutional_pulse.alerts) {
+                const insertPulse = db.prepare(`
+                    INSERT OR IGNORE INTO pulse_events (id, scan_id, timestamp, ticker, type, payload_json)
+                    VALUES (@id, @scanId, @ts, @ticker, @type, @json)
+                `);
+
+                for (const alert of payload.institutional_pulse.alerts) {
+                    insertPulse.run({
+                        id: alert.id,
+                        scanId: payload.id,
+                        ts: alert.timestamp,
+                        ticker: alert.asset ? alert.asset.ticker : 'UNKNOWN',
+                        type: alert.signal ? alert.signal.category : 'UNKNOWN',
+                        json: JSON.stringify(alert)
+                    });
+                }
+            }
+        });
+
+        // EXECUTE
+        saveTransaction();
+
+        // SOCKET BROADCAST
+        // Send lightweight update so frontend can update Timeline instantly
+        const broadcastPayload = {
+            id: payload.id,
+            timestamp: payload.timestamp,
+            trigger_type: payload.trigger,
+            mood: payload.market_sentiment ? payload.market_sentiment.mood : 'NEUTRAL',
+            mood_score: payload.market_sentiment ? payload.market_sentiment.moodScore : 0
+        };
+        io.emit('new_scan', broadcastPayload);
+
+        console.log(`✅ Scan ${payload.id} Persisted & Broadcasted.`);
+        res.json({ status: 'ok', id: payload.id });
+
+    } catch (err) {
+        console.error('❌ Insert Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 2. TIMELINE (Time Machine)
+app.get('/api/history', (req, res) => {
+    try {
+        const timeline = db.prepare(`
+            SELECT 
+                s.id, s.timestamp, s.trigger_type, 
+                m.mood, m.mood_score
+            FROM scans s
+            LEFT JOIN market_states m ON s.id = m.scan_id
+            ORDER BY s.timestamp ASC
+        `).all();
+        res.json(timeline);
+    } catch (error) {
+        console.error('Error fetching history:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 1. ANALYTICS (Pulse & Strategy Insights)
+app.get('/api/analytics/pulse', (req, res) => {
+    try {
+        const hours = parseFloat(req.query.hours) || 24;
+
+        // 1. DETERMINE TIME ANCHOR
+        // If data is historical (replay/backtest), "Now" is the last event time, not System Time.
+        const lastEvent = db.prepare('SELECT MAX(timestamp) as last FROM pulse_events').get();
+        const lastTs = lastEvent?.last || Date.now();
+        const systemNow = Date.now();
+
+        // 2. FILTER BY TIME WINDOW
+        // Use Max Timestamp in DB as "Now" if system time is ahead (for static datasets/replay)
+        const cutoff = dayjs(lastTs).subtract(hours, 'hour').toISOString();
+
+        // Fetch Pulses in Window
+        const pulses = db.prepare('SELECT * FROM pulse_events WHERE timestamp >= ? ORDER BY timestamp DESC').all(cutoff);
+
+        // --- 1. TIME SPREAD ANALYSIS ---
+        // Group by 5-minute windows
+        const timeMap = new Map(); // Key: "10:00 AM" -> { count, coins: Set, timePoints: [], events: [] }
+        const signalsMap = new Map(); // Key: Ticker -> { count, sumMom, biasScore }
+
+        pulses.forEach(p => {
+            const date = dayjs(p.timestamp);
+            if (!date.isValid()) return; // Skip invalid dates
+
+            // Format to nearest 5 min
+            const minutes = Math.floor(date.minute() / 5) * 5;
+            const keyTime = date.minute(minutes).second(0).millisecond(0);
+            const timeStr = keyTime.format('HH:mm');
+
+            if (!timeMap.has(timeStr)) {
+                timeMap.set(timeStr, {
+                    count: 0,
+                    coins: new Set(),
+                    bullish: 0,
+                    bearish: 0,
+                    timestamps: [], // to calc spread duration
+                    events: [], // for timeline
+                    momAcc: 0 // momentum accumulator
+                });
+            }
+
+            const group = timeMap.get(timeStr);
+            const payload = JSON.parse(p.payload_json || '{}');
+            const ticker = p.ticker || 'UNK';
+
+            group.count++;
+            group.coins.add(ticker);
+            group.timestamps.push(p.timestamp);
+
+            // Bias Detection (Comprehensive)
+            let isBull = false;
+            let isBear = false;
+
+            if (payload.signal) {
+                const cat = payload.signal.category || '';
+                const mom = payload.signal.momentum_pct;
+                const d = payload.signal.d || payload.signal.di;
+
+                // Explicit Categories
+                if (cat === 'BULLISH') isBull = true;
+                else if (cat === 'BEARISH') isBear = true;
+
+                // Implicit via Momentum/Direction
+                else {
+                    if (mom > 0 || d > 0) isBull = true;
+                    else if (mom < 0 || d < 0) isBear = true;
+                }
+            }
+
+            // Fallback: Check raw text or type if signal is inconclusive
+            if (!isBull && !isBear) {
+                const rawText = (p.raw || '').toUpperCase();
+                const pType = (p.type || '').toUpperCase();
+
+                if (rawText.includes('LONG') || rawText.includes('BULL') || pType.includes('BULL')) isBull = true;
+                else if (rawText.includes('SHORT') || rawText.includes('BEAR') || pType.includes('BEAR')) isBear = true;
+                // Check payload description if available
+                else if (payload.desc && payload.desc.toUpperCase().includes('LONG')) isBull = true;
+                else if (payload.desc && payload.desc.toUpperCase().includes('SHORT')) isBear = true;
+            }
+
+            if (isBull) group.bullish++;
+            if (isBear) group.bearish++;
+
+            // Momentum (Safe Extraction attempt)
+            // Prioritize 'signal.momentum_pct' (New Schema), fall back to 'asset.momentum' (Old)
+            let rawMom = 0;
+            if (payload.signal && payload.signal.momentum_pct !== undefined) {
+                rawMom = parseFloat(payload.signal.momentum_pct);
+            } else if (payload.asset && payload.asset.momentum !== undefined) {
+                rawMom = parseFloat(payload.asset.momentum);
+            }
+
+            group.momAcc += rawMom;
+
+            // Timeline Event
+            const pTime = date.format('HH:mm:ss');
+
+            group.events.push(`${ticker} ${pTime}`);
+
+            // --- AGGREGATE SIGNALS FOR SCATTER PLOT ---
+            // We want to map: X=Momentum, Y=Intensity (Count/Quality)
+            if (!signalsMap.has(ticker)) {
+                signalsMap.set(ticker, {
+                    ticker,
+                    count: 0,
+                    sumMom: 0,
+                    biasScore: 0,
+                    lastTime: pTime
+                });
+            }
+            const sig = signalsMap.get(ticker);
+            sig.count++;
+            sig.sumMom += rawMom;
+            sig.biasScore += (isBull ? 1 : (isBear ? -1 : 0));
+        });
+
+        // Convert Signals Map to Array
+        const signals = Array.from(signalsMap.values()).map(s => {
+            const avgMom = s.count > 0 ? s.sumMom / s.count : 0;
+            const intensity = Math.min(s.count * 10, 100); // Scale count to 0-100 score
+            const netBias = s.biasScore > 0 ? 'BULLISH' : (s.biasScore < 0 ? 'BEARISH' : 'NEUTRAL');
+
+            return {
+                ticker: s.ticker,
+                x: parseFloat(avgMom.toFixed(2)),
+                y: intensity,
+                bias: netBias,
+                volSpike: s.count > 5 // Highlight high frequency
+            };
+        });
+
+        // --- 2. INSIGHT ENGINE (Pattern Recognition) ---
+        // Identify "Institutional Bursts" (High Density)
+        const bursts = [];
+        const spreadAnalysis = Array.from(timeMap.entries()).map(([keyTimeStr, d]) => {
+            // 1. Calc Basic Metrics
+            d.timestamps.sort((a, b) => (dayjs(a).valueOf() - dayjs(b).valueOf())); // Safe Sort
+
+            const start = dayjs(d.timestamps[0]);
+            const end = dayjs(d.timestamps[d.timestamps.length - 1]);
+            const durationMs = end.diff(start);
+
+            const spreadStr = durationMs > 0 ? (durationMs < 60000 ? `${Math.floor(durationMs / 1000)}s` : `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`) : 'Instant';
+
+            const density = d.count / 5;
+            const unique = d.coins.size;
+
+            // 2. Format Date/Time (Universal)
+            // Use START of cluster for label
+            let dateObj = dayjs(d.timestamps[0]);
+            if (!dateObj.isValid()) dateObj = dayjs();
+            const fullTimeStr = dateObj.format('MM/DD HH:mm');
+
+            // 3. Calc Mood
+            const total = d.bullish + d.bearish;
+            const moodScore = total > 0 ? Math.round(((d.bullish - d.bearish) / total) * 100) : 0;
+
+            // 4. Derive Cluster & Wave Type
+            let waveType = 'Isolated Flow';
+            if (d.count >= 8) waveType = 'Burst Cluster';
+            else if (d.count >= 4) waveType = 'Broad Flow';
+            else if (unique === 1 && d.count > 1) waveType = 'Scalp Cluster';
+
+            // 5. Populate Bursts (Now safe to use fullTimeStr)
+            if (waveType === 'Burst Cluster' || waveType === 'Broad Flow' || d.count >= 5) {
+                bursts.push({
+                    time: fullTimeStr,
+                    full_ts: d.timestamps[0],
+                    count: d.count,
+                    coins: Array.from(d.coins),
+                    bias: d.bullish > d.bearish ? 'BULL' : 'BEAR'
+                });
+            }
+
+            // 6. Timeline Events
+            const sortedEvents = [...d.events].reverse();
+
+            return {
+                time: fullTimeStr,
+                full_ts: d.timestamps[0],
+                count: d.count,
+                bullish: d.bullish,
+                bearish: d.bearish,
+                unique_coins: unique,
+                spread: spreadStr,
+                density: density.toFixed(2),
+                cluster: d.count > 3 ? (d.count > 8 ? 'BURST' : 'STEADY') : 'ISOLATED',
+                bias: d.bullish > d.bearish ? 'BULL' : (d.bearish > d.bullish ? 'BEAR' : 'NEUTRAL'),
+                si: `${d.bullish}/${d.count}`,
+                mon_pct: (d.momAcc / (d.count || 1)).toFixed(2) + '%',
+                mood_score: moodScore,
+                wave_type: waveType,
+                timeline: sortedEvents.join(', ')
+            };
+        });
+
+        // SORT BY TIME DESC (Recent First)
+        spreadAnalysis.sort((a, b) => b.full_ts - a.full_ts);
+
+
+        // 3. PREDICTIONS (Scope & Confluence)
+        // ... (Keep existing Logic 200-234 roughly same but ensure context) ...
+        const predictions = [];
+        const latestScan = db.prepare('SELECT id FROM scans ORDER BY timestamp DESC LIMIT 1').get();
+        if (latestScan) {
+            const entries = db.prepare('SELECT ticker, raw_data_json FROM scan_entries WHERE scan_id = ?').all(latestScan.id);
+            for (const entry of entries) {
+                const raw = JSON.parse(entry.raw_data_json || '{}');
+                const ticker = entry.ticker;
+
+                // Logic 1: HIGH SCOPE
+                if ((raw.resistDist || 0) > 5.0 && (raw.netTrend || 0) > 20) {
+                    predictions.push({
+                        type: 'HIGH_SCOPE',
+                        coin: ticker,
+                        confidence: 'High',
+                        reason: `${(raw.resistDist || 0).toFixed(1)}% Room + Strong Momentum`
+                    });
+                }
+
+                // Logic 2: NEURAL CONFLUENCE
+                // Check if this ticker was in recent pulses (filtered by lookback "hours")
+                const hasRecentAlert = pulses.some(p => p.ticker === ticker);
+                if (hasRecentAlert && (Math.abs(raw.ema50Dist || 100) < 1.0 || Math.abs(raw.ema200Dist || 100) < 1.0)) {
+                    predictions.push({
+                        type: 'NEURAL_CONFLUENCE',
+                        coin: ticker,
+                        confidence: 'Max',
+                        reason: 'Institutional Alert + EMA Touch'
+                    });
+                }
+            }
+        }
+
+        // 2b. FORMAT BURSTS FOR INSIGHTS
+        // Sort Bursts: Newest First
+        bursts.sort((a, b) => b.full_ts - a.full_ts);
+        // Note: 'bursts' populated in loop above. We need to capture full_ts in the loop for safe sorting or rely on timeMap order (usually safe but explicit is better).
+        // Let's rely on map order for now or just add timestamp to burst object in the loop.
+
+        const insightStrings = bursts.map(b =>
+            `${b.time}: ${b.count} Alerts on ${b.coins.length} Assets (${b.bias})`
+        );
+
+        // 4. GENERATE RECOMMENDATIONS (AI Strategy Cards)
+        const recommendations = [];
+        let cardId = 1;
+
+        // Card 1: Market Momentum Strategy
+        if (spreadAnalysis.length > 0) {
+            const avgMood = spreadAnalysis.reduce((acc, s) => acc + (s.mood_score || 0), 0) / spreadAnalysis.length;
+            if (avgMood > 40) {
+                recommendations.push({
+                    id: `rec-${cardId++}`,
+                    type: 'trend',
+                    confidence: 'high',
+                    title: 'Strong Bullish Momentum Detected',
+                    description: `Market sentiment is at +${avgMood.toFixed(0)}%. Consider trend-following strategies on high-quality setups.`,
+                    tickers: []
+                });
+            } else if (avgMood < -40) {
+                recommendations.push({
+                    id: `rec-${cardId++}`,
+                    type: 'risk',
+                    confidence: 'high',
+                    title: 'Bearish Pressure Alert',
+                    description: `Market sentiment is at ${avgMood.toFixed(0)}%. Exercise caution and wait for reversal confirmation.`,
+                    tickers: []
+                });
+            }
+        }
+
+        // Card 2: Institutional Burst Opportunities
+        if (bursts.length > 0) {
+            const topBurst = bursts[0];
+            recommendations.push({
+                id: `rec-${cardId++}`,
+                type: 'opportunity',
+                confidence: 'max',
+                title: 'Institutional Activity Spike',
+                description: `${topBurst.count} alerts detected at ${topBurst.time} across ${topBurst.coins.length} assets. Watch for follow-through.`,
+                tickers: topBurst.coins.slice(0, 5).map(c => ({ ticker: c, bias: topBurst.bias }))
+            });
+        }
+
+        // Card 3: High Scope Opportunities
+        if (latestScan) {
+            const highScopeAssets = db.prepare(`
+                SELECT ticker, raw_data_json
+                FROM scan_entries
+                WHERE scan_id = ? AND status = 'PASS'
+                ORDER BY json_extract(raw_data_json, '$.score') DESC
+                LIMIT 5
+            `).all(latestScan.id);
+
+            if (highScopeAssets.length > 0) {
+                recommendations.push({
+                    id: `rec-${cardId++}`,
+                    type: 'opportunity',
+                    confidence: 'high',
+                    title: 'High-Quality Setups Available',
+                    description: `${highScopeAssets.length} assets passed all filters with strong confluence metrics.`,
+                    tickers: highScopeAssets.map(a => {
+                        const raw = JSON.parse(a.raw_data_json || '{}');
+                        return { ticker: a.ticker, bias: raw.netTrend > 0 ? 'LONG' : 'SHORT' };
+                    })
+                });
+            }
+        }
+
+        // Card 4: Chop Warning
+        if (spreadAnalysis.length > 0) {
+            const recentWindows = spreadAnalysis.slice(0, 3);
+            const hasChop = recentWindows.every(w => Math.abs(w.mood_score || 0) < 20);
+            if (hasChop) {
+                recommendations.push({
+                    id: `rec-${cardId++}`,
+                    type: 'info',
+                    confidence: 'medium',
+                    title: 'Low Conviction Environment',
+                    description: 'Recent data shows mixed signals with no clear directional bias. Consider reducing position sizes.',
+                    tickers: []
+                });
+            }
+        }
+
+        // Calculate Volume Intent from actual data
+        const totalBullish = spreadAnalysis.reduce((sum, s) => sum + s.bullish, 0);
+        const totalBearish = spreadAnalysis.reduce((sum, s) => sum + s.bearish, 0);
+
+        res.json({
+            lookback_hours: hours,
+            time_spread: spreadAnalysis,
+            volume_intent: { bullish: totalBullish, bearish: totalBearish },
+            predictions: [],
+            signals: signals, // Dynamic Scatter Plot Data
+            recommendations: recommendations,
+            insights: insightStrings,
+            total_alerts: pulses.length
+        });
+    } catch (err) {
+        console.error('Analytics Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3. REPLAY STATE
+app.get('/api/scan/:id', (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const scan = db.prepare('SELECT * FROM scans WHERE id = ?').get(id);
+        if (!scan) return res.status(404).json({ error: 'Scan not found' });
+
+        const sentiment = db.prepare('SELECT * FROM market_states WHERE scan_id = ?').get(id);
+        if (sentiment) {
+            sentiment.counts = JSON.parse(sentiment.counts_json || '{}');
+            sentiment.tickers = JSON.parse(sentiment.tickers_json || '{}');
+            delete sentiment.counts_json;
+            delete sentiment.tickers_json;
+        }
+
+        const entries = db.prepare('SELECT * FROM scan_entries WHERE scan_id = ?').all(id);
+        const results = entries.map(e => ({
+            ...JSON.parse(e.raw_data_json || '{}'),
+            status: e.status,
+            missedReason: e.missed_reason
+        }));
+
+        const alerts = db.prepare('SELECT * FROM pulse_events WHERE scan_id = ?').all(id);
+        const pulse = {
+            alerts: alerts.map(a => JSON.parse(a.payload_json || '{}'))
+        };
+
+        res.json({
+            id: scan.id,
+            timestamp: scan.timestamp,
+            trigger: scan.trigger_type,
+            results: results,
+            market_sentiment: sentiment,
+            institutional_pulse: pulse
+        });
+
+    } catch (error) {
+        console.error(`Error loading scan ${req.params.id}:`, error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+
+const PORT = 3000;
+server.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+});

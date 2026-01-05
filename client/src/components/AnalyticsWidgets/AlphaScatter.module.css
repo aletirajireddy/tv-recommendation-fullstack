@@ -1,0 +1,190 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 16px;
+    height: 400px;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 12px;
+}
+
+.header h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+
+.chartArea {
+    position: relative;
+    flex: 1;
+    background: var(--bg-app);
+    /* Slightly darker than card */
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+/* AXES */
+.axisX {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: 1px;
+    background: var(--border-subtle);
+    border-top: 1px dashed var(--text-tertiary);
+    opacity: 0.3;
+}
+
+.axisY {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    height: 100%;
+    width: 1px;
+    background: var(--border-subtle);
+    border-left: 1px dashed var(--text-tertiary);
+    opacity: 0.3;
+}
+
+/* LABELS */
+.labelTopRight {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-size: 0.7rem;
+    font-weight: 900;
+    color: var(--success);
+    opacity: 0.2;
+}
+
+.labelBottRight {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    font-size: 0.7rem;
+    font-weight: 900;
+    color: var(--warning);
+    opacity: 0.2;
+}
+
+.labelTopLeft {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    font-size: 0.7rem;
+    font-weight: 900;
+    color: var(--accent);
+    opacity: 0.2;
+}
+
+/* POINTS */
+.point {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+    cursor: crosshair;
+}
+
+.point:hover {
+    width: 12px;
+    height: 12px;
+    z-index: 10;
+    box-shadow: 0 0 10px white;
+}
+
+.pointLabel {
+    position: absolute;
+    top: -14px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.6rem;
+    color: var(--text-primary);
+    opacity: 0;
+    pointer-events: none;
+    font-weight: 700;
+    text-shadow: 0 1px 2px black;
+}
+
+.point:hover .pointLabel {
+    opacity: 1;
+}
+
+.refreshBtn {
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.refreshBtn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.tooltip {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    padding: 8px;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.tooltip h4 {
+    margin: 0 0 4px 0;
+    color: var(--text-primary);
+}
+
+.tooltip p {
+    margin: 2px 0;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.bull {
+    color: var(--success);
+    font-weight: bold;
+}
+
+.bear {
+    color: var(--error);
+    font-weight: bold;
+}
+
+.emptyState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-tertiary);
+    gap: 10px;
+}
+
+.loadBtn {
+    background: var(--accent-primary);
+    color: #000;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+}

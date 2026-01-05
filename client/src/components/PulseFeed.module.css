@@ -1,0 +1,95 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: 16px;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+.feed {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-right: 4px;
+    /* Space for scrollbar */
+}
+
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 12px;
+    border-left-width: 4px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.bull {
+    border-left-color: var(--success);
+}
+
+.bear {
+    border-left-color: var(--error);
+}
+
+.neutral {
+    border-left-color: var(--text-tertiary);
+}
+
+.cardHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+}
+
+.ticker {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.time {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+}
+
+.cardBody {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.typeTag {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--gray-100);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.price {
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.empty {
+    text-align: center;
+    color: var(--text-tertiary);
+    font-size: 0.8rem;
+    margin-top: 32px;
+    font-weight: 500;
+}

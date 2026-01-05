@@ -1,0 +1,168 @@
+.container {
+    background: var(--bg-surface);
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    padding: 16px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.header h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.badge {
+    font-size: 10px;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.feed {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 12px;
+    padding-bottom: 8px;
+    /* Custom Scrollbar for sleekness */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
+}
+
+.card {
+    min-width: 260px;
+    flex: 0 0 260px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: transform 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent-primary);
+}
+
+/* Card Types */
+.typeOpp {
+    border-left: 3px solid #00E4FF;
+}
+
+/* Institutional - Cyan */
+.typeTrend {
+    border-left: 3px solid #A855F7;
+}
+
+/* Momentum - Purple */
+.typeRisk {
+    border-left: 3px solid #FF9F00;
+}
+
+/* Volatility - Orange */
+.typeInfo {
+    border-left: 3px solid #94A3B8;
+}
+
+/* General - Grey */
+
+.cardHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.typeOpp .icon {
+    color: #00E4FF;
+}
+
+.typeTrend .icon {
+    color: #A855F7;
+}
+
+.typeRisk .icon {
+    color: #FF9F00;
+}
+
+.typeInfo .icon {
+    color: #94A3B8;
+}
+
+.confidence {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--text-tertiary);
+    letter-spacing: 0.5px;
+}
+
+.title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.description {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.4;
+    max-height: 44px;
+    /* Limit text height */
+    overflow: hidden;
+}
+
+.tickerList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: auto;
+    /* Push to bottom */
+}
+
+.tickerChip {
+    font-size: 10px;
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    padding: 3px 6px;
+    border-radius: 4px;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.tagLong {
+    color: var(--success);
+    font-weight: 700;
+}
+
+.tagShort {
+    color: var(--error);
+    font-weight: 700;
+}
+
+.emptyState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    text-align: center;
+}

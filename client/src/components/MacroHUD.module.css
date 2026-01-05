@@ -1,0 +1,118 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    height: 100%;
+}
+
+.moodLabel {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-tertiary);
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.moodBigValue {
+    font-size: 2.5rem;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -0.02em;
+}
+
+.scoreRow {
+    margin-top: 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+}
+
+.scoreValue {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.scoreSub {
+    font-size: 0.875rem;
+    color: var(--text-tertiary);
+}
+
+.sectionTitle {
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-bottom: 12px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+.statRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.statLabel {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.statNumber {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.totalRow {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 12px;
+    font-weight: 700;
+    font-size: 0.875rem;
+}
+
+/* SCROLL LIST */
+.scrollList {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 16px;
+}
+
+.groupBlock {
+    margin-bottom: 16px;
+}
+
+.groupHeader {
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+    padding: 8px 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    border-bottom: 1px solid var(--border-default);
+    margin-bottom: 4px;
+}
+
+.tickerRow {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 0.875rem;
+}
+
+.tickerName {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.tickerMeta {
+    font-family: 'Roboto Mono', monospace;
+    color: var(--text-tertiary);
+    font-size: 0.75rem;
+}

@@ -1,0 +1,77 @@
+.appContainer {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.topBar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg-app);
+    /* Matches body bg to avoid jagged scrolling */
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.mainGrid {
+    display: grid;
+    grid-template-columns: 280px 1fr 320px;
+    /* Fixed Sidebars, Fluid Center */
+    gap: 24px;
+    padding: 24px;
+    flex: 1;
+    max-width: var(--max-width);
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* Responsive: Stack on smaller screens */
+@media (max-width: 1200px) {
+    .mainGrid {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto;
+    }
+}
+
+.colMacro {
+    /* Left Column */
+}
+
+.colResults {
+    /* Center Column */
+}
+
+.colFeed {
+    /* Right Column */
+}
+
+/* Analytics Mode Wrapper */
+.colAnalytics {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    width: 100%;
+}
+
+/* Row 1: Full Width (Macro Summary) */
+.analyticsFullRow {
+    width: 100%;
+    /* Ensure height is controlled by component, but prevent overflow */
+}
+
+/* Rows 2 & 3: Split Columns */
+.analyticsSplitRow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    width: 100%;
+}
+
+/* Responsive: Stack on smaller screens */
+@media (max-width: 1400px) {
+    .analyticsSplitRow {
+        grid-template-columns: 1fr;
+    }
+}

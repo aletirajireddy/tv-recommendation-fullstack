@@ -1,0 +1,112 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    height: 100%;
+}
+
+.header {
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid transparent;
+    /* Colored by inline style */
+    background: var(--bg-hover);
+}
+
+.title {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    text-transform: uppercase;
+}
+
+.countBadge {
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 99px;
+}
+
+/* TABLE */
+.tableScroll {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.table th {
+    text-align: left;
+    padding: 12px 16px;
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--gray-50);
+    position: sticky;
+    top: 0;
+}
+
+.table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}
+
+.table tr:hover td {
+    background: var(--gray-50);
+}
+
+/* CELLS */
+.tickerCell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ticker {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.miniBadge {
+    font-size: 0.65rem;
+    padding: 1px 4px;
+    border: 1px solid var(--border-default);
+    border-radius: 3px;
+    color: var(--text-tertiary);
+}
+
+.tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.strategyTag {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    background: var(--gray-100);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.missedReason {
+    color: var(--text-tertiary);
+    font-style: italic;
+    font-size: 0.8rem;
+}
+
+.empty {
+    text-align: center;
+    padding: 32px;
+    color: var(--text-tertiary);
+}

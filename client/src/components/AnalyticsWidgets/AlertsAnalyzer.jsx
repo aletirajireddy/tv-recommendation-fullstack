@@ -1,0 +1,112 @@
+import React from 'react';
+import { useTimeStore } from '../../store/useTimeStore';
+import styles from './AlertsAnalyzer.module.css';
+import { Activity, TrendingUp, TrendingDown, Target, Zap } from 'lucide-react';
+import { format } from 'date-fns';
+
+export function AlertsAnalyzer() {
+    const { analyticsData, lookbackHours, setLookbackHours } = useTimeStore();
+
+    // Local state for slider to prevent API spam while dragging
+    const [localHours, setLocalHours] = React.useState(lookbackHours);
+
+    // Sync local state if store changes externally
+    React.useEffect(() => {
+        setLocalHours(lookbackHours);
+    }, [lookbackHours]);
+
+    if (!analyticsData) return <div className={styles.loading}>Initializing Insight Engine...</div>;
+
+    const { volume_intent, predictions, insights } = analyticsData;
+    const totalVolume = volume_intent.bullish + volume_intent.bearish;
+    const bullPct = totalVolume > 0 ? (volume_intent.bullish / totalVolume) * 100 : 50;
+
+    // Range Logic: 5m start, 15m steps
+    const currentMinutes = Math.round(localHours * 60);
+    const sliderVal = Math.max(0, Math.floor((currentMinutes - 5) / 15));
+
+    const handleRangeChange = (e) => {
+        const val = parseInt(e.target.value);
+        const minutes = 5 + (val * 15);
+        setLocalHours(minutes / 60);
+    };
+
+    const handleRangeCommit = () => {
+        setLookbackHours(localHours);
+    };
+
+    const timeDisplay = currentMinutes < 60
+        ? `${currentMinutes}m`
+        : `${(currentMinutes / 60).toFixed(1)}h`;
+
+    return (
+        <div className={styles.container}>
+            <div className={styles.header}>
+                <div className={styles.titleGroup}>
+                    <Activity size={18} />
+                    <h3>ALERT BATCH ANALYSIS ({analyticsData.total_alerts} events)</h3>
+                </div>
+
+                <div className={styles.rangeControl}>
+                    {/* Slider Moved to Floating Controller */}
+                    <span className={styles.rangeLabel}>LOOKBACK: <strong>{timeDisplay}</strong></span>
+                </div>
+            </div>
+
+            <div className={styles.grid}>
+                {/* COL 1: VOLUME INTENT */}
+                <div className={styles.card}>
+                    <h4>VOLUME INTENT DISTRIBUTION</h4>
+                    <div className={styles.barContainer}>
+                        <div className={styles.barLabel}>
+                            <span className={styles.bullText}>Bullish ({volume_intent.bullish})</span>
+                            <span className={styles.bearText}>Bearish ({volume_intent.bearish})</span>
+                        </div>
+                        <div className={styles.progressBar}>
+                            <div className={styles.bullBar} style={{ width: `${bullPct}%` }}></div>
+                            <div className={styles.bearBar} style={{ width: `${100 - bullPct}%` }}></div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* COL 2: PREDICTION CARDS (NEURAL PATTERNS) */}
+                <div className={styles.card}>
+                    <h4>NEURAL PATTERNS & SCOPE PREDICTIONS</h4>
+                    <div className={styles.predictionList}>
+                        {predictions.length === 0 && <div className={styles.empty}>No High Confidence Setups Detected</div>}
+
+                        {predictions.map((p, i) => (
+                            <div key={i} className={styles.predictionCard}>
+                                <div className={styles.predHeader}>
+                                    <span className={styles.coin}>{p.coin}</span>
+                                    <span className={`${styles.badge} ${p.type === 'HIGH_SCOPE' ? styles.scope : styles.neural}`}>
+                                        {p.type.replace('_', ' ')}
+                                    </span>
+                                    <span className={styles.confidence}>{p.confidence} Conf.</span>
+                                </div>
+                                <div className={styles.reason}>
+                                    {p.type === 'HIGH_SCOPE' ? <Target size={14} /> : <Zap size={14} />}
+                                    {p.reason}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* COL 3: SMART INSIGHTS */}
+                <div className={styles.card}>
+                    <h4>INSTITUTIONAL BURSTS</h4>
+                    <ul className={styles.insightList}>
+                        {insights.length === 0 && <li className={styles.empty}>No recent bursts.</li>}
+                        {insights.map((text, i) => (
+                            <li key={i} className={styles.insightItem}>
+                                <TrendingUp size={14} className={styles.icon} />
+                                {text}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    );
+}
