@@ -149,14 +149,28 @@ app.post('/scan-report', (req, res) => {
 // 2. TIMELINE (Time Machine)
 app.get('/api/history', (req, res) => {
     try {
+        // DYNAMIC WINDOW SUPPORT
+        const hours = parseFloat(req.query.hours) || 24; // Default to 24h if not specified (though frontend sends it)
+
+        // 1. Determine Anchor (Same robust logic as /pulse)
+        const lastScan = db.prepare('SELECT MAX(timestamp) as last FROM scans').get();
+        const lastTs = lastScan?.last || Date.now();
+        const systemNow = Date.now();
+        const anchorTime = Math.max(lastTs, systemNow);
+
+        // 2. Calculate Cutoff
+        const cutoff = new Date(anchorTime - (hours * 60 * 60 * 1000)).toISOString();
+
         const timeline = db.prepare(`
             SELECT 
                 s.id, s.timestamp, s.trigger_type, 
                 m.mood, m.mood_score
             FROM scans s
             LEFT JOIN market_states m ON s.id = m.scan_id
+            WHERE s.timestamp >= ?
             ORDER BY s.timestamp ASC
-        `).all();
+        `).all(cutoff);
+
         res.json(timeline);
     } catch (error) {
         console.error('Error fetching history:', error);
@@ -176,8 +190,11 @@ app.get('/api/analytics/pulse', (req, res) => {
         const systemNow = Date.now();
 
         // 2. FILTER BY TIME WINDOW
-        // Use Max Timestamp in DB as "Now" if system time is ahead (for static datasets/replay)
-        const cutoff = dayjs(lastTs).subtract(hours, 'hour').toISOString();
+        // CRITICAL FIX: Always use the LATEST available time (System Now OR Last DB Event) as the anchor.
+        // If we only use `lastTs`, and no events happened in the last 24h, the window will shift back to the past.
+        // But for a "Live" dashboard, we want "Now - Lookback".
+        const anchorTime = Math.max(lastTs, systemNow);
+        const cutoff = dayjs(anchorTime).subtract(hours, 'hour').toISOString();
 
         // Fetch Pulses in Window
         const pulses = db.prepare('SELECT * FROM pulse_events WHERE timestamp >= ? ORDER BY timestamp DESC').all(cutoff);

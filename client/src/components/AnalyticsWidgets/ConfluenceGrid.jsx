@@ -12,7 +12,9 @@ export function ConfluenceGrid() {
         <div className={styles.gridContainer}>
             <h3 className={styles.title}>ENHANCED INSTITUTIONAL MACRO SUMMARY (Time Spread Analysis)</h3>
 
-            <div className={styles.tableWrapper}>
+            <div
+                className={styles.tableWrapper}
+            >
                 <table className={styles.macroTable}>
                     <thead>
                         <tr>
@@ -52,7 +54,7 @@ export function ConfluenceGrid() {
                                     {getWaveIcon(row.wave_type)}
                                     {row.wave_type}
                                 </td>
-                                <td className={styles.timelineCell}>{row.timeline}</td>
+                                <td className={styles.timelineCell} title={row.timeline}>{row.timeline}</td>
                             </tr>
                         ))}
                     </tbody>

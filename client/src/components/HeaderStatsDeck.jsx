@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTimeStore } from '../store/useTimeStore';
 import { TrendingUp, TrendingDown, Minus, Activity, Wifi } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import styles from './HeaderStatsDeck.module.css';
 
 export function HeaderStatsDeck() {
@@ -32,10 +32,6 @@ export function HeaderStatsDeck() {
     else if (moodLabel === 'RANGING') { moodColor = 'var(--warning)'; }
 
     // 3. OPPORTUNITIES / WATCHLIST / MOVERS LOGIC
-    // Prioritize showing actionable Opportunities (PASS)
-    // Then Watchlist (Missed)
-    // Then default to Top Movers if nothing else
-
     const opportunities = results.filter(r => r.status === 'PASS' || (r.status && r.status.includes('PASS')));
     const missed = results.filter(r => r.status !== 'PASS' && (!r.status || !r.status.includes('PASS')) && r.bias !== 'NEUTRAL');
 
@@ -55,7 +51,7 @@ export function HeaderStatsDeck() {
         listType = 'opportunities';
     } else if (missed.length > 0) {
         listLabel = `WATCHLIST (${missed.length})`;
-        listData = missed.slice(0, 4); // Limit to 4 for space
+        listData = missed.slice(0, 4);
         listType = 'watchlist';
     } else {
         listLabel = 'TOP MOVERS';
@@ -76,7 +72,7 @@ export function HeaderStatsDeck() {
                 <div className={`${styles.card} ${styles.sectionMood}`}>
                     <div className={styles.cardLabel}>MARKET MOOD</div>
                     <div key={activeScan.id} className={`${styles.moodDisplay} ${styles.animatedValue}`} style={{ color: moodColor }}>
-                        <Activity size={16} />
+                        <Activity size={18} strokeWidth={2.5} />
                         <span className={styles.moodValue}>{moodLabel}</span>
                         <span className={styles.moodScore}>{moodScore > 0 ? '+' : ''}{moodScore}</span>
                     </div>
@@ -89,13 +85,13 @@ export function HeaderStatsDeck() {
                     <div className={styles.cardLabel}>BREADTH</div>
                     <div key={activeScan.id} className={`${styles.breadthGrid} ${styles.animatedValue}`}>
                         <div className={styles.breadthItem} style={{ color: 'var(--success)' }}>
-                            <TrendingUp size={12} /> {bullish}
+                            <TrendingUp size={14} strokeWidth={2.5} /> {bullish}
                         </div>
                         <div className={styles.breadthItem} style={{ color: 'var(--error)' }}>
-                            <TrendingDown size={12} /> {bearish}
+                            <TrendingDown size={14} strokeWidth={2.5} /> {bearish}
                         </div>
                         <div className={styles.breadthItem} style={{ color: 'var(--text-tertiary)' }}>
-                            <Minus size={12} /> {neutral}
+                            <Minus size={14} strokeWidth={2.5} /> {neutral}
                         </div>
                     </div>
                 </div>
@@ -110,11 +106,22 @@ export function HeaderStatsDeck() {
                     <div key={activeScan.id} className={`${styles.moversList} ${styles.animatedValue}`}>
                         {listData.length === 0 ? <span className={styles.empty}>--</span> : (
                             listData.map((m, i) => (
-                                <span key={i} className={styles.moverItem}>
-                                    <span className={m.bias === 'BULLISH' ? styles.bullText : styles.bearText}>
+                                <div
+                                    key={i}
+                                    className={styles.moverItem}
+                                    title={`TICKER: ${m.ticker}\nSCORE: ${m.score || 0}\nBIAS: ${m.bias}\nSTRATEGIES: ${m.matchedStrategies?.join(', ') || 'None'}\nREASONS: ${m.missedReason || 'N/A'}\nSTRENGTH: ${m.strength}`}
+                                >
+                                    <span className={m.bias === 'BULLISH' ? styles.bullText : (m.bias === 'BEARISH' ? styles.bearText : '')} style={{ fontWeight: 800 }}>
                                         {m.ticker}
                                     </span>
-                                </span>
+                                    {/* Show Strategy or Reason if available */}
+                                    {(listType === 'opportunities' && m.matchedStrategies && m.matchedStrategies.length > 0) && (
+                                        <span className={styles.strategyTag}>{m.matchedStrategies[0]}</span>
+                                    )}
+                                    {(listType === 'watchlist' && m.missedReason) && (
+                                        <span className={styles.reasonTag}>{m.missedReason.substring(0, 15)}{m.missedReason.length > 15 ? '...' : ''}</span>
+                                    )}
+                                </div>
                             ))
                         )}
                     </div>
@@ -133,33 +140,46 @@ export function HeaderStatsDeck() {
 
 // Sub-component for clean organization
 function SystemTimeCard() {
-    const { timeline, currentIndex, lastSyncTime } = useTimeStore();
+    const { timeline, currentIndex } = useTimeStore();
 
     const currentScanMeta = timeline[currentIndex] || {};
     const scanTime = currentScanMeta.timestamp ? new Date(currentScanMeta.timestamp) : new Date();
-    const startTime = timeline.length > 0 ? new Date(timeline[0].timestamp) : null;
-    const endTime = timeline.length > 0 ? new Date(timeline[timeline.length - 1].timestamp) : null;
+
+    // Safely handle potentially missing timestamps
+    const startTimeResult = timeline.length > 0 ? new Date(timeline[0].timestamp) : new Date();
+    const endTimeResult = timeline.length > 0 ? new Date(timeline[timeline.length - 1].timestamp) : new Date();
+
+    // Calculate time helper - derived from the DATA TIME, not system time
+    // If it's a replay, it shows how "old" that specific scan was relative to now (which might be confusing), 
+    // OR we compare it to the "Latest" scan to show lag? 
+    // User requested: "last update since last dbupdate to current time!" 
+    // This implies: How long ago was the *latest* data in the DB captured?
+
+    // Let's use the LAST item in timeline (Live edge) to calculate system freshness
+    const latestScanTime = timeline.length > 0 ? new Date(timeline[timeline.length - 1].timestamp) : new Date();
+    const updatedAgo = timeline.length > 0 ? formatDistanceToNow(latestScanTime, { addSuffix: true }) : 'Unknown';
 
     return (
         <div className={`${styles.card} ${styles.sectionSystem}`}>
-            <div className={styles.cardLabel} style={{ justifyContent: 'flex-end' }}>
-                SYSTEM STATUS
-                <span style={{ marginLeft: '8px', display: 'flex', alignItems: 'center', gap: '4px', opacity: 0.7 }}>
-                    <Wifi size={10} color={lastSyncTime ? "var(--success)" : "var(--text-tertiary)"} />
-                    {lastSyncTime ? format(lastSyncTime, 'h:mm a') : '--'}
+            <div className={styles.cardLabel} style={{ justifyContent: 'flex-end', gap: '8px' }}>
+                <span style={{ opacity: 0.6 }}>SYSTEM STATUS</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: "var(--success)" }} title={`Latest Data: ${format(latestScanTime, 'HH:mm:ss')}`}>
+                    <Wifi size={12} strokeWidth={3} />
+                    {updatedAgo.replace('about ', '')}
                 </span>
             </div>
+
             <div className={styles.timeDisplay} style={{ alignItems: 'flex-end' }}>
                 <div className={styles.timeRow}>
                     <span className={styles.timeLabel}>WINDOW:</span>
                     <span className={styles.timeValueSmall}>
-                        {startTime ? format(startTime, 'h:mm') : '--'} - {endTime ? format(endTime, 'h:mm a') : '--'}
+                        {format(startTimeResult, 'MMM dd HH:mm')} - {format(endTimeResult, 'HH:mm')}
                     </span>
                 </div>
                 <div className={styles.timeRow}>
                     <span className={styles.timeLabel}>REPLAY:</span>
                     <span className={styles.timeValueMain}>
-                        {format(scanTime, 'h:mm:ss a')}
+                        {format(scanTime, 'MMM dd HH:mm:ss')}
                     </span>
                 </div>
             </div>

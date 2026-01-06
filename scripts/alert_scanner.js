@@ -222,9 +222,38 @@
     function parseDateLabel(dateText) {
         try {
             const cleaned = dateText.trim();
-            const parsed = new Date(cleaned);
+            const now = new Date();
 
+            // 1. Explicit Relative Dates
+            if (/^today/i.test(cleaned)) {
+                return now;
+            }
+            if (/^yesterday/i.test(cleaned)) {
+                const d = new Date();
+                d.setDate(d.getDate() - 1);
+                return d;
+            }
+
+            // 2. Standard Parse
+            let parsed = new Date(cleaned);
+
+            // 3. Fix Missing Year (often defaults to 2001)
+            // If valid but year is ancient (arbitrary cutoff e.g., < 2024), assume current year
             if (!isNaN(parsed.getTime())) {
+                if (parsed.getFullYear() < 2024) {
+                    parsed.setFullYear(now.getFullYear());
+                }
+
+                // 4. Smart Year Rollover
+                // If we are in Jan 2026 and read "Dec 30", it becomes "Dec 30 2026" (Future).
+                // It should be "Dec 30 2025".
+                // Logic: If parsed date is > 2 days in the future, assume previous year.
+                // (Allow slight future drift for timezone diffs)
+                const futureThreshold = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+                if (parsed > futureThreshold) {
+                    parsed.setFullYear(now.getFullYear() - 1);
+                }
+
                 if (CONFIG.DEBUG_MODE) {
                     console.log(`[Date Parser] ✅ Parsed: "${cleaned}" → ${parsed.toDateString()}`);
                 }

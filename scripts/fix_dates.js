@@ -23,7 +23,7 @@ try {
 
 const db = new Database(dbPath);
 
-// Function to normalize timestamp to ISO 8601
+// Function to normalize timestamp to ISO 8601 and FIX 2001 YEAR ISSUE
 function toISO(ts) {
     try {
         let date;
@@ -35,12 +35,17 @@ function toISO(ts) {
         }
 
         if (isNaN(date.getTime())) {
-            // If invalid, fallback to now (or maybe log warning)
-            // For now, let's keep invalid ones as is or default to Epoch?
-            // User wants to fix, so let's default to a safe historic date if totally broken
-            // But usually "000:0" issues came from bad formatting, effectively invalid dates
             return new Date().toISOString();
         }
+
+        // FIX: If year is 2001, assume it's a parsing error and set to 2026
+        // (Or better: set to current year)
+        if (date.getFullYear() === 2001) {
+            const currentYear = new Date().getFullYear();
+            date.setFullYear(currentYear);
+            console.log(`🛠️ Fixed 2001 date -> ${currentYear}: ${date.toISOString()}`);
+        }
+
         return date.toISOString();
     } catch (e) {
         return new Date().toISOString();

@@ -75,7 +75,8 @@ export const useTimeStore = create((set, get) => ({
 
     fetchTimeline: async () => {
         try {
-            const res = await fetch(`${API_BASE}/history`);
+            const hours = get().lookbackHours || 24;
+            const res = await fetch(`${API_BASE}/history?hours=${hours}`);
             const data = await res.json();
             const sorted = (data || []).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
@@ -146,6 +147,23 @@ export const useTimeStore = create((set, get) => ({
             const nextIndex = currentIndex - 1;
             set({ currentIndex: nextIndex });
             loadScan(timeline[nextIndex].id);
+        }
+    },
+
+    skipToStart: () => {
+        const { timeline, loadScan } = get();
+        if (timeline && timeline.length > 0) {
+            set({ currentIndex: 0 });
+            loadScan(timeline[0].id);
+        }
+    },
+
+    skipToEnd: () => {
+        const { timeline, loadScan } = get();
+        if (timeline && timeline.length > 0) {
+            const lastIndex = timeline.length - 1;
+            set({ currentIndex: lastIndex });
+            loadScan(timeline[lastIndex].id);
         }
     },
 

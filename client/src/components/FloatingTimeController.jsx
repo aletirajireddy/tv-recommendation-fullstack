@@ -28,6 +28,7 @@ export function FloatingTimeController() {
 
     const handleCommit = () => {
         setLookbackHours(localVal);
+        localStorage.setItem('lookbackHours', localVal.toString());
     };
 
     const toggleMax = () => {
@@ -44,6 +45,16 @@ export function FloatingTimeController() {
         const savedPos = localStorage.getItem('timeControllerPos');
         if (savedPos) {
             setPosition(JSON.parse(savedPos));
+        }
+
+        // Restore saved lookback value
+        const savedLookback = localStorage.getItem('lookbackHours');
+        if (savedLookback) {
+            const val = parseFloat(savedLookback);
+            if (!isNaN(val)) {
+                setLocalVal(val);
+                setLookbackHours(val);
+            }
         }
     }, []);
 

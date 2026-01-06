@@ -55,23 +55,23 @@
 /* Mood & Breadth: Fixed defaults or small flex */
 .sectionMood,
 .sectionBreadth {
-    flex: 1;
-    min-width: 140px;
+    flex: 0 1 auto;
+    min-width: 120px;
 }
 
 /* Opportunities: Flexible (Grows to fill space) */
 .sectionMovers {
-    flex: 3;
+    flex: 2; /* Increased flex grow */
     /* Grows to take available space */
-    min-width: 200px;
+    min-width: 250px;
     align-items: flex-start;
     /* Align list to left */
 }
 
-/* System Info: Fixed 1/5 (20%) & Right Aligned */
+/* System Info: Fixed width but flexible content */
 .sectionSystem {
-    flex: 0 0 20%;
-    /* Fixed 20% width */
+    flex: 0 0 auto;
+    min-width: 220px;
     align-items: flex-end;
     /* Right align content */
     text-align: right;
@@ -80,18 +80,19 @@
 
 .cardLabel {
     font-size: 0.65rem;
-    font-weight: 700;
+    font-weight: 800; /* Bolder headers */
     color: var(--text-tertiary);
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
     text-transform: uppercase;
     display: flex;
     align-items: center;
     width: 100%;
+    opacity: 0.8;
 }
 
 .divider {
     width: 1px;
-    height: 24px;
+    height: 32px; /* Taller divider */
     background: var(--border-subtle);
 }
 
@@ -118,7 +119,7 @@
     align-items: center;
     gap: 8px;
     font-weight: 800;
-    font-size: 0.9rem;
+    font-size: 1.1rem; /* Larger value */
     white-space: nowrap;
     /* Prevent jumping */
 }
@@ -129,34 +130,46 @@
     background: rgba(0, 0, 0, 0.1);
     padding: 2px 6px;
     border-radius: 4px;
+    margin-left: 4px;
 }
 
 /* BREADTH */
 .breadthGrid {
     display: flex;
-    gap: 12px;
+    gap: 16px; /* Increased gap */
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.85rem;
-    font-weight: 600;
+    font-size: 0.9rem; /* Larger */
+    font-weight: 700;
     white-space: nowrap;
 }
 
 .breadthItem {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
 }
 
-/* MOVERS */
+/* MOVERS / OPPORTUNITIES */
 .moversList {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap; /* Allow wrapping if needed, or keeping single line */
     font-size: 0.85rem;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
-    overflow: hidden;
-    /* Hide overflow if too many movers */
-    text-overflow: ellipsis;
+    overflow: hidden; 
+    height: 100%;
+    align-items: center;
+}
+
+.moverItem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-card);
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-subtle);
 }
 
 .bullText {
@@ -166,6 +179,25 @@
 .bearText {
     color: var(--error);
 }
+
+.strategyTag {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+    background: rgba(255,255,255,0.05);
+    padding: 1px 4px;
+    border-radius: 3px;
+    text-transform: uppercase;
+}
+
+.reasonTag {
+    font-size: 0.7rem;
+    color: var(--warning);
+    background: rgba(255,165,0,0.1); /* Subtle orange tint */
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-style: italic;
+}
+
 
 .empty {
     color: var(--text-tertiary);
@@ -189,19 +221,20 @@
 .timeLabel {
     color: var(--text-tertiary);
     font-size: 0.7rem;
-    font-weight: 600;
+    font-weight: 700;
 }
 
 .timeValueSmall {
     color: var(--text-secondary);
     font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
 }
 
 .timeValueMain {
     color: var(--text-primary);
     font-family: 'JetBrains Mono', monospace;
     font-weight: 700;
-    font-size: 0.9rem;
+    font-size: 1rem; /* Larger time */
 }
 
 @keyframes pulse {
