@@ -5,6 +5,8 @@ const { Server } = require('socket.io');
 const db = require('./database');
 const path = require('path');
 const dayjs = require('dayjs');
+require('dotenv').config();
+const TelegramService = require('./services/telegram');
 
 const app = express();
 const server = http.createServer(app);
@@ -138,6 +140,10 @@ app.post('/scan-report', (req, res) => {
         io.emit('new_scan', broadcastPayload);
 
         console.log(`✅ Scan ${payload.id} Persisted & Broadcasted.`);
+
+        // TRIGGER AI STRATEGY ENGINE (Telegram)
+        TelegramService.analyzeAndNotify(db, payload.id);
+
         res.json({ status: 'ok', id: payload.id });
 
     } catch (err) {
