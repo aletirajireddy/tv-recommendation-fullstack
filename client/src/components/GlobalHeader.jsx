@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
-import { Play, Pause, SkipBack, SkipForward, Clock, Wifi } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart } from 'lucide-react';
 import styles from './GlobalHeader.module.css';
 import { format, formatDistanceToNow } from 'date-fns';
 import { HeaderStatsDeck } from './HeaderStatsDeck';
@@ -61,6 +61,26 @@ export function GlobalHeader() {
         <header className={styles.header}>
             <div className={styles.deckSection}>
                 <HeaderStatsDeck />
+            </div>
+
+            <div className={styles.metaSection}>
+                {/* VIEW MODE TOGGLE */}
+                <div className={styles.modeSwitch}>
+                    <button
+                        className={viewMode === 'analytics' ? styles.activeMode : styles.inactiveMode}
+                        onClick={() => setViewMode('analytics')}
+                        title="Timeline View"
+                    >
+                        <LayoutDashboard size={14} /> TLINE
+                    </button>
+                    <button
+                        className={viewMode === 'research' ? styles.activeMode : styles.inactiveMode}
+                        onClick={() => setViewMode('research')}
+                        title="Research Dashboard"
+                    >
+                        <LineChart size={14} /> JET
+                    </button>
+                </div>
             </div>
         </header>
     );

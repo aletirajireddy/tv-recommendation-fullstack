@@ -496,10 +496,10 @@
             const ticker = tickerMatch[1];
             const cleanTicker = ticker.replace('USDT.P', '');
 
-            const diMatch = line0.match(/Di:([-+]?\d+)/i);
+            const diMatch = line0.match(/Di:\s*([-+]?\d+)/i);
             const di = diMatch ? parseInt(diMatch[1]) : null;
 
-            const momentumMatch = line0.match(/%:([-+]?[\d.]+)/i);
+            const momentumMatch = line0.match(/%:\s*([-+]?[\d.]+)/i);
             const momentum_pct = momentumMatch ? parseFloat(momentumMatch[1]) : null;
 
             const priceMatch = line0.match(/P:\s*([\d.]+)/i);
@@ -557,7 +557,7 @@
             const ticker = tickerMatch[1];
             const cleanTicker = ticker.replace('USDT.P', '');
 
-            const dMatch = line0.match(/D:([-+]?\d+)/i);
+            const dMatch = line0.match(/D:\s*([-+]?\d+)/i);
             const d = dMatch ? parseInt(dMatch[1]) : null;
 
             const priceMatch = line0.match(/P:\s*([\d.]+)/i);

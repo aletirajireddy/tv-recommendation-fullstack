@@ -15,7 +15,7 @@ export function AlertsAnalyzer() {
         setLocalHours(lookbackHours);
     }, [lookbackHours]);
 
-    if (!analyticsData) return <div className={styles.loading}>Initializing Insight Engine...</div>;
+    if (!analyticsData || !analyticsData.volume_intent) return <div className={styles.loading}>Initializing Insight Engine...</div>;
 
     const { volume_intent, predictions, insights } = analyticsData;
     const totalVolume = volume_intent.bullish + volume_intent.bearish;

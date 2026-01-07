@@ -34,31 +34,52 @@
     }
 }
 
-.colMacro {
-    /* Left Column */
-}
-
-.colResults {
-    /* Center Column */
-}
-
-.colFeed {
-    /* Right Column */
-}
-
 /* Analytics Mode Wrapper */
 .colAnalytics {
-    grid-column: 1 / -1;
+    /* Previously grid-column: 1 / -1; removed to allow flex/grid resizing */
     display: flex;
     flex-direction: column;
     gap: 24px;
     width: 100%;
+    /* Ensure it takes full height in the grid cell */
+    min-height: 0;
+}
+
+/* Two-Column Layout when Sidebar is active */
+.mainGridWithSidebar {
+    display: grid;
+    grid-template-columns: 1fr 450px;
+    /* Main Content | Sidebar */
+    gap: 0;
+    width: 100%;
+    height: calc(100vh - 65px);
+    /* Full height minus header */
+    overflow: hidden;
+    padding: 0;
+    margin: 0;
+    max-width: none;
+}
+
+.mainGridDefault {
+    display: block;
+    width: 100%;
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 24px;
+}
+
+/* Sidebar Container */
+.sidebarContainer {
+    background: var(--bg-canvas);
+    border-left: 1px solid var(--border-subtle);
+    height: 100%;
+    overflow-y: auto;
+    z-index: 50;
 }
 
 /* Row 1: Full Width (Macro Summary) */
 .analyticsFullRow {
     width: 100%;
-    /* Ensure height is controlled by component, but prevent overflow */
 }
 
 /* Rows 2 & 3: Split Columns */

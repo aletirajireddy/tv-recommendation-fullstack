@@ -14,7 +14,8 @@ export const useTimeStore = create((set, get) => ({
     socket: null,
     lastSyncTime: null,
     analyticsData: null,
-    viewMode: 'analytics', // 'monitor' | 'analytics'
+    researchData: null, // New Research Data
+    viewMode: 'analytics', // 'monitor' | 'analytics' | 'research'
     lookbackHours: 720, // Default 30 days to capture all data
     isMonitorModalOpen: false, // New Modal State
 
@@ -30,7 +31,7 @@ export const useTimeStore = create((set, get) => ({
 
         socket.on('new_scan', (newScanMeta) => {
             console.log('⚡ New Scan Received:', newScanMeta);
-            const { timeline, currentIndex, loadScan, fetchAnalytics } = get();
+            const { timeline, currentIndex, loadScan, fetchAnalytics, fetchResearch } = get();
 
             const isLive = currentIndex === timeline.length - 1;
             const newTimeline = [...timeline, newScanMeta];
@@ -47,6 +48,7 @@ export const useTimeStore = create((set, get) => ({
 
             // Refresh analytics on new data
             if (fetchAnalytics) fetchAnalytics();
+            if (fetchResearch) fetchResearch();
         });
 
         set({ socket });
@@ -54,8 +56,17 @@ export const useTimeStore = create((set, get) => ({
 
     fetchAnalytics: async () => {
         try {
-            const { lookbackHours } = get();
-            const res = await fetch(`${API_BASE}/analytics/pulse?hours=${lookbackHours}`);
+            const { lookbackHours, activeScan, timeline, currentIndex } = get();
+
+            // Determine Reference Time (Replay vs Live)
+            let refTimeStr = '';
+            if (activeScan && activeScan.timestamp) {
+                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+            }
+
+            const res = await fetch(`${API_BASE}/analytics/pulse?hours=${lookbackHours}${refTimeStr}`);
             const data = await res.json();
             set({ analyticsData: data });
         } catch (err) {
@@ -67,6 +78,7 @@ export const useTimeStore = create((set, get) => ({
         console.log("Refreshing All Data...");
         await get().fetchTimeline();
         await get().fetchAnalytics();
+        await get().fetchResearch();
         const { timeline, currentIndex } = get();
         if (timeline[currentIndex]) {
             await get().loadScan(timeline[currentIndex].id);
@@ -78,7 +90,9 @@ export const useTimeStore = create((set, get) => ({
             const hours = get().lookbackHours || 24;
             const res = await fetch(`${API_BASE}/history?hours=${hours}`);
             const data = await res.json();
-            const sorted = (data || []).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+            // Fix: improperly handled error response (e.g. 500) causing data to be an error object instead of array
+            const sorted = (Array.isArray(data) ? data : []).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
             // Calculate Max History Duration for Slider
             if (sorted.length > 0) {
@@ -109,6 +123,7 @@ export const useTimeStore = create((set, get) => ({
 
             // Initial Analytics Fetch
             get().fetchAnalytics();
+            get().fetchResearch();
 
         } catch (err) {
             console.error('Failed to fetch timeline:', err);
@@ -124,6 +139,10 @@ export const useTimeStore = create((set, get) => ({
                 activeScan: data,
                 isLoading: false
             });
+
+            // Sync Analytics & Research to new time context
+            get().fetchAnalytics();
+            get().fetchResearch();
         } catch (err) {
             console.error('Failed to load scan details:', err);
             set({ isLoading: false });
@@ -170,8 +189,31 @@ export const useTimeStore = create((set, get) => ({
     setViewMode: (mode) => set({ viewMode: mode }),
     setMonitorModalOpen: (isOpen) => set({ isMonitorModalOpen: isOpen }),
 
+
     setLookbackHours: (hours) => {
         set({ lookbackHours: hours });
         get().fetchAnalytics();
+        get().fetchResearch();
+    },
+
+    fetchResearch: async () => {
+        try {
+            const { lookbackHours, activeScan, timeline, currentIndex } = get();
+            console.log('[Research] Fetching data...', { currentIndex, hasActiveScan: !!activeScan, timelineLen: timeline.length });
+
+            let refTimeStr = '';
+            if (activeScan && activeScan.timestamp) {
+                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+            }
+
+            const query = `${API_BASE}/analytics/research?hours=${lookbackHours || 24}${refTimeStr}`;
+            const res = await fetch(query);
+            const data = await res.json();
+            set({ researchData: data });
+        } catch (err) {
+            console.error('Research API Error:', err);
+        }
     },
 }));

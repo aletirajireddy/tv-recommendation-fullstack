@@ -1874,8 +1874,10 @@
                 console.log(`   AI Priority: ${JSON.stringify(payload.aiPriority).length} bytes`);
                 console.log(`   Backup Data: ${JSON.stringify(payload.backupData).length} bytes`);
                 if (payload.institutionalPulse) {
-                    console.log(`   Institutional Pulse: ${payload.institutionalPulse.alerts.length} alerts`);
-                    console.log(`   Strong Signals: ${payload.institutionalPulse.consensus.strongSignals.join(', ') || 'None'}`);
+                    console.log(`   Institutional Pulse: ${payload.institutionalPulse.alerts ? payload.institutionalPulse.alerts.length : 0} alerts`);
+                    if (payload.institutionalPulse.consensus && payload.institutionalPulse.consensus.strongSignals) {
+                        console.log(`   Strong Signals: ${payload.institutionalPulse.consensus.strongSignals.join(', ') || 'None'}`);
+                    }
                 }
                 console.log(`   Total: ${JSON.stringify(payload).length} bytes`);
 

@@ -153,10 +153,12 @@ app.get('/api/history', (req, res) => {
         const hours = parseFloat(req.query.hours) || 24; // Default to 24h if not specified (though frontend sends it)
 
         // 1. Determine Anchor (Same robust logic as /pulse)
+        // 1. Determine Anchor (Same robust logic as /pulse)
         const lastScan = db.prepare('SELECT MAX(timestamp) as last FROM scans').get();
-        const lastTs = lastScan?.last || Date.now();
+        // timestamp is TEXT (ISO), so we must convert to MS for Math.max
+        const lastTs = lastScan?.last ? new Date(lastScan.last).getTime() : Date.now();
         const systemNow = Date.now();
-        const anchorTime = Math.max(lastTs, systemNow);
+        const anchorTime = Math.max(lastTs || 0, systemNow);
 
         // 2. Calculate Cutoff
         const cutoff = new Date(anchorTime - (hours * 60 * 60 * 1000)).toISOString();
@@ -184,16 +186,20 @@ app.get('/api/analytics/pulse', (req, res) => {
         const hours = parseFloat(req.query.hours) || 24;
 
         // 1. DETERMINE TIME ANCHOR
-        // If data is historical (replay/backtest), "Now" is the last event time, not System Time.
-        const lastEvent = db.prepare('SELECT MAX(timestamp) as last FROM pulse_events').get();
-        const lastTs = lastEvent?.last || Date.now();
-        const systemNow = Date.now();
+        const refTime = req.query.refTime ? new Date(req.query.refTime).getTime() : null;
+        let anchorTime;
 
-        // 2. FILTER BY TIME WINDOW
-        // CRITICAL FIX: Always use the LATEST available time (System Now OR Last DB Event) as the anchor.
-        // If we only use `lastTs`, and no events happened in the last 24h, the window will shift back to the past.
-        // But for a "Live" dashboard, we want "Now - Lookback".
-        const anchorTime = Math.max(lastTs, systemNow);
+        if (refTime && !isNaN(refTime)) {
+            // User specified a "Replay Time"
+            anchorTime = refTime;
+        } else {
+            // Default: Snap to "Now" or Last Data (Live Mode)
+            const lastEvent = db.prepare('SELECT MAX(timestamp) as last FROM pulse_events').get();
+            const lastTs = lastEvent?.last ? new Date(lastEvent.last).getTime() : Date.now();
+            const systemNow = Date.now();
+            anchorTime = Math.max(lastTs, systemNow);
+        }
+
         const cutoff = dayjs(anchorTime).subtract(hours, 'hour').toISOString();
 
         // Fetch Pulses in Window
@@ -574,6 +580,99 @@ app.get('/api/scan/:id', (req, res) => {
     }
 });
 
+
+
+
+// 4. RESEARCH ANALYTICS (The "Jet Dashboard")
+app.get('/api/analytics/research', (req, res) => {
+    try {
+        const hours = parseInt(req.query.hours) || 24;
+        const refTime = req.query.refTime ? new Date(req.query.refTime).getTime() : null;
+        const result = {};
+
+        // Calculate time boundary - Robust Anchor
+        let anchorTime;
+        if (refTime && !isNaN(refTime)) {
+            anchorTime = refTime;
+        } else {
+            const lastScan = db.prepare('SELECT MAX(timestamp) as last FROM scans').get();
+            const lastTs = lastScan?.last ? new Date(lastScan.last).getTime() : Date.now();
+            const systemNow = Date.now();
+            anchorTime = Math.max(lastTs, systemNow);
+        }
+
+        const cutoff = new Date(anchorTime - hours * 60 * 60 * 1000).toISOString();
+
+        // A. Persistence Leaderboard ("Radar Locked On")
+        const persistenceQuery = db.prepare(`
+            SELECT ticker, COUNT(*) as persistence_score
+            FROM scan_entries
+            WHERE status = 'PASS'
+            AND scan_id IN (SELECT id FROM scans WHERE timestamp >= ?)
+            GROUP BY ticker
+            HAVING persistence_score >= 1
+            ORDER BY persistence_score DESC
+            LIMIT 10
+        `);
+        result.persistence = persistenceQuery.all(cutoff);
+
+        // B. Pulse Velocity ("Speedometer")
+        let velocitySql = `
+            SELECT 
+                strftime('%Y-%m-%d %H:%M', timestamp) as time,
+                COUNT(*) as count
+            FROM pulse_events
+            WHERE timestamp > ?
+            GROUP BY time
+            ORDER BY time ASC
+        `;
+
+        if (hours > 48) {
+            velocitySql = `
+            SELECT 
+                strftime('%Y-%m-%d %H:00', timestamp) as time,
+                COUNT(*) as count
+            FROM pulse_events
+            WHERE timestamp > ?
+            GROUP BY time
+            ORDER BY time ASC
+           `;
+        }
+
+        const velocityQuery = db.prepare(velocitySql);
+        result.velocity = velocityQuery.all(cutoff);
+
+        // C. Rejection Heatmap ("Diagnostic System")
+        const rejectionQuery = db.prepare(`
+            SELECT missed_reason as name, COUNT(*) as value
+            FROM scan_entries
+            WHERE status = 'MISSED'
+            AND scan_id IN (SELECT id FROM scans WHERE timestamp >= ?)
+            GROUP BY missed_reason
+            ORDER BY value DESC
+        `);
+        result.rejections = rejectionQuery.all(cutoff);
+
+        // D. Latency & Sentiment (Snapshot - Always Latest)
+        const snapshotQuery = db.prepare(`
+            SELECT 
+                s.latency, 
+                m.mood_score as moodScore 
+            FROM scans s
+            LEFT JOIN market_states m ON s.id = m.scan_id
+            ORDER BY s.timestamp DESC 
+            LIMIT 1
+        `);
+        const snapshot = snapshotQuery.get() || {};
+        result.latency = snapshot.latency || 0;
+        result.moodScore = snapshot.moodScore || 0;
+
+        res.json(result);
+    } catch (err) {
+        console.error('Research API Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 
 const PORT = 3000;
