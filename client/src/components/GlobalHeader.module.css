@@ -171,3 +171,26 @@
     gap: 6px;
     font-family: 'Roboto Mono', monospace;
 }
+
+/* MOBILE LAYOUT (< 768px) */
+@media (max-width: 768px) {
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        overflow: hidden;
+        /* Prevent body scroll */
+    }
+
+    .deckSection {
+        width: 100%;
+        /* overflow-x handled in child component styling */
+    }
+
+    .metaSection {
+        width: 100%;
+        justify-content: space-between;
+        /* Spread controls */
+        padding: 0 4px;
+    }
+}

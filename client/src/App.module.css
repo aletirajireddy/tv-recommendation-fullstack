@@ -96,3 +96,27 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* Mobile Tweaks (< 768px) */
+@media (max-width: 768px) {
+    .topBar {
+        padding: 12px 16px;
+    }
+
+    .mainGridDefault {
+        padding: 12px;
+    }
+
+    .colAnalytics {
+        gap: 16px;
+    }
+
+    .analyticsSplitRow {
+        gap: 16px;
+    }
+
+    /* Force full width on mobile if somehow constrained */
+    .appContainer {
+        overflow-x: hidden;
+    }
+}
