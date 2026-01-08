@@ -6,6 +6,8 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+    /* CRITICAL: Force contents to scroll inside */
 }
 
 .header {
@@ -13,7 +15,11 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 12px;
+    flex-shrink: 0;
+    /* Header shouldn't shrink */
 }
+
+
 
 .header h3 {
     font-size: 14px;
@@ -30,15 +36,39 @@
     border-radius: 4px;
 }
 
+/* Feed Container - Scrollable Area */
 .feed {
     display: flex;
     flex-direction: row;
     overflow-x: auto;
     gap: 12px;
     padding-bottom: 8px;
+    /* Flex magic for internal scrolling */
+    flex: 1;
+    min-height: 0;
+
     /* Custom Scrollbar for sleekness */
     scrollbar-width: thin;
     scrollbar-color: var(--border-subtle) transparent;
+}
+
+/* Vertical Feed Mode */
+.feedVertical {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    max-height: 340px;
+    /* Enforce height limit per user request */
+    /* Space for scrollbar */
+}
+
+/* Make Cards stack vertically in vertical feed */
+.feedVertical .card {
+    min-width: unset;
+    width: 100%;
+    flex: 0 0 auto;
+    margin-bottom: 8px;
 }
 
 .card {
@@ -165,4 +195,83 @@
     color: var(--text-tertiary);
     font-size: 12px;
     text-align: center;
+}
+
+/* NEW: TABS & LOGS */
+.titleGroup {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.tabs {
+    display: flex;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 2px;
+}
+
+.tab {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tab:hover {
+    color: var(--text-primary);
+}
+
+.tab.active {
+    background: #0ea5e9;
+    /* Light Blue */
+    color: white;
+    border-color: #0ea5e9;
+}
+
+.logItem {
+    flex: 0 0 auto;
+    /* Allow height to be determined by content */
+    width: 100%;
+    /* Full width in vertical list */
+    min-width: unset;
+    /* Remove card width constraint */
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+.logHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logTime {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    font-family: monospace;
+}
+
+.logTrigger {
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.logMessage {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.3;
+    white-space: pre-wrap;
 }
