@@ -70,11 +70,30 @@ export function FloatingTimeController() {
         };
     };
 
+    const handleTouchStart = (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+        setIsDragging(true);
+        const rect = e.currentTarget.getBoundingClientRect();
+        const touch = e.touches[0];
+        dragOffset.current = {
+            x: touch.clientX - rect.left,
+            y: touch.clientY - rect.top
+        };
+    };
+
     React.useEffect(() => {
         const handleMouseMove = (e) => {
             if (!isDragging) return;
             const newX = e.clientX - dragOffset.current.x;
             const newY = e.clientY - dragOffset.current.y;
+            setPosition({ x: newX, y: newY });
+        };
+
+        const handleTouchMove = (e) => {
+            if (!isDragging) return;
+            const touch = e.touches[0];
+            const newX = touch.clientX - dragOffset.current.x;
+            const newY = touch.clientY - dragOffset.current.y;
             setPosition({ x: newX, y: newY });
         };
 
@@ -88,10 +107,14 @@ export function FloatingTimeController() {
         if (isDragging) {
             window.addEventListener('mousemove', handleMouseMove);
             window.addEventListener('mouseup', handleMouseUp);
+            window.addEventListener('touchmove', handleTouchMove);
+            window.addEventListener('touchend', handleMouseUp);
         }
         return () => {
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
+            window.removeEventListener('touchmove', handleTouchMove);
+            window.removeEventListener('touchend', handleMouseUp);
         };
     }, [isDragging, position]);
 
@@ -101,6 +124,7 @@ export function FloatingTimeController() {
             className={styles.container}
             style={{ left: position.x, top: position.y, cursor: isDragging ? 'grabbing' : 'grab' }}
             onMouseDown={handleMouseDown}
+            onTouchStart={handleTouchStart}
         >
             <div className={styles.labelGroup}>
                 <Clock size={16} className={styles.icon} />

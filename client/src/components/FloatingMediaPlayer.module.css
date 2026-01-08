@@ -139,28 +139,86 @@
     align-items: center;
 }
 
+/* Range Input Reset */
 .scrubber {
     -webkit-appearance: none;
-    appearance: none;
+    /* Hides the slider so that custom slider can be made */
     width: 100%;
-    height: 4px;
-    background: var(--bg-secondary);
-    border-radius: 2px;
-    outline: none;
+    /* Specific width is required for Firefox. */
+    background: transparent;
+    /* Otherwise white in Chrome */
     cursor: pointer;
+    height: 20px;
+    /* Touch target height */
+    margin: 0;
+    position: relative;
+    z-index: 10;
 }
 
+.scrubber:focus {
+    outline: none;
+}
+
+/* --- WEBKIT (Chrome, Safari, Edge) --- */
 .scrubber::-webkit-slider-thumb {
     -webkit-appearance: none;
-    appearance: none;
-    width: 12px;
-    height: 12px;
+    height: 16px;
+    width: 16px;
     border-radius: 50%;
     background: var(--accent-primary);
-    cursor: pointer;
-    transition: transform 0.2s;
+    cursor: grab;
+    margin-top: -6px;
+    /* You need to specify a margin in Chrome, but in Firefox and IE it is automatic */
+    box-shadow: 0 0 0 2px var(--bg-card);
+    /* Inner ring */
+    transition: transform 0.1s;
+    position: relative;
+    z-index: 2;
 }
 
-.scrubber::-webkit-slider-thumb:hover {
+.scrubber::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 4px;
+    cursor: pointer;
+    background: var(--bg-hover);
+    /* Fallback */
+    background: linear-gradient(to right, var(--accent-primary) 0%, var(--bg-hover) 0%);
+    /* Progress bar Hack needs JS, for now just static */
+    background: var(--gray-600);
+    /* High contrast track */
+    border-radius: 2px;
+}
+
+/* Hover States */
+.scrubber:hover::-webkit-slider-thumb {
+    transform: scale(1.2);
+}
+
+.scrubber:active::-webkit-slider-thumb {
+    cursor: grabbing;
+    transform: scale(1.1);
+}
+
+/* --- FIREFOX --- */
+.scrubber::-moz-range-thumb {
+    height: 16px;
+    width: 16px;
+    border: none;
+    border-radius: 50%;
+    background: var(--accent-primary);
+    cursor: grab;
+    box-shadow: 0 0 0 2px var(--bg-card);
+    transition: transform 0.1s;
+}
+
+.scrubber::-moz-range-track {
+    width: 100%;
+    height: 4px;
+    cursor: pointer;
+    background: var(--gray-600);
+    border-radius: 2px;
+}
+
+.scrubber:hover::-moz-range-thumb {
     transform: scale(1.2);
 }

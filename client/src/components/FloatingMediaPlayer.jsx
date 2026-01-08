@@ -52,11 +52,33 @@ export function FloatingMediaPlayer() {
         };
     };
 
+    const handleTouchStart = (e) => {
+        if (['BUTTON', 'INPUT', 'svg', 'path'].includes(e.target.tagName)) return;
+        // Prevent default to stop scrolling while dragging
+        // e.preventDefault(); // Optional: might block scrolling if user misses button
+
+        setIsDragging(true);
+        const rect = e.currentTarget.getBoundingClientRect();
+        const touch = e.touches[0];
+        dragOffset.current = {
+            x: touch.clientX - rect.left,
+            y: touch.clientY - rect.top
+        };
+    };
+
     useEffect(() => {
         const handleMouseMove = (e) => {
             if (!isDragging) return;
             const newX = e.clientX - dragOffset.current.x;
             const newY = e.clientY - dragOffset.current.y;
+            setPosition({ x: newX, y: newY });
+        };
+
+        const handleTouchMove = (e) => {
+            if (!isDragging) return;
+            const touch = e.touches[0];
+            const newX = touch.clientX - dragOffset.current.x;
+            const newY = touch.clientY - dragOffset.current.y;
             setPosition({ x: newX, y: newY });
         };
 
@@ -70,10 +92,14 @@ export function FloatingMediaPlayer() {
         if (isDragging) {
             window.addEventListener('mousemove', handleMouseMove);
             window.addEventListener('mouseup', handleMouseUp);
+            window.addEventListener('touchmove', handleTouchMove);
+            window.addEventListener('touchend', handleMouseUp); // Re-use mouseup logic
         }
         return () => {
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
+            window.removeEventListener('touchmove', handleTouchMove);
+            window.removeEventListener('touchend', handleMouseUp);
         };
     }, [isDragging, position]);
 
@@ -112,6 +138,7 @@ export function FloatingMediaPlayer() {
                 cursor: isDragging ? 'grabbing' : 'grab'
             }}
             onMouseDown={handleMouseDown}
+            onTouchStart={handleTouchStart}
         >
             {/* Top Row: Timestamp & Status */}
             <div className={styles.metaRow}>
