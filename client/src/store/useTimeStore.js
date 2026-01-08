@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { io } from 'socket.io-client';
 
-const API_BASE = 'http://localhost:3000/api';
-const SOCKET_URL = 'http://localhost:3000';
+const API_BASE = `http://${window.location.hostname}:3000/api`;
+const SOCKET_URL = `http://${window.location.hostname}:3000`;
 
 export const useTimeStore = create((set, get) => ({
     // 1. STATE
@@ -13,13 +13,58 @@ export const useTimeStore = create((set, get) => ({
     activeScan: null,
     socket: null,
     lastSyncTime: null,
+    notifications: [], // AI Log
+    aiHistory: [],     // New History State
     analyticsData: null,
     researchData: null, // New Research Data
     viewMode: 'analytics', // 'monitor' | 'analytics' | 'research'
+    telegramEnabled: true, // Method to Toggle Global Notifications
     lookbackHours: 720, // Default 30 days to capture all data
     isMonitorModalOpen: false, // New Modal State
 
     // 2. ACTIONS
+    setTelegramEnabled: (enabled) => set({ telegramEnabled: enabled }),
+
+    fetchAiHistory: async () => {
+        try {
+            const res = await fetch(`${API_BASE}/ai/history`);
+            const data = await res.json();
+            set({ aiHistory: data });
+        } catch (err) {
+            console.error('Failed to fetch AI history:', err);
+        }
+    },
+
+    toggleTelegram: async () => {
+        try {
+            const current = get().telegramEnabled;
+            // Optimistic Update
+            set({ telegramEnabled: !current });
+
+            const res = await fetch(`${API_BASE}/settings/telegram`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: !current })
+            });
+            const data = await res.json();
+            // Confirm from Server
+            set({ telegramEnabled: data.enabled });
+        } catch (err) {
+            console.error('Failed to toggle Telegram:', err);
+            // Revert
+            set({ telegramEnabled: !get().telegramEnabled });
+        }
+    },
+
+    fetchTelegramStatus: async () => {
+        try {
+            const res = await fetch(`${API_BASE}/settings/telegram`);
+            const data = await res.json();
+            set({ telegramEnabled: data.enabled });
+        } catch (err) {
+            console.error('Telegram status fetch failed:', err);
+        }
+    },
     initializeSocket: () => {
         if (get().socket) return;
 
@@ -31,7 +76,7 @@ export const useTimeStore = create((set, get) => ({
 
         socket.on('new_scan', (newScanMeta) => {
             console.log('⚡ New Scan Received:', newScanMeta);
-            const { timeline, currentIndex, loadScan, fetchAnalytics, fetchResearch } = get();
+            const { timeline, currentIndex, loadScan, fetchAnalytics, fetchResearch, fetchNotifications } = get();
 
             const isLive = currentIndex === timeline.length - 1;
             const newTimeline = [...timeline, newScanMeta];
@@ -49,9 +94,20 @@ export const useTimeStore = create((set, get) => ({
             // Refresh analytics on new data
             if (fetchAnalytics) fetchAnalytics();
             if (fetchResearch) fetchResearch();
+            if (fetchNotifications) fetchNotifications();
         });
 
         set({ socket });
+    },
+
+    fetchNotifications: async () => {
+        try {
+            const res = await fetch(`${API_BASE}/notifications?limit=100&_t=${Date.now()}`);
+            const data = await res.json();
+            set({ notifications: data });
+        } catch (err) {
+            console.error('Failed to fetch notifications:', err);
+        }
     },
 
     fetchAnalytics: async () => {
@@ -66,7 +122,7 @@ export const useTimeStore = create((set, get) => ({
                 refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
             }
 
-            const res = await fetch(`${API_BASE}/analytics/pulse?hours=${lookbackHours}${refTimeStr}`);
+            const res = await fetch(`${API_BASE}/analytics/pulse?hours=${lookbackHours}${refTimeStr}&_t=${Date.now()}`);
             const data = await res.json();
             set({ analyticsData: data });
         } catch (err) {
@@ -88,7 +144,7 @@ export const useTimeStore = create((set, get) => ({
     fetchTimeline: async () => {
         try {
             const hours = get().lookbackHours || 24;
-            const res = await fetch(`${API_BASE}/history?hours=${hours}`);
+            const res = await fetch(`${API_BASE}/history?hours=${hours}&_t=${Date.now()}`);
             const data = await res.json();
 
             // Fix: improperly handled error response (e.g. 500) causing data to be an error object instead of array
@@ -208,7 +264,7 @@ export const useTimeStore = create((set, get) => ({
                 refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
             }
 
-            const query = `${API_BASE}/analytics/research?hours=${lookbackHours || 24}${refTimeStr}`;
+            const query = `${API_BASE}/analytics/research?hours=${lookbackHours || 24}${refTimeStr}&_t=${Date.now()}`;
             const res = await fetch(query);
             const data = await res.json();
             set({ researchData: data });

@@ -507,8 +507,16 @@
 
         allCoins.forEach((coin) => {
             const clean = cleanTicker(coin.ticker);
-            // Lightweight Object for Replay (Ticker + Score + NetTrend)
-            const miniCoin = { t: clean, s: coin.score, nt: coin.netTrend || 0 };
+            // Lightweight Object for Replay (Enriched)
+            const miniCoin = {
+                t: clean,
+                s: coin.score || 0,
+                nt: coin.netTrend || 0,
+                c: coin.close || 0,
+                v: coin.volSpike || 0,
+                m: coin.momScore || 0,
+                l: coin.label || ''
+            };
 
             if ((coin.netTrend || 0) > 40) {
                 sentiment.bullish++;
@@ -1499,12 +1507,12 @@
                 STATE.autoScanCount = 0;
             }
 
-            const sentiment = analyzeMarketSentiment(allCoins);
-
             const scored = allCoins.map((coin) => ({
                 ...coin,
                 ...calculateRecommendation(coin),
             }));
+
+            const sentiment = analyzeMarketSentiment(scored);
 
             const unfiltered = scored.filter((coin) => applyUnfilteredFilter(coin));
 

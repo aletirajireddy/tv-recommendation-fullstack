@@ -27,7 +27,7 @@
         // BACKEND_ENDPOINT removed - strictly pass-through
         BATCH_WINDOW_MS: 60000,
         ENABLE_BATCHING: true,
-        ENABLE_BACKEND_SYNC: true, // Internal logic flag
+        ENABLE_BACKEND_SYNC: false, // Internal logic flag
         DEBUG_MODE: true,
         POLL_INTERVAL_MS: 3000,
         TOAST_WAIT_MS: 7000,
@@ -74,117 +74,6 @@
         backendErrors: 0,
         nonTradingSkipped: 0
     };
-
-    // ═══════════════════════════════════════════════════════════════
-    // OFFLINE STORE & PAYLOAD MANAGER (Mirrored from Symbol Scanner)
-    // ═══════════════════════════════════════════════════════════════
-    const OfflineStore = {
-        QUEUE_KEY: 'alert_pulse_queue',
-        MAX_RETENTION_MS: 72 * 60 * 60 * 1000,
-
-        getQueue: function () {
-            try {
-                const json = GM_getValue(this.QUEUE_KEY, '[]');
-                return JSON.parse(json);
-            } catch (e) {
-                console.error('Error reading offline queue:', e);
-                return [];
-            }
-        },
-
-        saveQueue: function (queue) {
-            try {
-                GM_setValue(this.QUEUE_KEY, JSON.stringify(queue));
-            } catch (e) {
-                console.error('Error saving offline queue:', e);
-            }
-        },
-
-        add: function (payload) {
-            const queue = this.getQueue();
-            const item = {
-                id: Date.now(),
-                timestamp: Date.now(),
-                payload: payload,
-                type: 'pulse_batch'
-            };
-            queue.push(item);
-            this.saveQueue(queue);
-            console.log(`[OfflineStore] Saved batch to queue. Size: ${queue.length}`);
-        },
-
-        prune: function () {
-            const queue = this.getQueue();
-            const now = Date.now();
-            const valid = queue.filter(item => (now - item.timestamp) < this.MAX_RETENTION_MS);
-            if (valid.length !== queue.length) {
-                console.log(`[OfflineStore] Pruned ${queue.length - valid.length} old items`);
-                this.saveQueue(valid);
-            }
-        }
-    };
-
-    function sendPayload(payload) {
-        OfflineStore.prune();
-
-        console.log(`[Sync] Sending pulse batch...`);
-
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: CONFIG.BACKEND_ENDPOINT,
-            data: JSON.stringify(payload),
-            headers: { 'Content-Type': 'application/json' },
-            onload: (response) => {
-                if (response.status === 200) {
-                    console.log(`✅ Pulse synced: ${response.status}`);
-                    pulseStats.backendSyncs++;
-                    flushNextOfflineItem();
-                } else {
-                    console.warn(`❌ Backend error ${response.status}. Buffering.`);
-                    pulseStats.backendErrors++;
-                    OfflineStore.add(payload);
-                }
-            },
-            onerror: (err) => {
-                console.error('❌ Network error. Buffering.', err);
-                pulseStats.backendErrors++;
-                OfflineStore.add(payload);
-            },
-            ontimeout: () => {
-                console.error('⏱️ Timeout. Buffering.');
-                pulseStats.backendErrors++;
-                OfflineStore.add(payload);
-            },
-            timeout: 10000
-        });
-    }
-
-    function flushNextOfflineItem() {
-        const queue = OfflineStore.getQueue();
-        if (queue.length === 0) return;
-
-        const item = queue[0];
-        console.log(`[Sync] Flushing buffered pulse batch...`);
-
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: CONFIG.BACKEND_ENDPOINT,
-            data: JSON.stringify(item.payload),
-            headers: { 'Content-Type': 'application/json' },
-            onload: (response) => {
-                if (response.status === 200) {
-                    console.log(`✅ Flushed buffered batch`);
-                    const newQueue = OfflineStore.getQueue().slice(1);
-                    OfflineStore.saveQueue(newQueue);
-                    setTimeout(flushNextOfflineItem, 1000);
-                } else {
-                    console.warn(`❌ Flush failed, keeping in queue.`);
-                }
-            },
-            onerror: () => console.warn(`❌ Flush network error`),
-            timeout: 10000
-        });
-    }
 
     // ═══════════════════════════════════════════════════════════════
     // INSIGHTS ENGINE
@@ -614,7 +503,7 @@
 
             const timestampData = extractTimestampFromAlert(message, contextDate);
 
-            const contentHash = message.substring(0, 100).replace(/\s+/g, '') + (timestampData.timestamp || '');
+            const contentHash = message.replace(/\s+/g, '') + (timestampData.timestamp || '');
             // Simple hash function for ID
             let hash = 0;
             for (let i = 0; i < contentHash.length; i++) {
@@ -1593,7 +1482,7 @@
                             return;
                         }
 
-                        const contentHash = alertText.substring(0, 100).replace(/\s+/g, '');
+                        const contentHash = alertText.replace(/\s+/g, '');
 
                         if (processedAlertIds.has(contentHash)) {
                             return;
@@ -1798,7 +1687,7 @@
             return;
         }
 
-        const toastHash = text.substring(0, 50).replace(/\s+/g, '');
+        const toastHash = text.replace(/\s+/g, '');
         const lastHash = targetToast.dataset.lastHash || '';
 
         if (toastHash !== lastHash) {
