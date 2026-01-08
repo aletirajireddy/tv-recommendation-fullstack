@@ -68,6 +68,28 @@ db.exec(`
     );
 `);
 
+// 5. AI NOTIFICATIONS (Telegram Log)
+db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scan_id TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        trigger_type TEXT,            -- 'MARKET_SHIFT', 'BURST', 'HIGH_SCOPE'
+        message TEXT,
+        priority INTEGER,             -- 1=Info, 2=Important, 3=Critical
+        
+        FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+    );
+`);
+
+// 6. SYSTEM SETTINGS (Key-Value Persistence)
+db.exec(`
+    CREATE TABLE IF NOT EXISTS system_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    );
+`);
+
 console.log('✅ Database (v2) Initialized: dashboard.db');
 
 module.exports = db;

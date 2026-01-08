@@ -13,22 +13,25 @@ export function GlobalHeader() {
         activeScan,
         lastSyncTime,
         fetchTimeline,
-        initializeSocket, // New Action
+        initializeSocket,
         stepForward,
         stepBack,
         loadScan,
         viewMode,
-        setViewMode
+        setViewMode,
+        telegramEnabled,     // State
+        toggleTelegram,      // Action
+        fetchTelegramStatus  // Action
     } = useTimeStore();
 
-    // Initialize Data & Socket
+    // Initialize Data & Socket & Settings
     useEffect(() => {
         fetchTimeline();
+        fetchTelegramStatus(); // Fetch Toggle State
         initializeSocket();
-        // No interval needed for fetching anymore, socket handles it!
     }, []);
 
-    // Handle Playback Interval
+    // ... existing playback effect ...
     useEffect(() => {
         let interval;
         if (isPlaying) {
@@ -50,12 +53,7 @@ export function GlobalHeader() {
 
     if (timeline.length === 0) return <div className="card" style={{ padding: '1rem' }}>Loading Timeline...</div>;
 
-    const isLive = currentIndex === timeline.length - 1;
-    const currentScanMeta = timeline[currentIndex] || {};
-    const scanTime = currentScanMeta.timestamp ? new Date(currentScanMeta.timestamp) : new Date();
-
-    const startTime = timeline.length > 0 ? new Date(timeline[0].timestamp) : null;
-    const endTime = timeline.length > 0 ? new Date(timeline[timeline.length - 1].timestamp) : null;
+    // ... existing rendering logic ...
 
     return (
         <header className={styles.header}>
@@ -66,6 +64,15 @@ export function GlobalHeader() {
             <div className={styles.metaSection}>
                 {/* VIEW MODE TOGGLE */}
                 <div className={styles.modeSwitch}>
+                    <button
+                        className={telegramEnabled ? styles.activeMode : styles.inactiveMode}
+                        onClick={toggleTelegram}
+                        title={telegramEnabled ? "Telegram: ON" : "Telegram: OFF"}
+                        style={{ marginRight: '8px' }} // Spacing
+                    >
+                        {telegramEnabled ? <span style={{ color: '#4ade80' }}>🔔 ON</span> : <span style={{ opacity: 0.5 }}>🔕 OFF</span>}
+                    </button>
+
                     <button
                         className={viewMode === 'analytics' ? styles.activeMode : styles.inactiveMode}
                         onClick={() => setViewMode('analytics')}

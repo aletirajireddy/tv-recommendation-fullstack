@@ -68,6 +68,7 @@ body {
     box-sizing: border-box;
 }
 
+
 /* UTILITIES */
 .layout-container {
     max-width: var(--max-width);
@@ -98,4 +99,26 @@ body {
 
 .text-neutral {
     color: var(--text-tertiary);
+}
+
+/* MODERN SCROLLBARS (For entire app) */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-subtle);
+    /* using --gray-200 variable */
+    border-radius: 3px;
+    transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+    /* darker on hover */
 }

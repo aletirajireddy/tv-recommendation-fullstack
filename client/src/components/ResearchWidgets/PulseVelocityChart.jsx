@@ -19,10 +19,15 @@ export function PulseVelocityChart({ data }) {
         );
     }
 
-    const formattedData = data.map(d => ({
-        time: d.time && d.time.includes(' ') ? d.time.split(' ')[1] : (d.time || ''),
-        count: d.count
-    }));
+    const formattedData = data.map(d => {
+        // Assume 'd.time' is UTC "YYYY-MM-DD HH:mm". We append 'Z' to treat it as UTC for safe parsing.
+        // If it's already ISO, 'Z' check handles it.
+        const isoString = d.time.includes('T') ? d.time : d.time.replace(' ', 'T') + (d.time.includes('Z') ? '' : ':00Z');
+        return {
+            dateObj: new Date(isoString),
+            count: d.count
+        };
+    });
 
     return (
         <div style={{ width: '100%', height: '100%', minHeight: '200px' }}>
@@ -36,13 +41,22 @@ export function PulseVelocityChart({ data }) {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} opacity={0.3} />
                     <XAxis
-                        dataKey="time"
+                        dataKey="dateObj"
                         stroke="var(--text-tertiary)"
                         fontSize={10}
                         tickLine={false}
                         axisLine={false}
-                        interval="preserveStartEnd"
                         minTickGap={30}
+                        tickFormatter={(val) => {
+                            if (!val) return '';
+                            // Format: MM/DD HH:mm
+                            const date = new Date(val);
+                            const m = date.getMonth() + 1;
+                            const d = date.getDate();
+                            const h = date.getHours().toString().padStart(2, '0');
+                            const min = date.getMinutes().toString().padStart(2, '0');
+                            return `${m}/${d} ${h}:${min}`;
+                        }}
                     />
                     <YAxis
                         stroke="var(--text-tertiary)"
