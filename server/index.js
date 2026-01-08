@@ -141,8 +141,7 @@ app.post('/scan-report', (req, res) => {
 
         console.log(`✅ Scan ${payload.id} Persisted & Broadcasted.`);
 
-        // TRIGGER AI STRATEGY ENGINE (Telegram)
-        TelegramService.analyzeAndNotify(db, payload.id);
+
 
         res.json({ status: 'ok', id: payload.id });
 
@@ -442,28 +441,28 @@ app.get('/api/analytics/pulse', (req, res) => {
         );
 
         // 4. GENERATE RECOMMENDATIONS (AI Strategy Cards)
+        // 4. GENERATE RECOMMENDATIONS (AI Strategy Cards)
         const recommendations = [];
-        let cardId = 1;
 
         // Card 1: Market Momentum Strategy
         if (spreadAnalysis.length > 0) {
             const avgMood = spreadAnalysis.reduce((acc, s) => acc + (s.mood_score || 0), 0) / spreadAnalysis.length;
             if (avgMood > 40) {
                 recommendations.push({
-                    id: `rec-${cardId++}`,
+                    id: 'STRAT_TREND_BULL', // Deterministic ID
                     type: 'trend',
                     confidence: 'high',
-                    title: 'Strong Bullish Momentum Detected',
-                    description: `Market sentiment is at +${avgMood.toFixed(0)}%. Consider trend-following strategies on high-quality setups.`,
+                    title: 'Strong Bullish Momentum',
+                    description: `Market sentiment is at +${avgMood.toFixed(0)}%. Trend-following systems active.`,
                     tickers: []
                 });
             } else if (avgMood < -40) {
                 recommendations.push({
-                    id: `rec-${cardId++}`,
+                    id: 'STRAT_TREND_BEAR', // Deterministic ID
                     type: 'risk',
                     confidence: 'high',
                     title: 'Bearish Pressure Alert',
-                    description: `Market sentiment is at ${avgMood.toFixed(0)}%. Exercise caution and wait for reversal confirmation.`,
+                    description: `Market sentiment is at ${avgMood.toFixed(0)}%. Caution advised.`,
                     tickers: []
                 });
             }
@@ -472,8 +471,10 @@ app.get('/api/analytics/pulse', (req, res) => {
         // Card 2: Institutional Burst Opportunities
         if (bursts.length > 0) {
             const topBurst = bursts[0];
+            // ID includes time to be unique per burst event, but stable for that specific burst
+            // topBurst.full_ts is the timestamp of the burst
             recommendations.push({
-                id: `rec-${cardId++}`,
+                id: `STRAT_BURST_${topBurst.full_ts}`,
                 type: 'opportunity',
                 confidence: 'max',
                 title: 'Institutional Activity Spike',
@@ -494,10 +495,10 @@ app.get('/api/analytics/pulse', (req, res) => {
 
             if (highScopeAssets.length > 0) {
                 recommendations.push({
-                    id: `rec-${cardId++}`,
+                    id: 'STRAT_HIGH_SCOPE', // Deterministic ID
                     type: 'opportunity',
                     confidence: 'high',
-                    title: 'High-Quality Setups Available',
+                    title: 'High-Quality Setups',
                     description: `${highScopeAssets.length} assets passed all filters with strong confluence metrics.`,
                     tickers: highScopeAssets.map(a => {
                         const raw = JSON.parse(a.raw_data_json || '{}');
@@ -513,11 +514,11 @@ app.get('/api/analytics/pulse', (req, res) => {
             const hasChop = recentWindows.every(w => Math.abs(w.mood_score || 0) < 20);
             if (hasChop) {
                 recommendations.push({
-                    id: `rec-${cardId++}`,
+                    id: 'STRAT_CHOP_WARNING', // Deterministic ID
                     type: 'info',
                     confidence: 'medium',
                     title: 'Low Conviction Environment',
-                    description: 'Recent data shows mixed signals with no clear directional bias. Consider reducing position sizes.',
+                    description: 'Mixed signals with no clear directional bias. Reduce position sizes.',
                     tickers: []
                 });
             }
@@ -526,6 +527,10 @@ app.get('/api/analytics/pulse', (req, res) => {
         // Calculate Volume Intent from actual data
         const totalBullish = spreadAnalysis.reduce((sum, s) => sum + s.bullish, 0);
         const totalBearish = spreadAnalysis.reduce((sum, s) => sum + s.bearish, 0);
+
+        // SYNC TELEGRAM with Strategy Engine
+        // This ensures alerts match the UI cards exactly
+        TelegramService.syncStrategies(recommendations);
 
         res.json({
             lookback_hours: hours,
@@ -681,7 +686,85 @@ app.get('/api/analytics/research', (req, res) => {
 });
 
 
+// 6. AI NOTIFICATIONS
+app.get('/api/notifications', (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 50;
+        const logs = db.prepare(`
+            SELECT * FROM ai_notifications 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        `).all(limit);
+        res.json(logs);
+    } catch (err) {
+        console.error('Error fetching notifications:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 7. AI PASSED STRATEGY HISTORY (Last 48 Hours)
+app.get('/api/ai/history', (req, res) => {
+    try {
+        const cutoff = Date.now() - (48 * 60 * 60 * 1000); // 48 Hours ago
+
+        // Fetch PASS entries from the last 48h
+        // We join with scans to get the timestamp
+        const history = db.prepare(`
+            SELECT 
+                e.ticker, 
+                e.label, 
+                e.direction, 
+                e.strategies_json, 
+                s.timestamp, 
+                m.mood_score 
+            FROM scan_entries e 
+            JOIN scans s ON e.scan_id = s.id 
+            LEFT JOIN market_states m ON s.id = m.scan_id
+            WHERE e.status = 'PASS' 
+            AND s.timestamp > ? 
+            ORDER BY s.timestamp DESC
+            LIMIT 100
+        `).all(new Date(cutoff).toISOString());
+
+        res.json(history);
+    } catch (err) {
+        console.error('Error fetching AI history:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- PRUNING TASK (On Startup) ---
+try {
+    const pruneCutoff = new Date(Date.now() - (48 * 60 * 60 * 1000)).toISOString();
+
+    // Prune AI Logs (User requested max 2 days history for logs)
+    const result = db.prepare("DELETE FROM ai_notifications WHERE timestamp < ?").run(pruneCutoff);
+    console.log(`🧹 Pruned ${result.changes} old AI notifications (< 48h)`);
+
+    // Note: We do NOT prune 'scans' or 'scan_entries' yet as the Timeline might need them for replay.
+    // Ideally, we prune scans > 30 days (720h)
+} catch (e) {
+    console.error('Pruning failed:', e);
+}
+
+// --- TELEGRAM SETTINGS ---
+app.post('/api/settings/telegram', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'Invalid setting' });
+
+    const newState = TelegramService.toggle(enabled);
+    res.json({ enabled: newState });
+});
+
+app.get('/api/settings/telegram', (req, res) => {
+    res.json({ enabled: TelegramService.isEnabled });
+});
+
 const PORT = 3000;
 server.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`
+🚀 Server running on port ${PORT}
+   - API: http://localhost:${PORT}
+   - Notifications: ${TelegramService.isEnabled ? 'ENABLED' : 'DISABLED'}
+`);
 });

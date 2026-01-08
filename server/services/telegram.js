@@ -1,5 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const path = require('path');
+const db = require('../database'); // Import shared DB instance
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 class TelegramService {
@@ -7,13 +8,32 @@ class TelegramService {
         this.token = process.env.TELEGRAM_BOT_TOKEN;
         this.chatId = process.env.TELEGRAM_CHAT_ID;
         this.bot = null;
+
+        // Control Flags
+        // Load persisted state (Synchronous for better-sqlite3)
+        try {
+            const setting = db.prepare("SELECT value FROM system_settings WHERE key = 'telegram_enabled'").get();
+            // Value is stored as string 'true'/'false'
+            this.isEnabled = setting ? (setting.value === 'true') : true; // Default ON
+        } catch (e) {
+            console.warn('⚠️ Could not load Telegram settings, defaulting to ON');
+            this.isEnabled = true;
+        }
+
+        this.bootTime = Date.now(); // Fresh Start Protocol
+
+        // State Tracking for Smart Alerts
         this.lastSent = 0;
-        this.RATE_LIMIT_MS = 60 * 1000; // Max 1 message per minute to avoid spam
+        this.lastAlertState = {
+            score: 0,       // Mood score at last alert
+            burstCount: 0,  // Number of alerts at last burst
+            trend: null     // 'bull' or 'bear'
+        };
 
         if (this.token && this.token !== 'YOUR_BOT_TOKEN_HERE') {
             try {
                 this.bot = new TelegramBot(this.token, { polling: false });
-                console.log('✅ Telegram Service Initialized');
+                console.log(`✅ Telegram Service Initialized (Enabled: ${this.isEnabled})`);
             } catch (err) {
                 console.error('❌ Telegram Init Error:', err);
             }
@@ -22,8 +42,20 @@ class TelegramService {
         }
     }
 
+    toggle(enabled) {
+        this.isEnabled = enabled;
+        try {
+            // Persist to DB
+            db.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_enabled', ?)").run(enabled.toString());
+            console.log(`[Telegram] Notifications ${enabled ? 'ENABLED' : 'DISABLED'} (Persisted)`);
+        } catch (e) {
+            console.error('Failed to persist Telegram setting:', e);
+        }
+        return this.isEnabled;
+    }
+
     async sendAlert(message) {
-        if (!this.bot || !this.chatId) return;
+        if (!this.bot || !this.chatId || !this.isEnabled) return;
 
         try {
             await this.bot.sendMessage(this.chatId, message, { parse_mode: 'Markdown' });
@@ -33,77 +65,70 @@ class TelegramService {
         }
     }
 
+    getCoinsInFocus(db, hours = 2) {
+        try {
+            const cutoff = Date.now() - (hours * 60 * 60 * 1000);
+            const pulses = db.prepare(`SELECT ticker, COUNT(*) as count FROM pulse_events WHERE timestamp > ? GROUP BY ticker`).all(cutoff);
+            const scores = {};
+            pulses.forEach(p => scores[p.ticker] = (scores[p.ticker] || 0) + (p.count * 1));
+            return Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, s]) => `${t} (${s})`);
+        } catch (err) { return []; }
+    }
+
     /**
      * Core Logic: Replicates "AlertsAnalyzer.jsx" / "Strategy Engine"
-     * Checks DB for High Confidence setup in the specific scan ID
+     * SMART DEDUPLICATION: Compare against this.lastAlertState to prevent spam.
      */
-    async analyzeAndNotify(db, scanId) {
-        if (!this.bot) return;
+    // Unified Strategy Sync (Direct from Engine)
+    async syncStrategies(currentStrategies) {
+        if (!this.isEnabled) return;
 
-        // Rate Limit Check
-        const now = Date.now();
-        if (now - this.lastSent < this.RATE_LIMIT_MS) {
-            console.log('⏳ Telegram Rate Limit (Skipping)');
-            return;
-        }
+        // State Initialization
+        if (!this.lastActiveStrategies) this.lastActiveStrategies = [];
 
-        try {
-            // 1. Get Scan Metadata (Mood)
-            const sentiment = db.prepare('SELECT * FROM market_states WHERE scan_id = ?').get(scanId);
-            if (!sentiment) return;
-            const moodScore = sentiment.mood_score || 0;
+        // 0. COMMIT STATE IMMEDIATELY (Prevent Race Conditions)
+        // We capture the old state for diffing, but update the global state synchronously
+        // so that any subsequent calls (ms later) see the new state and don't re-trigger.
+        const oldStrategies = this.lastActiveStrategies;
+        this.lastActiveStrategies = currentStrategies;
 
-            // 2. Get Bursts (Pulse)
-            const alerts = db.prepare('SELECT * FROM pulse_events WHERE scan_id = ?').all(scanId);
+        const newIds = new Set(currentStrategies.map(s => s.id));
+        const oldIds = new Set(oldStrategies.map(s => s.id));
 
-            // 3. Get High Scope Entries
-            const highScope = db.prepare(`
-                SELECT ticker, raw_data_json 
-                FROM scan_entries 
-                WHERE scan_id = ? AND status = 'PASS'
-            `).all(scanId);
-
-            let message = '';
-
-            // --- STRATEGY 1: EXTREME MOOD ---
-            if (moodScore > 60) {
-                message += `🚀 **EXTREME BULLISH MOMENTUM**\nSentiment: +${moodScore}%\nReview Long Setups.\n\n`;
-            } else if (moodScore < -60) {
-                message += `📉 **EXTREME BEARISH PRESSURE**\nSentiment: ${moodScore}%\nReview Short Setups.\n\n`;
-            }
-
-            // --- STRATEGY 2: INSTITUTIONAL BURST ---
-            if (alerts.length >= 5) {
-                const uniqueTickers = new Set(alerts.map(a => a.ticker));
-                message += `⚡ **INSTITUTIONAL ACTIVITY SPIKE**\n${alerts.length} alerts detected on ${uniqueTickers.size} assets.\n`;
-                // Add top 3 tickers
-                const top3 = Array.from(uniqueTickers).slice(0, 3).join(', ');
-                message += `Active: ${top3}...\n\n`;
-            }
-
-            // --- STRATEGY 3: HIGH SCOPE CONFIDENCE ---
-            const topPicks = [];
-            for (const entry of highScope) {
-                const raw = JSON.parse(entry.raw_data_json || '{}');
-                // Replicate "High Scope" logic: Resist > 5% AND NetTrend > 20
-                if ((raw.resistDist || 0) > 4.0 && (raw.netTrend || 0) > 20) {
-                    topPicks.push(`${entry.ticker} (+${(raw.resistDist || 0).toFixed(1)}%)`);
+        // 1. Detect COMPLETIONS (Removed Strategies)
+        for (const oldStrat of oldStrategies) {
+            if (!newIds.has(oldStrat.id)) {
+                // Smart Filter: Only notify completion for major strategies, ignore 'chop' noise disappearance
+                if (oldStrat.type !== 'info') {
+                    const icon = oldStrat.type === 'opportunity' ? '✅' : '🏁';
+                    await this.sendAlert(`${icon} **STRATEGY COMPLETED**: ${oldStrat.title}\n\nCondition has resolved or expired.`);
                 }
             }
+        }
 
-            if (topPicks.length > 0) {
-                message += `🎯 **HIGH SCOPE OPPORTUNITIES**\n${topPicks.slice(0, 3).join('\n')}\n`;
+        // 2. Detect NEW ACTIVATIONS (Added Strategies)
+        for (const strat of currentStrategies) {
+            if (!oldIds.has(strat.id)) {
+                let icon = 'ℹ️';
+
+                // Smart Logic: Formatting & Tone
+                if (strat.type === 'trend') icon = '🌊';
+                if (strat.type === 'opportunity') icon = '🚀';
+                if (strat.type === 'risk') icon = '⚠️';
+                if (strat.type === 'info') icon = '😴';
+
+                // Compose Message
+                const msg = `${icon} **NEW STRATEGY ACTIVE**: ${strat.title}\n\n${strat.description}`;
+
+                // For High Priority, add Tickers if available
+                let tickerTxt = '';
+                if (strat.tickers && strat.tickers.length > 0) {
+                    const tList = strat.tickers.slice(0, 5).map(t => `• ${t.ticker} (${t.bias})`).join('\n');
+                    tickerTxt = `\n\n**Targets**:\n${tList}`;
+                }
+
+                await this.sendAlert(msg + tickerTxt);
             }
-
-            // SEND IF CONTENT EXISTS
-            if (message) {
-                const header = `🤖 **AI STRATEGY ENGINE**\n${new Date().toLocaleString()}\n\n`;
-                await this.sendAlert(header + message);
-                this.lastSent = now;
-            }
-
-        } catch (err) {
-            console.error('❌ Strategy Engine Error:', err);
         }
     }
 }

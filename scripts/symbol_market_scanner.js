@@ -534,8 +534,9 @@
 
         const bullWeight = sentiment.bullish * 2;
         const bearWeight = sentiment.bearish * 2;
+        const validCoins = allCoins.length > 0 ? allCoins.length : 1; // Prevent div by zero
         sentiment.moodScore = Math.round(
-            ((bullWeight - bearWeight) / allCoins.length) * 50
+            ((bullWeight - bearWeight) / validCoins) * 50
         );
         sentiment.moodScore = Math.max(-100, Math.min(100, sentiment.moodScore));
 
@@ -1483,9 +1484,13 @@
             const allCoins = parseTableData();
 
             if (allCoins.length === 0) {
-                console.warn('[Process] No data available');
-                STATE.isScanning = false;
-                return;
+                if (scanType === 'alert-triggered' || scanType === 'manual-trigger') {
+                    console.log(`[Process] ⚠️ Table empty but forcing scan for ${scanType} (flushing alerts)`);
+                } else {
+                    console.warn('[Process] No data available');
+                    STATE.isScanning = false;
+                    return;
+                }
             }
 
             const currentHash = generateDataHash(allCoins);
