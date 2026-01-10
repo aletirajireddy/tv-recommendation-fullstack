@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Ultra Scalper v14.5 - Complete with Fixed Alt+L & Di/D Support
+// @name         Ultra Scalper v16.0 - Connected Core (Master)
 // @namespace    http://tampermonkey.net/
-// @version      14.2
+// @version      16.0
 // @description  Auto-triggers AI analysis with smart change detection + Alert integration + Fixed event toggles
 // @author       Your Name
 // @match        *://*.tradingview.com/pine-screener/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log('🚀 ULTRA SCALPER v14.1 INITIALIZED');
+    console.log('🚀 ULTRA SCALPER v16.0 (MASTER) INITIALIZED - Connected Core');
 
     /*
     ═══════════════════════════════════════════════════════════════
@@ -85,6 +85,12 @@
 
         lastSentHash: null,
         lastSentTime: null,
+
+        // State Machine: Alert Batching
+        alertBatchPending: false,
+        alertBatchTimestamp: null,
+        cyclesSinceAlertDetected: 0,
+        alertScanPending: false, // Prevents auto-scans from stealing buffer during stabilization
     };
 
     const DEFAULT_FILTERS = {
@@ -173,9 +179,28 @@
                     console.log(`✅ Data sent successfully: ${payload.id}`);
                     if (response.responseText) {
                         try {
-                            console.log('📥 Response:', response.responseText);
-                        } catch (e) { }
+                            const resJson = JSON.parse(response.responseText);
+                            console.log('📥 Response:', resJson);
+
+                            // SMART SYNC: Update latest confirmed alert timestamp
+                            if (resJson.last_alert_ts) {
+                                const ts = new Date(resJson.last_alert_ts).getTime();
+                                if (ts > (unsafeWindow.latestConfirmedAlertTs || 0)) {
+                                    unsafeWindow.latestConfirmedAlertTs = ts;
+                                    console.log(`[Sync] 🔄 Updated Confirm Head: ${new Date(ts).toLocaleTimeString()}`);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('[Response] JSON Parse Warning', e);
+                        }
                     }
+
+                    // TRANSACTIONAL FLUSH: Clear alerts buffer only on success
+                    if (unsafeWindow.pendingAlertBatch && unsafeWindow.pendingAlertBatch.length > 0) {
+                        console.log(`[Send] 🧹 Clearing ${unsafeWindow.pendingAlertBatch.length} flushed alerts`);
+                        unsafeWindow.pendingAlertBatch = [];
+                    }
+
                     flushNextOfflineItem();
                 } else {
                     console.warn(`❌ Backend error ${response.status}. Saving to offline store.`);
@@ -225,7 +250,7 @@
     // HELPERS
     // ═══════════════════════════════════════════════════════════════
     function cleanTicker(ticker) {
-        if (!ticker) return '';
+        if (!ticker) { return ''; }
         return ticker
             .replace(/\.P$/i, '')
             .replace(/USDT$/i, '')
@@ -234,7 +259,7 @@
     }
 
     function parseTvNumber(text) {
-        if (!text || text === '—' || text === '') return null;
+        if (!text || text === '—' || text === '') { return null; }
         text = String(text)
             .replace('−', '-')
             .replace('%', '')
@@ -254,7 +279,7 @@
     }
 
     function generateDataHash(coins) {
-        if (!coins || coins.length === 0) return 'empty';
+        if (!coins || coins.length === 0) { return 'empty'; }
         // Compute hash of ALL coins to ensure any change is detected
         const str = coins
             .map((c) => `${c.ticker}:${c.netTrend}:${c.resistDist}`)
@@ -265,17 +290,28 @@
     // ═══════════════════════════════════════════════════════════════
     // CHANGE DETECTION
     // ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
+    // CHANGE DETECTION
+    // ═══════════════════════════════════════════════════════════════
     function detectDataChange(scanType) {
         const currentHash = generateDataHash(STATE.lastProcessedData || []);
+        const hasPendingAlerts = unsafeWindow.pendingAlertBatch && unsafeWindow.pendingAlertBatch.length > 0;
 
         const result = {
             currentHash: currentHash,
             lastSentHash: STATE.lastSentHash,
             hasChanged: currentHash !== STATE.lastSentHash,
+            hasPendingAlerts: hasPendingAlerts,
             timeSinceLastSend: STATE.lastSentTime ? Date.now() - STATE.lastSentTime : Infinity,
             shouldSend: false,
             reason: ''
         };
+
+        if (hasPendingAlerts) {
+            result.shouldSend = true;
+            result.reason = `Pending alerts detected (${unsafeWindow.pendingAlertBatch.length}) - forcing flush`;
+            return result;
+        }
 
         switch (scanType) {
             case 'auto':
@@ -320,12 +356,15 @@
         return result;
     }
 
+
+
     // ═══════════════════════════════════════════════════════════════
     // FIND SCAN BUTTON
     // ═══════════════════════════════════════════════════════════════
     function findScanButton() {
         let btn = document.querySelector('[data-name="pine-screener-scan-btn"]');
-        if (btn) return btn;
+        if (btn) { return btn; }
+
 
         const buttons = document.querySelectorAll('button');
         for (let button of buttons) {
@@ -341,7 +380,8 @@
     // ═══════════════════════════════════════════════════════════════
     function detectColumns() {
         const headers = document.querySelectorAll('thead tr th');
-        if (headers.length === 0) return null;
+        if (headers.length === 0) { return null; }
+
 
         const columnMap = {};
 
@@ -399,7 +439,8 @@
 
     function extractTicker(row) {
         const link = row.querySelector('a[class*="tickerName"]');
-        if (link) return link.innerText.trim();
+        if (link) { return link.innerText.trim(); }
+
 
         const rowKey = row.getAttribute('data-rowkey');
         if (rowKey) {
@@ -641,44 +682,48 @@
     // FILTERS
     // ═══════════════════════════════════════════════════════════════
     function applyUnfilteredFilter(coin) {
-        if (coin.score < CONFIG.UNFILTERED_MIN_SCORE) return false;
-        if (CONFIG.UNFILTERED_EXCLUDE_FREEZE && (coin.freeze || 0) === 1)
+        if (coin.score < CONFIG.UNFILTERED_MIN_SCORE) { return false; }
+        if (CONFIG.UNFILTERED_EXCLUDE_FREEZE && (coin.freeze || 0) === 1) {
             return false;
+        }
         return true;
     }
 
     function applyFilters(coin, filters) {
-        if (filters.minScore && coin.score < filters.minScore) return false;
-        if (filters.minResistDist && (coin.resistDist || 0) < filters.minResistDist)
+        if (filters.minScore && coin.score < filters.minScore) { return false; }
+        if (filters.minResistDist && (coin.resistDist || 0) < filters.minResistDist) {
             return false;
-        if (
-            filters.minSupportDist &&
-            (coin.supportDist || 0) > filters.minSupportDist
-        )
+        }
+        if (filters.minSupportDist && (coin.supportDist || 0) > filters.minSupportDist) {
             return false;
-        if (filters.minNetTrend && (coin.netTrend || 0) < filters.minNetTrend)
+        }
+        if (filters.minNetTrend && (coin.netTrend || 0) < filters.minNetTrend) {
             return false;
-        if (filters.maxNetTrend && (coin.netTrend || 0) > filters.maxNetTrend)
+        }
+        if (filters.maxNetTrend && (coin.netTrend || 0) > filters.maxNetTrend) {
             return false;
-        if (filters.minMomScore && (coin.momScore || 0) < filters.minMomScore)
+        }
+        if (filters.minMomScore && (coin.momScore || 0) < filters.minMomScore) {
             return false;
+        }
 
         if (filters.minStars) {
             const stars = Math.max(coin.resistStars || 0, coin.supportStars || 0);
-            if (stars < filters.minStars) return false;
+            if (stars < filters.minStars) { return false; }
         }
 
         if (filters.positionCodes && filters.positionCodes.length > 0) {
-            if (!filters.positionCodes.includes(coin.positionCode)) return false;
+            if (!filters.positionCodes.includes(coin.positionCode)) { return false; }
         }
 
         if (filters.maxMegaSpotDist !== undefined && coin.megaSpotDist !== null) {
-            if (Math.abs(coin.megaSpotDist) > filters.maxMegaSpotDist) return false;
+            if (Math.abs(coin.megaSpotDist) > filters.maxMegaSpotDist) { return false; }
         }
 
-        if (filters.excludeFreeze && (coin.freeze || 0) === 1) return false;
-        if (filters.excludeCompressed && (coin.compressCount || 0) >= 4)
+        if (filters.excludeFreeze && (coin.freeze || 0) === 1) { return false; }
+        if (filters.excludeCompressed && (coin.compressCount || 0) >= 4) {
             return false;
+        }
 
         return true;
     }
@@ -795,7 +840,8 @@
 
     function applyVisualHighlighting(coin) {
         const row = coin.row;
-        if (!row) return;
+        if (!row) { return; }
+
 
         if ((coin.retraceOpportunity || 0) >= 1) {
             const opacity =
@@ -809,7 +855,10 @@
             return;
         }
 
-        if (coin.opacity === 0) return;
+
+
+        if (coin.opacity === 0) { return; }
+
 
         const r = parseInt(coin.color.slice(1, 3), 16);
         const g = parseInt(coin.color.slice(3, 5), 16);
@@ -950,6 +999,18 @@
             }
         });
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // GLOBAL STATE MACHINE VARIABLES (COMMUNICATION WITH ALERT_SCANNER)
+    // ═══════════════════════════════════════════════════════════════
+    unsafeWindow.institutionalPulse = unsafeWindow.institutionalPulse || [];
+    unsafeWindow.pendingAlertBatch = unsafeWindow.pendingAlertBatch || [];
+    unsafeWindow.batchedAlerts = unsafeWindow.batchedAlerts || null;
+    unsafeWindow.triggerScreenerScan = unsafeWindow.triggerScreenerScan || false;
+    unsafeWindow.latestConfirmedAlertTs = unsafeWindow.latestConfirmedAlertTs || 0;
+
+    console.log('[Init] ✅ State machine variables initialized');
+    console.log(`[Init] Buffer size: ${unsafeWindow.pendingAlertBatch.length} alerts`);
 
     // ═══════════════════════════════════════════════════════════════
     // INSTITUTIONAL PULSE INTEGRATION (UPDATED WITH DI/D SUPPORT)
@@ -1277,15 +1338,15 @@
                 // Clone the array to avoid reference issues
                 institutionalPulse.alerts = [...unsafeWindow.pendingAlertBatch];
 
-                // CRITICAL: Clear the buffer to prevent duplicate sends on next scan
-                unsafeWindow.pendingAlertBatch = [];
-                console.log('[Payload] 🧹 Cleared pendingAlertBatch buffer');
+                // TRANSACTIONAL UPDATE: Do NOT clear buffer here.
+                // We Wait for 200 OK in handleAutoTrigger/sendPayload to clear it.
+                console.log(`[Payload] 📎 Attached ${institutionalPulse.alerts.length} alerts to payload (Buffer kept until 200 OK)`);
             }
 
             // 2. Legacy/Fallback Logic (if still using gatherInstitutionalPulse)
             if (scanType === 'alert-triggered') {
                 // We rely primarily on the buffer now, but if gatherInstitutionalPulse logic is still needed for context:
-                // const legacyPulse = gatherInstitutionalPulse(); 
+                // const legacyPulse = gatherInstitutionalPulse();
                 // if (legacyPulse && legacyPulse.alerts) { ... }
             }
 
@@ -1410,62 +1471,115 @@
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // AUTO-TRIGGER LOGIC (WITH CHANGE DETECTION)
+    // AUTO-TRIGGER LOGIC (SMART 2-CYCLE BATCHING)
     // ═══════════════════════════════════════════════════════════════
     function handleAutoTrigger(historyEntry) {
-        if (STATE.autoScanCount !== CONFIG.AUTO_TRIGGER_AFTER_SCANS) {
-            console.log(`[AutoTrigger] ⏸️ Waiting for scan ${CONFIG.AUTO_TRIGGER_AFTER_SCANS} (currently at ${STATE.autoScanCount})`);
-            return;
-        }
+        STATE.autoScanCount++;
+        console.log(`[AutoTrigger] Scan count: ${STATE.autoScanCount}/${CONFIG.AUTO_TRIGGER_AFTER_SCANS}`);
 
-        const changeDetection = detectDataChange('auto');
+        const hasAlerts = unsafeWindow.pendingAlertBatch &&
+            unsafeWindow.pendingAlertBatch.length > 0;
 
-        if (!changeDetection.shouldSend) {
-            console.log(`[AutoTrigger] ⏭️ ${changeDetection.reason}`);
+        // ═══════════════════════════════════════════════════════════════
+        // SMART 2-CYCLE BATCHING LOGIC
+        // ═══════════════════════════════════════════════════════════════
+
+        if (hasAlerts) {
+            console.log(`[AutoTrigger] 🚀 Alerts detected (${unsafeWindow.pendingAlertBatch.length}) - Triggering IMMEDIATE 'Semi-Update'`);
+
+            // Send immediately (Cycle 1 or 2 - doesn't matter, we have data)
+            const changeDetection = detectDataChange('auto-alert-triggered');
+            const payload = buildFinalPayload(historyEntry, 'auto-alert-triggered', changeDetection);
+
+            sendPayloadWithCleanup(payload, changeDetection);
+
+            // Reset alert batch state
+            STATE.alertBatchPending = false;
+            STATE.cyclesSinceAlertDetected = 0;
             STATE.autoScanCount = 0;
             return;
         }
 
-        console.log(`\n${'═'.repeat(60)}`);
-        console.log('🤖 AUTO-TRIGGER ACTIVATED (After 2nd auto-scan with new data)');
-        console.log(`${'═'.repeat(60)}`);
+        // NO ALERTS: Standard 2-scan heartbeat logic
+        if (STATE.autoScanCount !== CONFIG.AUTO_TRIGGER_AFTER_SCANS) {
+            console.log(`[AutoTrigger] ⏸️ Waiting for scan ${CONFIG.AUTO_TRIGGER_AFTER_SCANS}`);
+            return;
+        }
 
         STATE.autoScanCount = 0;
+        const changeDetection = detectDataChange('auto');
 
+        if (!changeDetection.shouldSend) {
+            console.log(`[AutoTrigger] ⏭️ ${changeDetection.reason}`);
+            return;
+        }
+
+        console.log(`[AutoTrigger] 🤖 Sending market data (no alerts)`);
         const payload = buildFinalPayload(historyEntry, 'auto', changeDetection);
+        sendPayloadWithCleanup(payload, changeDetection);
+    }
 
-        console.log('📦 Sending data to AI endpoint...');
+    // ═══════════════════════════════════════════════════════════════
+    // SEND PAYLOAD WITH CLEANUP (DRY HELPER)
+    // ═══════════════════════════════════════════════════════════════
+    function sendPayloadWithCleanup(payload, changeDetection) {
+        console.log(`\n${'═'.repeat(60)}`);
+        console.log(`📦 SENDING PAYLOAD: ${payload.trigger}`);
+        console.log(`${'═'.repeat(60)}`);
         console.log(`   Endpoint: ${CONFIG.AUTO_TRIGGER_ENDPOINT}`);
-        console.log(`   AI Priority: ${JSON.stringify(payload.aiPriority).length} bytes`);
-        console.log(`   Backup Data: ${JSON.stringify(payload.backupData).length} bytes`);
-        console.log(`   Total: ${JSON.stringify(payload).length} bytes`);
+        console.log(`   Alerts: ${payload.institutional_pulse?.alerts?.length || 0}`);
+        console.log(`   Data Changed: ${changeDetection.hasChanged}`);
+        console.log(`${'═'.repeat(60)}\n`);
 
         GM_xmlhttpRequest({
             method: 'POST',
             url: CONFIG.AUTO_TRIGGER_ENDPOINT,
             data: JSON.stringify(payload),
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             onload: (response) => {
-                console.log(`✅ Auto-trigger sent successfully: ${response.status}`);
-                if (response.responseText) {
-                    console.log('📥 Response:', response.responseText);
-                }
+                if (response.status === 200) {
+                    console.log(`✅ Payload sent successfully`);
 
-                STATE.lastSentHash = changeDetection.currentHash;
-                STATE.lastSentTime = Date.now();
+                    // Smart sync
+                    if (response.responseText) {
+                        try {
+                            const resJson = JSON.parse(response.responseText);
+                            if (resJson.last_alert_ts) {
+                                const ts = new Date(resJson.last_alert_ts).getTime();
+                                if (ts > (unsafeWindow.latestConfirmedAlertTs || 0)) {
+                                    unsafeWindow.latestConfirmedAlertTs = ts;
+                                    console.log(`[Sync] 🔄 Updated last_alert_ts`);
+                                }
+                            }
+                        } catch (e) { }
+                    }
+
+                    // ✅ TRANSACTIONAL CLEAR: Only on 200 OK
+                    if (unsafeWindow.pendingAlertBatch && unsafeWindow.pendingAlertBatch.length > 0) {
+                        console.log(`[Cleanup] 🧹 Cleared ${unsafeWindow.pendingAlertBatch.length} alerts`);
+                        unsafeWindow.pendingAlertBatch = [];
+                    }
+
+                    STATE.lastSentTime = Date.now();
+
+                    // Flush next offline item if any
+                    flushNextOfflineItem();
+
+                } else {
+                    console.warn(`❌ Backend error ${response.status} - saving to OfflineStore`);
+                    OfflineStore.add(payload);
+                }
             },
             onerror: (error) => {
-                console.error('❌ Auto-trigger failed:', error);
+                console.error('❌ Send failed - saving to OfflineStore:', error);
+                OfflineStore.add(payload);
             },
             ontimeout: () => {
-                console.error('⏱️ Auto-trigger timeout - endpoint not responding');
+                console.error('⏱️ Timeout - saving to OfflineStore');
+                OfflineStore.add(payload);
             },
-            timeout: 10000,
+            timeout: 10000
         });
-
-        console.log(`${'═'.repeat(60)}\n`);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1477,6 +1591,12 @@
             return;
         }
 
+        // PRIORITY CHECK: If an alert triggered a scan, wait for it to finish stabilization
+        if (scanType === 'auto' && STATE.alertScanPending) {
+            console.log('[Process] ⏸️ Skipping auto-scan - Waiting for Alert Stabilization (Priority)');
+            return;
+        }
+
         STATE.isScanning = true;
         STATE.lastScanType = scanType;
 
@@ -1484,8 +1604,9 @@
             const allCoins = parseTableData();
 
             if (allCoins.length === 0) {
-                if (scanType === 'alert-triggered' || scanType === 'manual-trigger') {
-                    console.log(`[Process] ⚠️ Table empty but forcing scan for ${scanType} (flushing alerts)`);
+                // FORCE SCAN if alerts are pending, even if table is empty
+                if (scanType === 'alert-triggered' || scanType === 'manual-trigger' || (unsafeWindow.pendingAlertBatch && unsafeWindow.pendingAlertBatch.length > 0)) {
+                    console.log(`[Process] ⚠️ Table empty but forcing scan (Pending Alerts: ${unsafeWindow.pendingAlertBatch ? unsafeWindow.pendingAlertBatch.length : 0})`);
                 } else {
                     console.warn('[Process] No data available');
                     STATE.isScanning = false;
@@ -1494,8 +1615,10 @@
             }
 
             const currentHash = generateDataHash(allCoins);
-            if (currentHash === STATE.lastScanHash) {
-                console.log('[Process] ⏭️ Data unchanged, skipping');
+            const hasPendingAlerts = unsafeWindow.pendingAlertBatch && unsafeWindow.pendingAlertBatch.length > 0;
+
+            if (currentHash === STATE.lastScanHash && !hasPendingAlerts) {
+                console.log('[Process] ⏭️ Data unchanged and no pending alerts, skipping');
                 STATE.isScanning = false;
                 return;
             }
@@ -1909,6 +2032,9 @@
             console.error('[Process] Error:', error);
         } finally {
             STATE.isScanning = false;
+            // FAIL-SAFE: Always release priority lock when any scan completes
+            // This prevents deadlocks if a manual scan interrupts an alert scan
+            STATE.alertScanPending = false;
         }
     }
 
@@ -1977,6 +2103,7 @@
                 console.log(`   Waiting 10s for market to stabilize...`);
                 console.log(`${'═'.repeat(60)}\n`);
 
+                STATE.alertScanPending = true; // Lock auto-scans
                 unsafeWindow.triggerScreenerScan = false;
 
                 setTimeout(() => {
@@ -1992,6 +2119,7 @@
                     clearTimeout(STATE.processDebounceTimer);
                     STATE.processDebounceTimer = setTimeout(() => {
                         processData('alert-triggered');
+                        // STATE.alertScanPending release moved to processData() finally block for safety
                     }, UI_DELAY_MS);
 
                 }, 10000);
@@ -2039,6 +2167,10 @@
         }
 
         btn.click();
+
+        // WAKE UP ALERT SCANNER (Background Tab Sync)
+        unsafeWindow.TRIGGER_SIDEBAR_CHECK = Date.now();
+        console.log(`[Auto-Scan] 🔔 Waking Alert Scanner...`);
 
         clearTimeout(STATE.processDebounceTimer);
         STATE.processDebounceTimer = setTimeout(() => {
@@ -2110,7 +2242,7 @@
     // PUBLIC API
     // ═══════════════════════════════════════════════════════════════
     window.UltraScalper = {
-        version: '14.1',
+        version: '16.0',
         state: STATE,
         recommendations: () => STATE.recommendations,
         unfiltered: () => STATE.unfiltered,
@@ -2146,7 +2278,7 @@
         startAlertMonitor();
     }, 2000);
 
-    console.log('✅ Ultra Scalper v14.5 ready');
+    console.log('✅ Ultra Scalper v15.0 ready');
     console.log('🎯 Shortcuts:');
     console.log('   Shift+Alt+Z - Manual trigger with fresh scan & send to AI');
     console.log('   Alt+U - Manual scan & restart timer');

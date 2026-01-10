@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Institutional Pulse Tracker v2.4 - Production Final
+// @name         Institutional Pulse Tracker v2.8 - Production Final
 // @namespace    http://tampermonkey.net/
-// @version      2.4.0-final
+// @version      2.8.0-final
 // @description  Process all alerts on load, auto-summary, backend dedup, time-aware analytics
 // @author       Your Name
 // @match        *://*.tradingview.com/pine-screener/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log('🎯 INSTITUTIONAL PULSE TRACKER v2.4 PRODUCTION INITIALIZED');
+    console.log('🎯 INSTITUTIONAL PULSE TRACKER v2.8 PRODUCTION INITIALIZED');
 
     // ═══════════════════════════════════════════════════════════════
     // CONFIGURATION
@@ -27,7 +27,7 @@
         // BACKEND_ENDPOINT removed - strictly pass-through
         BATCH_WINDOW_MS: 60000,
         ENABLE_BATCHING: true,
-        ENABLE_BACKEND_SYNC: false, // Internal logic flag
+        ENABLE_BACKEND_SYNC: true, // Internal logic flag
         DEBUG_MODE: true,
         POLL_INTERVAL_MS: 3000,
         TOAST_WAIT_MS: 7000,
@@ -123,21 +123,23 @@
                 return d;
             }
 
-            // 2. Standard Parse
-            let parsed = new Date(cleaned);
+            // 2. Standard Parse with Explicit Current Year Injection
+            // TradingView labels are like "January 10". parsing "January 10" yields year 2001 in some contexts.
+            // We force append the current year if it looks like a month-day pattern.
+            let parseText = cleaned;
+            const hasYear = /\d{4}/.test(cleaned);
+            if (!hasYear) {
+                parseText = `${cleaned} ${now.getFullYear()}`;
+            }
 
-            // 3. Fix Missing Year (often defaults to 2001)
-            // If valid but year is ancient (arbitrary cutoff e.g., < 2024), assume current year
+            let parsed = new Date(parseText);
+
+            // 3. Fallback Validation
             if (!isNaN(parsed.getTime())) {
-                if (parsed.getFullYear() < 2024) {
-                    parsed.setFullYear(now.getFullYear());
-                }
-
-                // 4. Smart Year Rollover
-                // If we are in Jan 2026 and read "Dec 30", it becomes "Dec 30 2026" (Future).
+                // 4. Smart Year Rollover (Standard)
+                // If we are in Jan 2026 and read "Dec 30", the simple append makes it "Dec 30 2026" (Future).
                 // It should be "Dec 30 2025".
                 // Logic: If parsed date is > 2 days in the future, assume previous year.
-                // (Allow slight future drift for timezone diffs)
                 const futureThreshold = new Date(now.getTime() + 48 * 60 * 60 * 1000);
                 if (parsed > futureThreshold) {
                     parsed.setFullYear(now.getFullYear() - 1);
@@ -503,6 +505,21 @@
 
             const timestampData = extractTimestampFromAlert(message, contextDate);
 
+            // ═══════════════════════════════════════════════════════════════
+            // SMART HEAD CHECK (OPTIMIZATION)
+            // ═══════════════════════════════════════════════════════════════
+            const alertTs = timestampData.timestamp ? new Date(timestampData.timestamp).getTime() : 0;
+            if (unsafeWindow.latestConfirmedAlertTs && alertTs > 0 && alertTs <= unsafeWindow.latestConfirmedAlertTs) {
+                if (CONFIG.DEBUG_MODE) {
+                    console.log(`[Parse] 🛑 Alert (${timestampData.timeString}) already synced. Skipping.`);
+                }
+                return null;
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // CONTENT HASHING (FULL LENGTH FIX)
+            // ═══════════════════════════════════════════════════════════════
+            // User Request: Remove 100 char limit to prevent collision on long alerts
             const contentHash = message.replace(/\s+/g, '') + (timestampData.timestamp || '');
             // Simple hash function for ID
             let hash = 0;
@@ -1183,6 +1200,9 @@
         );
         console.log(`${'─'.repeat(160)}`);
 
+        // Fix: Sort windows by time descending (Newest First) to match UI
+        windows.sort((a, b) => b.startTimestamp - a.startTimestamp);
+
         windows.forEach((window, idx) => {
             const index = (idx + 1).toString().padEnd(5);
             const date = window.date.padEnd(12);
@@ -1251,7 +1271,8 @@
     // ═══════════════════════════════════════════════════════════════
     // BATCHED BACKEND SYNC
     // ═══════════════════════════════════════════════════════════════
-    function syncBatchToBackend(batchData) {
+    // ═══════════════════════════════════════════════════════════════
+    function syncBatchToBackend(batchData, isSyncMode = false) {
         // PASS-THROUGH STRATEGY:
         // Integrated function to buffer alerts AND trigger the scanner.
         // Replaces conflicting definitions.
@@ -1271,9 +1292,14 @@
         // TRIGGER SCREENER SCAN
         if (unsafeWindow.institutionalPulse) {
             unsafeWindow.batchedAlerts = alerts; // Expose current batch explicitly if needed
-            unsafeWindow.triggerScreenerScan = true;
-            pulseStats.scansTriggered++;
-            console.log(`[Sync] 🚀 TRIGGERED SCREENER SCAN (Flag set: true)`);
+
+            if (!isSyncMode) {
+                unsafeWindow.triggerScreenerScan = true;
+                pulseStats.scansTriggered++;
+                console.log(`[Sync] 🚀 TRIGGERED SCREENER SCAN (Flag set: true)`);
+            } else {
+                console.log(`[Sync] 💤 Passive Mode: Buffered for next auto-scan (No immediate trigger)`);
+            }
         }
 
         // Update stats
@@ -1402,123 +1428,114 @@
 
 
 
-    async function readSidebarAlerts(delay = 0) {
+    async function readSidebarAlerts(delay = 0, isSyncMode = false) {
         setTimeout(async () => {
             pulseStats.sidebarReads++;
-            console.log(`\n[Sidebar] 📖 Starting alert read sequence...`);
+            console.log(`\n[Sidebar] 📖 Starting alert read sequence... (SyncMode: ${isSyncMode})`);
 
             try {
                 await ensureSidebarReady();
 
                 console.log('[Sidebar] 🔍 Reading alerts from sidebar panel...');
 
-                let logContainer = document.querySelector('div[data-name="alert-log"]');
+                // 1. Find the correct container (ScrollContainer)
+                // We find the first alert item and get its parent to ensure we are in the right level.
+                const firstItem = document.querySelector('div[data-name="alert-log-item"]');
+                let logContainer = firstItem ? firstItem.parentElement : null;
 
                 if (!logContainer) {
-                    console.log('[Sidebar] ⚠️ Primary container not found, trying parent...');
-                    const widgetbar = document.querySelector('[data-name="widgetbar-pages-with-tabs"]');
-                    if (widgetbar) {
-                        logContainer = widgetbar;
-                        console.log('[Sidebar] ✅ Using widgetbar as container');
-                    }
+                    console.log('[Sidebar] ⚠️ No alert items found, checking fallbacks...');
+                    logContainer = document.querySelector('div[data-name="alert-log"]');
                 }
 
                 if (!logContainer) {
-                    console.warn('[Sidebar] ❌ No suitable container found');
-                    const alertRows = document.querySelectorAll('div[data-name="alert-log-item"]');
-                    if (alertRows.length === 0) {
-                        console.error('[Sidebar] ❌ No alerts found anywhere');
-                        return;
-                    }
+                    console.warn('[Sidebar] ❌ No container found');
+                    return;
                 }
 
-                const allElements = logContainer ? Array.from(logContainer.querySelectorAll('*')) : [];
-                console.log(`[Sidebar] ✅ Found ${allElements.length} total elements in container`);
+                console.log(`[Sidebar] ✅ Container found: ${logContainer.className}`);
+
+                // 2. Iterate Direct Children Only (Preserve Order & Context)
+                const children = Array.from(logContainer.children);
+                console.log(`[Sidebar] 📂 Processing ${children.length} items in stream...`);
 
                 let newAlertsCount = 0;
+                let currentDate = new Date(); // Fallback
                 const capturedAlertsThisRead = [];
 
-                let currentDate = new Date();
-
-                allElements.forEach((element, index) => {
+                children.forEach((element) => {
                     try {
                         const classAttr = element.getAttribute('class') || '';
                         const dataName = element.getAttribute('data-name') || '';
 
-                        const isDateLabel = (classAttr.includes('label-') && !dataName) ||
-                            (element.tagName === 'DIV' && !dataName && element.children.length === 0);
-
-                        if (isDateLabel) {
+                        // A. DATE LABEL CHECK (Class contains 'label-')
+                        // User Context: "class='label-*' holds the date group"
+                        // We check for 'label-' presence.
+                        if (classAttr.includes('label-')) {
                             const dateText = element.innerText || element.textContent || '';
-                            if (dateText.length > 5 && dateText.length < 30) {
-                                const parsedDate = parseDateLabel(dateText);
+                            const parsedDate = parseDateLabel(dateText);
 
-                                if (parsedDate) {
-                                    currentDate = parsedDate;
-                                    pulseStats.dateLabelsFound++;
-                                    if (CONFIG.DEBUG_MODE) {
-                                        console.log(`[Date Context] 📅 Date label: ${dateText} → ${currentDate.toDateString()}`);
-                                    }
+                            if (parsedDate) {
+                                currentDate = parsedDate;
+                                pulseStats.dateLabelsFound++;
+                                if (CONFIG.DEBUG_MODE) {
+                                    console.log(`[Date Context] 📅 Context Set: ${dateText} → ${currentDate.toLocaleDateString()}`);
                                 }
                             }
-                            return;
+                            return; // Is a label, done.
                         }
 
-                        const isAlertItem = dataName === 'alert-log-item';
+                        // B. ALERT ITEM CHECK
+                        // User Context: "sibling element with class='alert-log-item' are alert elements"
+                        if (dataName === 'alert-log-item') {
+                            const alertText = element.innerText;
 
-                        if (!isAlertItem) {
-                            return;
+                            if (!alertText || alertText.trim() === '') {
+                                return;
+                            }
+
+                            // ═══════════════════════════════════════════════════════════════
+                            // CONTENT HASHING (FULL LENGTH FIX)
+                            // ═══════════════════════════════════════════════════════════════
+                            const contentHash = alertText.replace(/\s+/g, '');
+
+                            if (processedAlertIds.has(contentHash)) {
+                                return;
+                            }
+
+                            // PASS THE CURRENT CONTEXT DATE
+                            const alertData = parseAlertMessage(alertText, currentDate);
+
+                            if (!alertData || !alertData.parsed) {
+                                return;
+                            }
+
+                            processedAlertIds.add(contentHash);
+
+                            alertCount++;
+                            pulseStats.totalAlerts++;
+                            newAlertsCount++;
+
+                            if (alertData.signal.category === 'ULTRA_SCALP') {
+                                pulseStats.ultraScalp++;
+                            } else if (alertData.signal.category === 'INSTITUTIONAL_LEVEL') {
+                                pulseStats.institutionalLevel++;
+                            }
+
+                            unsafeWindow.institutionalPulse.push(alertData);
+                            capturedAlertsThisRead.push(alertData);
+
+                            const dir = alertData.signal.di !== undefined ? alertData.signal.di : alertData.signal.d;
+                            const dirStr = dir === 1 ? '+1' : dir === -2 ? '-2' : '0';
+                            const rsiStr = alertData.confluences.rsi ? ` RSI:${alertData.confluences.rsi.h1}` : '';
+                            const tsExtracted = alertData.signal.timestampExtracted ? '🕐' : '⏰';
+                            console.log(`🚨 #${alertCount}: ${alertData.asset.cleanTicker} | ${alertData.signal.category} | ${alertData.signal.timestamp}`);
+
+                            updateInsights(alertData);
                         }
-
-                        let rawText = element.innerText || element.textContent || '';
-
-                        const alertText = rawText
-                            .split('\n')
-                            .map(line => line.trim())
-                            .filter(line => line.length > 0)
-                            .join('\n');
-
-                        if (!alertText || alertText.trim() === '') {
-                            return;
-                        }
-
-                        const contentHash = alertText.replace(/\s+/g, '');
-
-                        if (processedAlertIds.has(contentHash)) {
-                            return;
-                        }
-
-                        const alertData = parseAlertMessage(alertText, currentDate);
-
-                        if (!alertData || !alertData.parsed) {
-                            return;
-                        }
-
-                        processedAlertIds.add(contentHash);
-
-                        alertCount++;
-                        pulseStats.totalAlerts++;
-                        newAlertsCount++;
-
-                        if (alertData.signal.category === 'ULTRA_SCALP') {
-                            pulseStats.ultraScalp++;
-                        } else if (alertData.signal.category === 'INSTITUTIONAL_LEVEL') {
-                            pulseStats.institutionalLevel++;
-                        }
-
-                        unsafeWindow.institutionalPulse.push(alertData);
-                        capturedAlertsThisRead.push(alertData);
-
-                        const dir = alertData.signal.di !== undefined ? alertData.signal.di : alertData.signal.d;
-                        const dirStr = dir === 1 ? '+1' : dir === -2 ? '-2' : '0';
-                        const rsiStr = alertData.confluences.rsi ? ` RSI:${alertData.confluences.rsi.h1}` : '';
-                        const tsExtracted = alertData.signal.timestampExtracted ? '🕐' : '⏰';
-                        console.log(`🚨 #${alertCount}: ${alertData.asset.cleanTicker} | ${alertData.signal.category} | D:${dirStr} | $${alertData.signal.price}${rsiStr} | ${tsExtracted} ${alertData.signal.timestamp}`);
-
-                        updateInsights(alertData);
 
                     } catch (error) {
-                        console.error(`[Sidebar] ❌ Error processing element:`, error);
+                        console.error(`[Sidebar] ❌ Error processing item:`, error);
                     }
                 });
 
@@ -1545,7 +1562,7 @@
                         },
                         macro_windows: aggregateInto5mWindows(),
                         timestamp: new Date().toISOString()
-                    });
+                    }, isSyncMode);
 
                     // ✅ SHOW SUMMARIES IMMEDIATELY
                     console.log(`\n${'═'.repeat(60)}`);
@@ -1621,6 +1638,60 @@
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // GLOBAL TRIGGER WATCHER (BACKGROUND TAB SYNC)
+    // ═══════════════════════════════════════════════════════════════
+    let lastTriggerTime = 0;
+
+    function toggleSidebarSequence() {
+        console.log('[Sync] 🔄 Cycle detected! Running Force-Toggle Sequence...');
+
+        const alertsBtn = document.querySelector('button[data-name="alerts"]');
+        if (!alertsBtn) {
+            console.warn('[Sync] ⚠️ Alerts button not found, skipping toggle');
+            return;
+        }
+
+        const isPressed = alertsBtn.getAttribute('aria-pressed') === 'true';
+
+        if (isPressed) {
+            // Panel is OPEN. Close it, then Re-open.
+            console.log('[Sync] 🔽 Closing panel...');
+            alertsBtn.click();
+
+            setTimeout(() => {
+                console.log('[Sync] 🔼 Re-opening panel to force DOM render...');
+                alertsBtn.click();
+
+                // Wait for render
+                setTimeout(() => {
+                    console.log('[Sync] 📖 Reading fresh alerts...');
+                    readSidebarAlerts(0);
+                }, 2500);
+
+            }, 500);
+        } else {
+            // Panel is CLOSED. Just Open it.
+            console.log('[Sync] 🔼 Opening panel...');
+            alertsBtn.click();
+            setTimeout(() => {
+                readSidebarAlerts(0);
+            }, 2500);
+        }
+    }
+
+    function startGlobalTriggerWatcher() {
+        console.log('[Sync] 📡 Listening for Master Trigger (unsafeWindow.TRIGGER_SIDEBAR_CHECK)...');
+
+        setInterval(() => {
+            if (unsafeWindow.TRIGGER_SIDEBAR_CHECK && unsafeWindow.TRIGGER_SIDEBAR_CHECK > lastTriggerTime) {
+                lastTriggerTime = unsafeWindow.TRIGGER_SIDEBAR_CHECK;
+                console.log(`[Sync] 🔔 Trigger received at ${new Date(lastTriggerTime).toLocaleTimeString()}`);
+                toggleSidebarSequence();
+            }
+        }, 2000); // Check every 2s (Lightweight)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // SIMPLIFIED TOAST DETECTION (TRIGGER ONLY)
     // ═══════════════════════════════════════════════════════════════
     let pollingInterval = null;
@@ -1687,7 +1758,7 @@
             return;
         }
 
-        const toastHash = text.replace(/\s+/g, '');
+        const toastHash = text.substring(0, 50).replace(/\s+/g, '');
         const lastHash = targetToast.dataset.lastHash || '';
 
         if (toastHash !== lastHash) {
@@ -1798,7 +1869,7 @@
     // PUBLIC API
     // ═══════════════════════════════════════════════════════════════
     unsafeWindow.InstitutionalPulse = {
-        version: '2.4.0-production',
+        version: '16.0',
         getAlerts: () => unsafeWindow.institutionalPulse,
         getStats: () => pulseStats,
         getInsights: () => INSIGHTS.stats,
@@ -1852,6 +1923,7 @@
 
         setTimeout(() => {
             startPollingObserver();
+            if (typeof startGlobalTriggerWatcher === 'function') startGlobalTriggerWatcher();
         }, 3000);
 
         setTimeout(() => {
@@ -1877,7 +1949,7 @@
 
     waitForPageLoad();
 
-    console.log('✅ Institutional Pulse Tracker v2.4 PRODUCTION ready');
+    console.log('✅ Institutional Pulse Tracker v2.8 PRODUCTION ready');
     console.log('🔄 Detection: Toast Polling + Date-Aware Sidebar');
     console.log('📋 Categories: ULTRA_SCALP (Short) | INSTITUTIONAL_LEVEL (Trigger)');
     console.log('✨ v2.4 Features:');
