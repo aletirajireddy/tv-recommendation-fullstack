@@ -91,6 +91,7 @@
         alertBatchTimestamp: null,
         cyclesSinceAlertDetected: 0,
         alertScanPending: false, // Prevents auto-scans from stealing buffer during stabilization
+        alertLockTime: 0, // Track when the lock was acquired
     };
 
     const DEFAULT_FILTERS = {
@@ -390,46 +391,77 @@
             const text = textDiv ? textDiv.innerText.trim().toLowerCase() : '';
             const combined = `${text} ${(th.getAttribute('title') || '').toLowerCase()}`;
 
-            if (combined.includes('symbol') || combined.includes('ticker'))
+            if (combined.includes('symbol') || combined.includes('ticker')) {
                 columnMap.TICKER = index;
-            else if (combined.includes('close') && !combined.includes('dist'))
+            } else if (combined.includes('close') && !combined.includes('dist')) {
                 columnMap.CLOSE = index;
-            else if (combined.includes('vol spike')) columnMap.VOL_SPIKE = index;
-            else if (combined.includes('mom score')) columnMap.MOM_SCORE = index;
+            } else if (combined.includes('vol spike')) {
+                columnMap.VOL_SPIKE = index;
+            } else if (combined.includes('mom score')) {
+                columnMap.MOM_SCORE = index;
+            }
 
             // EMA Distances
-            else if (combined.includes('1h ema50 dist')) columnMap.EMA50_DIST = index;
-            else if (combined.includes('1h ema200 dist')) columnMap.EMA200_DIST = index;
+            else if (combined.includes('1h ema50 dist')) {
+                columnMap.EMA50_DIST = index;
+            } else if (combined.includes('1h ema200 dist')) {
+                columnMap.EMA200_DIST = index;
+            }
 
             // Support/Resist (Logic & Standard)
-            else if (combined.includes('logic support dist')) columnMap.LOGIC_SUPPORT_DIST = index;
-            else if (combined.includes('logic resist dist')) columnMap.LOGIC_RESIST_DIST = index;
-            else if (combined.includes('support dist')) columnMap.SUPPORT_DIST = index;
-            else if (combined.includes('support stars')) columnMap.SUPPORT_STARS = index;
-            else if (combined.includes('resist dist')) columnMap.RESIST_DIST = index;
-            else if (combined.includes('resist stars')) columnMap.RESIST_STARS = index;
+            else if (combined.includes('logic support dist')) {
+                columnMap.LOGIC_SUPPORT_DIST = index;
+            } else if (combined.includes('logic resist dist')) {
+                columnMap.LOGIC_RESIST_DIST = index;
+            } else if (combined.includes('support dist')) {
+                columnMap.SUPPORT_DIST = index;
+            } else if (combined.includes('support stars')) {
+                columnMap.SUPPORT_STARS = index;
+            } else if (combined.includes('resist dist')) {
+                columnMap.RESIST_DIST = index;
+            } else if (combined.includes('resist stars')) {
+                columnMap.RESIST_STARS = index;
+            }
 
             // Daily Context
-            else if (combined.includes('daily range')) columnMap.DAILY_RANGE = index;
-            else if (combined.includes('daily trend')) columnMap.DAILY_TREND = index;
+            else if (combined.includes('daily range')) {
+                columnMap.DAILY_RANGE = index;
+            } else if (combined.includes('daily trend')) {
+                columnMap.DAILY_TREND = index;
+            }
 
             // Signals
-            else if (combined.includes('freeze')) columnMap.FREEZE = index;
-            else if (combined.includes('breakout')) columnMap.BREAKOUT = index;
-            else if (combined.includes('net trend')) columnMap.NET_TREND = index;
-            else if (combined.includes('retrace')) columnMap.RETRACE_OPP = index;
+            else if (combined.includes('freeze')) {
+                columnMap.FREEZE = index;
+            } else if (combined.includes('breakout')) {
+                columnMap.BREAKOUT = index;
+            } else if (combined.includes('net trend')) {
+                columnMap.NET_TREND = index;
+            } else if (combined.includes('retrace')) {
+                columnMap.RETRACE_OPP = index;
+            }
 
             // Cluster Analysis
-            else if (combined.includes('scope count')) columnMap.SCOPE_COUNT = index;
-            else if (combined.includes('scope highest')) columnMap.CLUSTER_SCOPE_HIGHEST = index;
-            else if (combined.includes('compress count')) columnMap.CLUSTER_COMPRESS_COUNT = index;
-            else if (combined.includes('compress highest')) columnMap.CLUSTER_COMPRESS_HIGHEST = index;
+            else if (combined.includes('scope count')) {
+                columnMap.SCOPE_COUNT = index;
+            } else if (combined.includes('scope highest')) {
+                columnMap.CLUSTER_SCOPE_HIGHEST = index;
+            } else if (combined.includes('compress count')) {
+                columnMap.CLUSTER_COMPRESS_COUNT = index;
+            } else if (combined.includes('compress highest')) {
+                columnMap.CLUSTER_COMPRESS_HIGHEST = index;
+            }
 
             // Flags & Mega Spot
-            else if (combined.includes('all ema flags')) columnMap.EMA_FLAGS = index;
-            else if (combined.includes('htf 200 flags')) columnMap.HTF_FLAGS = index;
-            else if (combined.includes('mega spot')) columnMap.MEGA_SPOT_DIST = index;
-            else if (combined.includes('ema position') || combined.includes('position code')) columnMap.POSITION_CODE = index;
+            else if (combined.includes('all ema flags')) {
+                columnMap.EMA_FLAGS = index;
+            } else if (combined.includes('htf 200 flags')) {
+                columnMap.HTF_FLAGS = index;
+            } else if (combined.includes('mega spot')) {
+                columnMap.MEGA_SPOT_DIST = index;
+            } else if (combined.includes('ema position') || combined.includes('position code')) {
+                columnMap.POSITION_CODE = index;
+            }
         });
 
         return columnMap.TICKER !== undefined && columnMap.CLOSE !== undefined
@@ -636,7 +668,9 @@
         }
 
         // Momentum & Volume
-        if ((coin.momScore || 0) >= 2) score += coin.momScore === 3 ? 7 : 5;
+        if ((coin.momScore || 0) >= 2) {
+            score += coin.momScore === 3 ? 7 : 5;
+        }
         if (coin.volSpike === 1) {
             score += 3;
             insights.push('📊 Volume');
@@ -1181,18 +1215,26 @@
     // PATTERN DETECTION
     // ═══════════════════════════════════════════════════════════════
     function detectTrend() {
-        if (STATE.history.length < 3) return 'insufficient_data';
+        if (STATE.history.length < 3) {
+            return 'insufficient_data';
+        }
 
         const last3 = STATE.history.slice(-3);
         const moods = last3.map(h => h.marketSentiment.mood);
 
-        if (moods.every(m => m.includes('BULLISH'))) return 'consistent_bullish';
-        if (moods.every(m => m.includes('BEARISH'))) return 'consistent_bearish';
+        if (moods.every(m => m.includes('BULLISH'))) {
+            return 'consistent_bullish';
+        }
+        if (moods.every(m => m.includes('BEARISH'))) {
+            return 'consistent_bearish';
+        }
         return 'volatile';
     }
 
     function detectMomentumShift() {
-        if (STATE.history.length < 2) return false;
+        if (STATE.history.length < 2) {
+            return false;
+        }
 
         const prev = STATE.history[STATE.history.length - 2];
         const curr = STATE.history[STATE.history.length - 1];
@@ -1502,7 +1544,7 @@
 
         // NO ALERTS: Standard 2-scan heartbeat logic
         if (STATE.autoScanCount !== CONFIG.AUTO_TRIGGER_AFTER_SCANS) {
-            console.log(`[AutoTrigger] ⏸️ Waiting for scan ${CONFIG.AUTO_TRIGGER_AFTER_SCANS}`);
+            console.log(`[AutoTrigger] ⏳ Heartbeat Cycle: ${STATE.autoScanCount}/${CONFIG.AUTO_TRIGGER_AFTER_SCANS} - Waiting to send...`);
             return;
         }
 
@@ -1588,13 +1630,27 @@
     function processData(scanType = 'auto') {
         if (STATE.isScanning) {
             console.log('[Process] ⏸️ Already scanning, skipping duplicate');
+
+            if (scanType === 'alert-triggered') {
+                console.warn('[Process] ⚠️ Alert Scan collision - Retrying in 2000ms to allow current scan to finish...');
+                setTimeout(() => processData('alert-triggered'), 2000);
+            }
             return;
         }
 
         // PRIORITY CHECK: If an alert triggered a scan, wait for it to finish stabilization
         if (scanType === 'auto' && STATE.alertScanPending) {
-            console.log('[Process] ⏸️ Skipping auto-scan - Waiting for Alert Stabilization (Priority)');
-            return;
+
+            // WATCHDOG: Check for STUCK Lock (e.g., if trigger logic crashed or timeout failed)
+            const lockDuration = Date.now() - STATE.alertLockTime;
+            if (lockDuration > 20000) { // 20 seconds max hold
+                console.warn(`[Process] ⚠️ Found STUCK Priority Lock (>20s). Force releasing to resume operations.`);
+                STATE.alertScanPending = false;
+                // Don't return, proceed with scan
+            } else {
+                console.log(`[Process] ⏸️ Skipping auto-scan - Waiting for Alert Stabilization (Priority)`);
+                return;
+            }
         }
 
         STATE.isScanning = true;
@@ -1629,7 +1685,7 @@
 
             if (scanType === 'auto') {
                 STATE.autoScanCount++;
-                console.log(`[AutoScan] Count: ${STATE.autoScanCount}/${CONFIG.AUTO_TRIGGER_AFTER_SCANS}`);
+                console.log(`[AutoScan] 🔄 Routine Scan | Cycle: ${STATE.autoScanCount}/${CONFIG.AUTO_TRIGGER_AFTER_SCANS}`);
             } else if (scanType === 'manual' || scanType === 'alert-triggered') {
                 console.log(`[${scanType}] Resetting auto-scan counter`);
                 STATE.autoScanCount = 0;
@@ -2034,7 +2090,10 @@
             STATE.isScanning = false;
             // FAIL-SAFE: Always release priority lock when any scan completes
             // This prevents deadlocks if a manual scan interrupts an alert scan
-            STATE.alertScanPending = false;
+            if (STATE.alertScanPending) {
+                STATE.alertScanPending = false;
+                console.log('[Lock] 🔓 Priority Lock Released (Scan Complete)');
+            }
         }
     }
 
@@ -2104,23 +2163,33 @@
                 console.log(`${'═'.repeat(60)}\n`);
 
                 STATE.alertScanPending = true; // Lock auto-scans
+                STATE.alertLockTime = Date.now(); // Track time
+                console.log('[Lock] 🔒 Priority Lock Acquired (Waiting for Stabilization)');
                 unsafeWindow.triggerScreenerScan = false;
 
                 setTimeout(() => {
-                    const btn = findScanButton();
-                    if (!btn) {
-                        console.error('❌ Scan button not found');
-                        return;
-                    }
-                    console.log('[Trigger] 🖱️ Clicking scan button...');
-                    btn.click();
+                    try {
+                        const btn = findScanButton();
+                        if (!btn) {
+                            console.error('❌ Scan button not found - releasing priority lock');
+                            STATE.alertScanPending = false; // FAILSAFE: Release lock
+                            console.log('[Lock] 🔓 Priority Lock Released (Button Missing)');
+                            return;
+                        }
+                        console.log('[Trigger] 🖱️ Clicking scan button...');
+                        btn.click();
 
-                    // Force processing after delay
-                    clearTimeout(STATE.processDebounceTimer);
-                    STATE.processDebounceTimer = setTimeout(() => {
-                        processData('alert-triggered');
-                        // STATE.alertScanPending release moved to processData() finally block for safety
-                    }, UI_DELAY_MS);
+                        // Force processing after delay
+                        clearTimeout(STATE.processDebounceTimer);
+                        STATE.processDebounceTimer = setTimeout(() => {
+                            processData('alert-triggered');
+                            // STATE.alertScanPending release moved to processData() finally block for safety
+                        }, UI_DELAY_MS);
+                    } catch (err) {
+                        console.error('[Trigger] ❌ Error during alert processing:', err);
+                        STATE.alertScanPending = false;
+                        console.log('[Lock] 🔓 Priority Lock Released (Error Failsafe)');
+                    }
 
                 }, 10000);
             } else if (unsafeWindow.triggerScreenerScan && !unsafeWindow.batchedAlerts) {
@@ -2179,17 +2248,24 @@
     }
 
     function startAutoScan() {
-        if (STATE.scanIntervalId) {
-            clearInterval(STATE.scanIntervalId);
-        }
+        // ROBUST INIT: Wait for button to exist before starting the clock
+        const checkForButton = () => {
+            const btn = findScanButton();
+            if (btn) {
+                if (STATE.scanIntervalId) clearInterval(STATE.scanIntervalId);
 
-        console.log(
-            `[Auto-Scan] ▶️ Started (every ${CONFIG.INTERVAL_MINUTES} minutes)`
-        );
-        console.log(`[Auto-Trigger] Will activate after every ${CONFIG.AUTO_TRIGGER_AFTER_SCANS} auto-scans`);
+                console.log(`[Auto-Scan] ▶️ Started (every ${CONFIG.INTERVAL_MINUTES} minutes)`);
+                console.log(`[Auto-Trigger] Will activate after every ${CONFIG.AUTO_TRIGGER_AFTER_SCANS} auto-scans`);
 
-        triggerAutoScan();
-        STATE.scanIntervalId = setInterval(triggerAutoScan, INTERVAL_MS);
+                triggerAutoScan();
+                STATE.scanIntervalId = setInterval(triggerAutoScan, INTERVAL_MS);
+            } else {
+                console.log('[Init] ⏳ Waiting for Scan Button to load...');
+                setTimeout(checkForButton, 2000);
+            }
+        };
+
+        checkForButton();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -2204,10 +2280,15 @@
 
         if (e.altKey && !e.shiftKey && e.code === 'KeyU') {
             e.preventDefault();
-            triggerAutoScan();
-            if (STATE.scanIntervalId) {
-                clearInterval(STATE.scanIntervalId);
-                STATE.scanIntervalId = setInterval(triggerAutoScan, INTERVAL_MS);
+            try {
+                console.log('[Manual] Alt+U pressed - Force Triggering Auto-Scan...');
+                triggerAutoScan();
+                if (STATE.scanIntervalId) {
+                    clearInterval(STATE.scanIntervalId);
+                    STATE.scanIntervalId = setInterval(triggerAutoScan, INTERVAL_MS);
+                }
+            } catch (err) {
+                console.error('[Manual] ❌ Alt+U Failed:', err);
             }
             return;
         }

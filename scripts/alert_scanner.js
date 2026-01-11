@@ -34,7 +34,8 @@
         PANEL_WAIT_MS: 3000,
         PANEL_OPEN_WAIT_MS: 5000,
         SIDEBAR_RETRY_MAX: 3,
-        SIDEBAR_RETRY_DELAY_MS: 2000
+        SIDEBAR_RETRY_DELAY_MS: 2000,
+        ENABLE_FORCE_TOGGLE: false // Default: Do not force sidebar open/close sequences (Passive Sync)
     };
 
     // ═══════════════════════════════════════════════════════════════
@@ -1269,8 +1270,6 @@
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // BATCHED BACKEND SYNC
-    // ═══════════════════════════════════════════════════════════════
     // ═══════════════════════════════════════════════════════════════
     function syncBatchToBackend(batchData, isSyncMode = false) {
         // PASS-THROUGH STRATEGY:
@@ -1643,6 +1642,13 @@
     let lastTriggerTime = 0;
 
     function toggleSidebarSequence() {
+        if (!CONFIG.ENABLE_FORCE_TOGGLE) {
+            // VERBOSE LOGGING: Provide confidence that the system is alive even in passive mode
+            const bufferSize = unsafeWindow.pendingAlertBatch ? unsafeWindow.pendingAlertBatch.length : 0;
+            console.log(`[Sync] 🔄 Cycle Check (Passive Mode) | Buffered: ${bufferSize} | Total Processed: ${pulseStats.totalAlerts}`);
+            return;
+        }
+
         console.log('[Sync] 🔄 Cycle detected! Running Force-Toggle Sequence...');
 
         const alertsBtn = document.querySelector('button[data-name="alerts"]');
@@ -1653,29 +1659,36 @@
 
         const isPressed = alertsBtn.getAttribute('aria-pressed') === 'true';
 
+        // Helper: Wait for items to render
+        const waitForRender = (attempt = 0) => {
+            const items = document.querySelectorAll('div[data-name="alert-log-item"]');
+            if (items.length > 0) {
+                console.log(`[Sync] ✅ Render detected (${items.length} items) after ${attempt * 500}ms`);
+                readSidebarAlerts(0);
+            } else if (attempt < 10) { // Max 5 seconds wait
+                console.log(`[Sync] ⏳ Waiting for render (attempt ${attempt + 1})...`);
+                setTimeout(() => waitForRender(attempt + 1), 500);
+            } else {
+                console.warn('[Sync] ⚠️ Render timeout - reading what we have');
+                readSidebarAlerts(0);
+            }
+        };
+
         if (isPressed) {
             // Panel is OPEN. Close it, then Re-open.
             console.log('[Sync] 🔽 Closing panel...');
             alertsBtn.click();
 
             setTimeout(() => {
-                console.log('[Sync] 🔼 Re-opening panel to force DOM render...');
+                console.log('[Sync] � Re-opening panel to force DOM render...');
                 alertsBtn.click();
-
-                // Wait for render
-                setTimeout(() => {
-                    console.log('[Sync] 📖 Reading fresh alerts...');
-                    readSidebarAlerts(0);
-                }, 2500);
-
+                setTimeout(() => waitForRender(), 500);
             }, 500);
         } else {
             // Panel is CLOSED. Just Open it.
             console.log('[Sync] 🔼 Opening panel...');
             alertsBtn.click();
-            setTimeout(() => {
-                readSidebarAlerts(0);
-            }, 2500);
+            setTimeout(() => waitForRender(), 500);
         }
     }
 
@@ -1729,46 +1742,74 @@
 
         const toastGroups = document.querySelectorAll("#overlap-manager-root section [class*='toastGroup']");
 
-        if (toastGroups.length === 0) {
+        if (toastGroups.length < 2) { // Need at least 2 groups (Group 1 is usually alerts)
             if (toastCheckCount % 20 === 0) {
-                console.log(`[Poll] ⏳ [${toastCheckCount * 3}s] Waiting for toast...`);
+                console.log(`[Poll] ⏳ [${toastCheckCount * 3}s] Waiting for toast container...`);
             }
             return;
         }
 
         const targetToast = toastGroups[1];
+        if (!targetToast) return;
 
-        if (!targetToast) {
-            return;
-        }
-
+        // Visual Check
         const style = window.getComputedStyle(targetToast);
         const isVisible = style.display !== 'none' &&
             style.visibility !== 'hidden' &&
             parseFloat(style.opacity) > 0;
 
-        if (!isVisible) {
-            return;
-        }
+        if (!isVisible) return;
 
-        const text = targetToast.innerText || '';
-        const hasAlert = text.match(/Short|Trigger|Di:|D:|P:/i);
+        // DIRECT PARSING LOGIC: Look for 'ul > li' items
+        const listItems = targetToast.querySelectorAll('ul li');
+        if (listItems.length === 0) return;
 
-        if (!hasAlert || text.length < 10) {
-            return;
-        }
+        let newToastAlertsCount = 0;
+        const capturedToastAlerts = [];
+        const todayContext = new Date(); // Explicit "Today" per user request
 
-        const toastHash = text.substring(0, 50).replace(/\s+/g, '');
-        const lastHash = targetToast.dataset.lastHash || '';
+        listItems.forEach(li => {
+            try {
+                const text = li.innerText || '';
+                if (text.length < 10) return;
 
-        if (toastHash !== lastHash) {
-            console.log(`\n[Poll] 🔔 NEW Alert Toast Detected!`);
-            targetToast.dataset.lastHash = toastHash;
-            handleToastDetection();
-        }
+                // DEDUPLICATION: Shared Hash Check
+                const contentHash = text.replace(/\s+/g, '');
+                if (processedAlertIds.has(contentHash)) {
+                    return; // Already processed by Sidebar or previous Poll
+                }
 
-        if (hasAlert && toastCheckCount % 10 === 0) {
-            console.log(`[Poll] ✅ [${toastCheckCount * 3}s] Monitoring active`);
+                // Parse with TODAY context
+                const alertData = parseAlertMessage(text, todayContext);
+
+                if (alertData && alertData.parsed) {
+                    console.log(`[Poll] 🔔 Captured Toast Alert: ${alertData.asset.cleanTicker}`);
+
+                    processedAlertIds.add(contentHash); // Lock it immediately
+
+                    pulseStats.totalAlerts++;
+                    pulseStats.toastDetections++;
+                    newToastAlertsCount++;
+
+                    unsafeWindow.institutionalPulse.push(alertData);
+                    capturedToastAlerts.push(alertData);
+                    updateInsights(alertData);
+                }
+            } catch (err) {
+                console.warn('[Poll] ⚠️ Failed to parse toast item (skipping):', err);
+            }
+        });
+
+        if (newToastAlertsCount > 0) {
+            console.log(`[Poll] ✅ Direct-Parsed ${newToastAlertsCount} alerts from Toast! Syncing...`);
+            syncBatchToBackend({
+                batch_id: `toast_${Date.now()}`,
+                alerts: capturedToastAlerts,
+                batch_summary: {
+                    source: 'TOAST_FALLBACK',
+                    count: newToastAlertsCount
+                }
+            }, false); // Force Trigger (Toasts are usually urgent)
         }
     }
 
