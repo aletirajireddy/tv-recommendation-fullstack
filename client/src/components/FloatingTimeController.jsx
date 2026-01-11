@@ -8,11 +8,12 @@ export function FloatingTimeController() {
 
     // Calculate Max Range dynamically based on history
     const maxRange = React.useMemo(() => {
-        if (!timeline || timeline.length === 0) return 24;
+        if (!timeline || timeline.length === 0) return 720;
         const first = new Date(timeline[0].timestamp);
         const last = new Date();
         const diff = (last - first) / (1000 * 60 * 60);
-        return Math.ceil(diff + 2); // Buffer of 2 hours
+        // Ensure max range is at least 30 days (720h) so slider can expand
+        return Math.max(Math.ceil(diff + 2), 720);
     }, [timeline]);
 
     // Local state for smooth dragging

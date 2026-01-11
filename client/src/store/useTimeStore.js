@@ -155,13 +155,9 @@ export const useTimeStore = create((set, get) => ({
                 const first = new Date(sorted[0].timestamp);
                 const last = new Date(); // now
                 const diffHours = (last - first) / (1000 * 60 * 60);
-                // Set default lookback to cover full history (with buffer)
-                const maxHours = Math.ceil(diffHours + 1);
 
-                // Only set default on first load (if lookback is high default)
-                if (get().lookbackHours === 720) {
-                    set({ lookbackHours: maxHours });
-                }
+                // Debugging Window Issue
+                console.log(`[Timeline] Loaded ${sorted.length} scans. Span: ${diffHours.toFixed(2)} hours. Current Lookback: ${get().lookbackHours}`);
             }
 
             set({

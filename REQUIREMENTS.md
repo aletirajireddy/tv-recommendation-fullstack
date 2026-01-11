@@ -10,12 +10,14 @@ This project is a **Real-Time Market Analytics Dashboard** designed to ingest, s
 ```mermaid
 graph TD
     TV[TradingView Browser Tab]
-    TM_S[Tampermonkey: Symbol Scanner]
-    TM_A[Tampermonkey: Alert Scanner]
+    TM_S[Tampermonkey: Symbol Scanner (Master)]
+    TM_A[Tampermonkey: Alert Scanner (Slave)]
     
     subgraph Client Workstation
-        TM_A -- Buffers Alerts --> TM_S
-        TM_S -- HTTP POST (JSON) --> API[Node.js API (Port 3000)]
+        TM_S -- "1. Wake Up Signal (3m)" --> TM_A
+        TM_A -- "2. Force Toggle (Simulate Click)" --> TV
+        TM_A -- "3. Buffer Alerts" --> TM_S
+        TM_S -- "4. POST Payload" --> API[Node.js API (Port 3000)]
         
         API -- Write --> DB[(SQLite Database)]
         API -- WebSocket (Socket.IO) --> FE[React Client (Port 5173)]

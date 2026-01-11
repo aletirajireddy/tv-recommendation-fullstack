@@ -11,7 +11,7 @@ const viteBin = path.join(__dirname, 'node_modules', 'vite', 'bin', 'vite.js');
 
 console.log(`Starting Client via Node: ${viteBin}`);
 
-const child = spawn(process.execPath, [viteBin, 'preview', '--port', '5173', '--host'], {
+const child = spawn(process.execPath, [viteBin, 'dev', '--port', '5173', '--host'], {
     stdio: 'inherit',
     cwd: __dirname,
     shell: false, // CRITICAL: Prevents cmd.exe window popup

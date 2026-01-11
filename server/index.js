@@ -28,8 +28,8 @@ io.on('connection', (socket) => {
 // V2 API Routes
 // ---------------------------------------------------------
 
-// RETENTION POLICY (98 Hours)
-const RETENTION_HOURS = 98;
+// RETENTION POLICY (30 Days = 720 Hours)
+const RETENTION_HOURS = 720;
 function cleanupOldData() {
     try {
         const cutoff = new Date(Date.now() - RETENTION_HOURS * 60 * 60 * 1000).toISOString();
@@ -151,7 +151,18 @@ app.post('/scan-report', (req, res) => {
 
 
 
-        res.json({ status: 'ok', id: payload.id });
+
+        // SMART SYNC: Retrieve the absolute latest alert timestamp from DB
+        // This ensures the frontend knows where to stop scanning, even if the current payload has no alerts.
+        const row = db.prepare('SELECT MAX(timestamp) as last FROM pulse_events').get();
+        const lastAlertTs = row && row.last ? row.last : null;
+
+        res.json({
+            status: 'ok',
+            id: payload.id,
+            trigger: payload.trigger,
+            last_alert_ts: lastAlertTs
+        });
 
     } catch (err) {
         console.error('❌ Insert Error:', err);
@@ -326,7 +337,8 @@ function generateAnalytics(hours = 24, refTime = null) {
             mood_score: moodScore, wave_type: waveType, timeline: sortedEvents.join(', ')
         };
     });
-    spreadAnalysis.sort((a, b) => b.full_ts - a.full_ts);
+    // Fix: Use dayjs or Date to subtract timestamps, otherwise subtraction of strings = NaN
+    spreadAnalysis.sort((a, b) => dayjs(b.full_ts).valueOf() - dayjs(a.full_ts).valueOf());
 
     const recommendations = [];
     if (spreadAnalysis.length > 0) {
@@ -343,7 +355,8 @@ function generateAnalytics(hours = 24, refTime = null) {
             });
         }
     }
-    bursts.sort((a, b) => b.full_ts - a.full_ts);
+    // Fix: Use dayjs().valueOf() for bursts sort too
+    bursts.sort((a, b) => dayjs(b.full_ts).valueOf() - dayjs(a.full_ts).valueOf());
 
     const insightStrings = bursts.map(b =>
         `${b.time}: ${b.count} Alerts on ${b.coins.length} Assets (${b.bias})`
