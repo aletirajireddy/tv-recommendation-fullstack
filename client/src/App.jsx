@@ -9,6 +9,7 @@ import { ConfluenceGrid } from './components/AnalyticsWidgets/ConfluenceGrid';
 import { AlphaScatter } from './components/AnalyticsWidgets/AlphaScatter';
 import { TrendFlowChart } from './components/AnalyticsWidgets/TrendFlowChart';
 import RecommendationsFeed from './components/AnalyticsWidgets/RecommendationsFeed';
+import ScenarioBoard from './components/AnalyticsWidgets/ScenarioBoard';
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
 import { MonitorDetailModal } from './components/MonitorDetailModal';
@@ -46,6 +47,8 @@ function App() {
                 <ConfluenceGrid />
               </div>
 
+
+
               {/* ROW 2: ALERTS & RECOMMENDATIONS */}
               <div className={styles.analyticsSplitRow}>
                 <AlertsAnalyzer />
@@ -58,6 +61,11 @@ function App() {
               <div className={styles.analyticsSplitRow}>
                 <TrendFlowChart />
                 <AlphaScatter />
+              </div>
+
+              {/* ROW 4: SCENARIO PLANNING (War Room) */}
+              <div className={styles.analyticsFullRow}>
+                <ScenarioBoard />
               </div>
             </>
           </div>

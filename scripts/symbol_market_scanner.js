@@ -76,6 +76,7 @@
         currentScanName: 'default',
         isPaused: false,
         isScanning: false,
+        scanStartTime: 0, // WATCHDOG: Track when scan started
         lastScanHash: null,
         processDebounceTimer: null,
 
@@ -168,7 +169,11 @@
     function sendPayload(payload) {
         OfflineStore.prune();
 
-        console.log(`[Send] Sending payload ${payload.id} (${payload.trigger})...`);
+        // TRANSACTIONAL COUNT: Capture how many alerts we are taking
+        // This effectively "locks" this specific batch for removal upon success
+        const alertsToSendCount = payload.institutional_pulse && payload.institutional_pulse.alerts ? payload.institutional_pulse.alerts.length : 0;
+
+        console.log(`[Send] Sending payload ${payload.id} (${payload.trigger})... containing ${alertsToSendCount} alerts`);
 
         GM_xmlhttpRequest({
             method: 'POST',
@@ -188,7 +193,8 @@
                                 const ts = new Date(resJson.last_alert_ts).getTime();
                                 if (ts > (unsafeWindow.latestConfirmedAlertTs || 0)) {
                                     unsafeWindow.latestConfirmedAlertTs = ts;
-                                    console.log(`[Sync] 🔄 Updated Confirm Head: ${new Date(ts).toLocaleTimeString()}`);
+                                    const localTime = new Date(ts).toLocaleTimeString('en-IN', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                                    console.log(`[Sync] 🔄 Updated Confirm Head: ${localTime}`);
                                 }
                             }
                         } catch (e) {
@@ -196,10 +202,12 @@
                         }
                     }
 
-                    // TRANSACTIONAL FLUSH: Clear alerts buffer only on success
-                    if (unsafeWindow.pendingAlertBatch && unsafeWindow.pendingAlertBatch.length > 0) {
-                        console.log(`[Send] 🧹 Clearing ${unsafeWindow.pendingAlertBatch.length} flushed alerts`);
-                        unsafeWindow.pendingAlertBatch = [];
+                    // TRANSACTIONAL FLUSH: Only remove exactly what we sent
+                    // This creates a "Sliding Window" that preserves any NEW alerts that arrived during network latency
+                    if (alertsToSendCount > 0 && unsafeWindow.pendingAlertBatch) {
+                        console.log(`[Send] 🧹 Flushing ${alertsToSendCount} confirmed alerts (Splice)`);
+                        unsafeWindow.pendingAlertBatch.splice(0, alertsToSendCount);
+                        console.log(`[Send] 📦 Buffer remaining: ${unsafeWindow.pendingAlertBatch.length}`);
                     }
 
                     flushNextOfflineItem();
@@ -233,13 +241,18 @@
             data: JSON.stringify(item.payload),
             headers: { 'Content-Type': 'application/json' },
             onload: (response) => {
-                if (response.status === 200) {
-                    console.log(`✅ Flushed item ${item.id}`);
+                // 200 (OK) or 409 (Duplicate/Already Exists) -> Treat as success to clear queue
+                if (response.status === 200 || response.status === 409) {
+                    if (response.status === 409) {
+                        console.warn(`[Sync] ⚠️ Scan ${item.id} already exists on server (Duplicate). Discarding from queue.`);
+                    } else {
+                        console.log(`✅ Flushed item ${item.id}`);
+                    }
                     const newQueue = OfflineStore.getQueue().slice(1);
                     OfflineStore.saveQueue(newQueue);
                     setTimeout(flushNextOfflineItem, 1000);
                 } else {
-                    console.warn(`❌ Flush failed for ${item.id}, keeping in queue.`);
+                    console.warn(`⚠️ ❌ Flush failed for ${item.id}. Status: ${response.status} | Response: ${response.responseText.slice(0, 100)}`);
                 }
             },
             onerror: () => console.warn(`❌ Flush network error for ${item.id}`),
@@ -388,7 +401,8 @@
 
         headers.forEach((th, index) => {
             const textDiv = th.querySelector('[class*="upperLine"]');
-            const text = textDiv ? textDiv.innerText.trim().toLowerCase() : '';
+            // Fallback: Use direct TH text if upperLine not found
+            const text = textDiv ? textDiv.innerText.trim().toLowerCase() : th.innerText.trim().toLowerCase();
             const combined = `${text} ${(th.getAttribute('title') || '').toLowerCase()}`;
 
             if (combined.includes('symbol') || combined.includes('ticker')) {
@@ -464,6 +478,8 @@
             }
         });
 
+
+
         return columnMap.TICKER !== undefined && columnMap.CLOSE !== undefined
             ? columnMap
             : null;
@@ -493,10 +509,14 @@
         }
 
         const rows = document.querySelectorAll(
-            'tbody tr[class*="listRow"][data-rowkey]'
+            'tbody tr[class*="listRow"][data-rowkey], tbody tr[data-rowkey]'
         );
+        console.log(`[Parse] Found ${rows.length} rows. ColumnMap:`, columnMap ? 'OK' : 'FAIL');
         if (rows.length === 0) {
-            console.warn('[Parse] No data rows');
+            console.warn('[Parse] No data rows found with selectors: listRow[data-rowkey] OR tr[data-rowkey]');
+            // Dump table HTML structure to help debug if user sees console
+            const tbody = document.querySelector('tbody');
+            if (tbody) console.log('[Parse] First row HTML:', tbody.firstElementChild ? tbody.firstElementChild.outerHTML : 'Empty TBODY');
             return [];
         }
 
@@ -1548,6 +1568,13 @@
             return;
         }
 
+        // OFFLINE STORE CHECK (Heartbeat should try to flush pending items)
+        const offlineQueue = OfflineStore.getQueue();
+        if (offlineQueue.length > 0) {
+            console.log(`[AutoTrigger] 🏚️ Found ${offlineQueue.length} offline items. Attempting flush...`);
+            flushNextOfflineItem();
+        }
+
         STATE.autoScanCount = 0;
         const changeDetection = detectDataChange('auto');
 
@@ -1586,14 +1613,22 @@
                     if (response.responseText) {
                         try {
                             const resJson = JSON.parse(response.responseText);
+                            console.log(`✅ SERVER RESPONSE [200 OK]`);
+                            console.log(`   Trigger: ${resJson.trigger || 'N/A'}`);
+                            console.log(`   Saved TS: ${resJson.timestamp || 'N/A'}`);
+
                             if (resJson.last_alert_ts) {
                                 const ts = new Date(resJson.last_alert_ts).getTime();
+                                console.log(`   Latest Alert TS: ${resJson.last_alert_ts}`);
+
                                 if (ts > (unsafeWindow.latestConfirmedAlertTs || 0)) {
                                     unsafeWindow.latestConfirmedAlertTs = ts;
-                                    console.log(`[Sync] 🔄 Updated last_alert_ts`);
+                                    console.log(`   [Sync] 🔄 Updated local head to: ${resJson.last_alert_ts}`);
                                 }
                             }
-                        } catch (e) { }
+                        } catch (e) {
+                            console.warn('   [Sync] ⚠️ JSON Parse Error on response', e);
+                        }
                     }
 
                     // ✅ TRANSACTIONAL CLEAR: Only on 200 OK
@@ -1628,6 +1663,17 @@
     // PROCESS DATA (MAIN PROCESSING FUNCTION)
     // ═══════════════════════════════════════════════════════════════
     function processData(scanType = 'auto') {
+        // ═══════════════════════════════════════════════════════════════
+        // WATCHDOG: Force Break Lock if stuck > 30s
+        // ═══════════════════════════════════════════════════════════════
+        if (STATE.isScanning) {
+            const elapsed = Date.now() - (STATE.scanStartTime || 0);
+            if (elapsed > 30000) {
+                console.warn(`[Watchdog] ⚠️ Scan stuck for ${Math.round(elapsed / 1000)}s - FORCE RELEASING LOCK`);
+                STATE.isScanning = false;
+            }
+        }
+
         if (STATE.isScanning) {
             console.log('[Process] ⏸️ Already scanning, skipping duplicate');
 
@@ -1654,6 +1700,8 @@
         }
 
         STATE.isScanning = true;
+        STATE.scanStartTime = Date.now(); // Watchdog Start
+        STATE.scanStartTime = Date.now(); // Watchdog Start
         STATE.lastScanType = scanType;
 
         try {

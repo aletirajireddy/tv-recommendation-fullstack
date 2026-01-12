@@ -1423,9 +1423,7 @@
     // ═══════════════════════════════════════════════════════════════
     // DATE-AWARE SIDEBAR ALERTS READING - PROCESS ALL ON LOAD
     // ═══════════════════════════════════════════════════════════════
-    let sidebarMutationObserver = null;
-
-
+    let sidebarPollingInterval = null;
 
     async function readSidebarAlerts(delay = 0, isSyncMode = false) {
         setTimeout(async () => {
@@ -1444,7 +1442,19 @@
 
                 if (!logContainer) {
                     console.log('[Sidebar] ⚠️ No alert items found, checking fallbacks...');
-                    logContainer = document.querySelector('div[data-name="alert-log"]');
+                    // VISIBILITY CHECK: Iterate all candidates and find the visible one
+                    const candidates = document.querySelectorAll('div[data-name="alert-log"]');
+                    for (const candidate of candidates) {
+                        const style = window.getComputedStyle(candidate);
+                        const isVisible = style.display !== 'none' &&
+                            style.visibility !== 'hidden' &&
+                            parseFloat(style.opacity) > 0;
+                        if (isVisible) {
+                            logContainer = candidate;
+                            console.log('[Sidebar] 👁️ Found VISIBLE container via CSS check');
+                            break;
+                        }
+                    }
                 }
 
                 if (!logContainer) {
@@ -1452,7 +1462,13 @@
                     return;
                 }
 
-                console.log(`[Sidebar] ✅ Container found: ${logContainer.className}`);
+                if (!logContainer.className.includes('scrollContainer')) {
+                    console.warn(`[Sidebar] ⚠️ Container class '${logContainer.className}' does not match expected 'scrollContainer-*'. Proceeding with caution.`);
+                } else {
+                    console.log(`[Sidebar] ✅ Container verified (matches 'scrollContainer-*')`);
+                }
+
+                // DOM STATE CHECK: Just process the container, no observer needed.
 
                 // 2. Iterate Direct Children Only (Preserve Order & Context)
                 const children = Array.from(logContainer.children);
@@ -1506,6 +1522,19 @@
                             const alertData = parseAlertMessage(alertText, currentDate);
 
                             if (!alertData || !alertData.parsed) {
+                                return;
+                            }
+
+                            // ═══════════════════════════════════════════════════════════════
+                            // HEAD CHECK: Filter by Server Timestamp (Persistence)
+                            // ═══════════════════════════════════════════════════════════════
+                            const serverLastTs = unsafeWindow.latestConfirmedAlertTs || 0;
+                            const alertTs = new Date(alertData.timestamp).getTime();
+
+                            // Tolerance: Allow 1s diff for precision issues, but generally strict
+                            if (alertTs <= serverLastTs) {
+                                // Already processed by server in previous session
+                                processedAlertIds.add(contentHash); // Lock it locally
                                 return;
                             }
 
@@ -1603,37 +1632,52 @@
         }
     }
 
-    function setupSidebarMutationObserver() {
-        const alertsBtn = document.querySelector('button[data-name="alerts"]');
+    let isSidebarPollingLocked = false;
 
-        if (!alertsBtn) {
-            console.log('[Sidebar Observer] ⚠️ Alerts button not found yet');
-            return false;
-        }
+    function startSidebarPolling() {
+        if (sidebarPollingInterval) return;
 
-        if (sidebarMutationObserver) {
-            console.log('[Sidebar Observer] ⚠️ Already monitoring sidebar button');
-            return true;
-        }
-
-        sidebarMutationObserver = new MutationObserver(() => {
-            const isPressed = alertsBtn.getAttribute('aria-pressed') === 'true';
-
-            if (isPressed) {
-                console.log('[Sidebar Observer] 📂 Alerts panel opened manually, waiting 3 seconds...');
-                readSidebarAlerts(3000);
-            } else {
-                console.log('[Sidebar Observer] 📪 Alerts panel closed');
+        console.log('[Sidebar Poll] 🚀 Starting Sidebar Polling (2min interval)...');
+        sidebarPollingInterval = setInterval(async () => {
+            if (isSidebarPollingLocked) {
+                console.log('[Sidebar Poll] ⚠️ Previous poll still active, skipping...');
+                return;
             }
-        });
 
-        sidebarMutationObserver.observe(alertsBtn, {
-            attributes: true,
-            attributeFilter: ['aria-pressed']
-        });
+            isSidebarPollingLocked = true;
 
-        console.log('[Sidebar Observer] ✅ Monitoring alerts button state');
-        return true;
+            try {
+                // 1. Ensure Open
+                const alertsBtn = document.querySelector('button[data-name="alerts"]');
+
+                // CSS VISIBILITY CHECK FOR BUTTON ITSELF
+                if (alertsBtn) {
+                    const btnStyle = window.getComputedStyle(alertsBtn);
+                    if (btnStyle.display === 'none' || btnStyle.visibility === 'hidden') {
+                        isSidebarPollingLocked = false;
+                        return;
+                    }
+                }
+
+                if (alertsBtn && alertsBtn.getAttribute('aria-pressed') !== 'true') {
+                    console.log('[Sidebar Poll] 🔓 Re-opening alerts panel...');
+                    alertsBtn.click();
+                    // Give it a moment to render before reading
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+
+                // 2. Read
+                await readSidebarAlerts(0, true);
+
+            } catch (err) {
+                console.error('[Sidebar Poll] ❌ Error:', err);
+            } finally {
+                // Release lock after a rough safety buffer
+                setTimeout(() => {
+                    isSidebarPollingLocked = false;
+                }, 1000);
+            }
+        }, 120000); // 2 minutes
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1960,10 +2004,9 @@
             }
         }
 
-        trySetupSidebar();
-
         setTimeout(() => {
-            startPollingObserver();
+            startPollingObserver(); // Toast Polling
+            startSidebarPolling();  // Sidebar List Polling (New Master)
             if (typeof startGlobalTriggerWatcher === 'function') startGlobalTriggerWatcher();
         }, 3000);
 

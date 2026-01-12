@@ -7,6 +7,7 @@ const path = require('path');
 const dayjs = require('dayjs');
 require('dotenv').config();
 const TelegramService = require('./services/telegram');
+const ScenarioEngine = require('./services/scenario_engine');
 
 const app = express();
 const server = http.createServer(app);
@@ -166,6 +167,9 @@ app.post('/scan-report', (req, res) => {
 
     } catch (err) {
         console.error('❌ Insert Error:', err);
+        if (err.code === 'SQLITE_CONSTRAINT' || err.message.includes('UNIQUE constraint')) {
+            return res.status(409).json({ error: 'Duplicate Scan ID', id: payload.id });
+        }
         res.status(500).json({ error: err.message });
     }
 });
@@ -635,6 +639,18 @@ app.post('/api/settings/telegram', (req, res) => {
 
 app.get('/api/settings/telegram', (req, res) => {
     res.json({ enabled: TelegramService.isEnabled });
+});
+
+// 9. SCENARIO PLANNING (Plan A/B)
+app.get('/api/analytics/scenarios', (req, res) => {
+    try {
+        const hours = parseFloat(req.query.hours) || 24;
+        const scenarios = ScenarioEngine.generatePlan(hours);
+        res.json(scenarios);
+    } catch (err) {
+        console.error('Error generating scenarios:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 const PORT = 3000;
