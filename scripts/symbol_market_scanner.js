@@ -524,10 +524,12 @@
 
         rows.forEach((row) => {
             const cells = row.querySelectorAll('td[class*="cell-"]');
+            const rowKey = row.getAttribute('data-rowkey') || ''; // Capture BINANCE:ADAUSDT.P
 
             const coin = {
                 row: row,
                 ticker: extractTicker(row),
+                exchange_symbol: rowKey, // NEW FIELD
                 close: parseTvNumber(cells[columnMap.CLOSE]?.innerText),
 
                 // Indicators
