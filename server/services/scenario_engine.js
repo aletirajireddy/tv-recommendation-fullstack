@@ -96,36 +96,34 @@ const ScenarioEngine = {
                 if (hasMom) heatScore += 1;
 
                 // PLAN A: Bullish Breakout
-                // Criteria: Structurally close (< 5%) AND (Strong Mom OR Vol Spike Ignition)
+                // RELAXED: Allow neutral momentum (-5) if near resistance (< 3.0%)
                 if (
-                    resistDist !== null && resistDist >= 0 && resistDist < 5.0 &&
-                    (momScore >= 60 || (hasVol && momScore > 0)) && // Relaxed if Vol Spike
-                    (pulse.buy > 0 || hasVol) // Allow Vol Spike to substitute for Pulse
+                    resistDist !== null && resistDist >= 0 && resistDist < 3.0 &&
+                    momScore >= -5
                 ) {
                     planA.push({
                         ticker: coin.ticker,
                         price: coin.price,
                         trigger: `Break R (+${resistDist.toFixed(1)}%)`,
                         scope: `Mom: ${momScore}`,
-                        heat: heatScore, // Use boosted score
+                        heat: heatScore,
                         vol: hasVol,
                         type: 'BREAKOUT'
                     });
                 }
 
                 // PLAN B: Bearish Breakdown
-                // Criteria: Structurally close (< 5%) AND (Weak Mom OR Vol Spike Ignition)
+                // RELAXED: Allow neutral momentum (5) if near support (> -3.0%)
                 if (
-                    supportDist !== null && supportDist >= 0 && supportDist < 5.0 &&
-                    (momScore <= 40 || (hasVol && momScore < 0)) && // Relaxed if Vol Spike
-                    (pulse.sell > 0 || hasVol) // Allow Vol Spike to substitute for Pulse
+                    supportDist !== null && supportDist <= 0 && supportDist > -3.0 &&
+                    momScore <= 5
                 ) {
                     planB.push({
                         ticker: coin.ticker,
                         price: coin.price,
-                        trigger: `Lose S (-${supportDist.toFixed(1)}%)`,
+                        trigger: `Lose S (${supportDist.toFixed(1)}%)`,
                         scope: `Mom: ${momScore}`,
-                        heat: heatScore, // Use boosted score
+                        heat: heatScore,
                         vol: hasVol,
                         type: 'BREAKDOWN'
                     });
