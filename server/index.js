@@ -503,13 +503,18 @@ app.get('/api/analytics/research', (req, res) => {
         const anchorStr = anchorTime.toISOString();
 
         // A. Velocity (Count per minute)
+        // CORRECTION: We need the *latest* 20 minutes in the window, not the oldest.
+        // Derived Table strategy: Get Top 20 DESC, then Sort ASC.
+        // [AUDIT FIX 2]: Order by timeSlot to resolve potential SQLite ambiguity.
         const velocityRows = db.prepare(`
-            SELECT strftime('%Y-%m-%dT%H:%M:00.000Z', timestamp) as timeSlot, count(*) as count
-            FROM pulse_events
-            WHERE timestamp > ? AND timestamp <= ?
-            GROUP BY timeSlot
-            ORDER BY timestamp ASC
-            LIMIT 20
+            SELECT * FROM (
+                SELECT strftime('%Y-%m-%dT%H:%M:00.000Z', timestamp) as timeSlot, count(*) as count
+                FROM pulse_events
+                WHERE timestamp > ? AND timestamp <= ?
+                GROUP BY timeSlot
+                ORDER BY timeSlot DESC
+                LIMIT 20
+            ) ORDER BY timeSlot ASC
         `).all(cutoff, anchorStr);
 
         const velocity = velocityRows.map(r => ({ time: r.timeSlot, count: r.count }));
