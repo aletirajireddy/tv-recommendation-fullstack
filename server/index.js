@@ -183,9 +183,43 @@ function analyzeProactiveStrategies(payload) {
         });
     }
 
+    // [AUDIT FIX]: Telegram showing -92% (Legacy) vs Frontend +37% (Genie).
+    // The payload.market_sentiment comes from the client scanner's legacy logic.
+    // We must RE-CALCULATE the "Genie Score" here to ensure Telegram matches the Dashboard.
+
+    let geniemood = { mood: 'NEUTRAL', moodScore: 0, bullish: 0, bearish: 0 };
+
+    // Symmetric Calculation (Same as GenieSmart.js)
+    if (results && results.length > 0) {
+        let bulls = 0;
+        let bears = 0;
+        results.forEach(item => {
+            const d = item.data || item;
+            const pCode = d.positionCode || 0;
+            if (pCode >= 300) bulls++; // 3xx, 5xx
+            if (pCode >= 100 && pCode < 200) bears++; // 1xx
+        });
+
+        const total = results.length;
+        // Score = (Net Flow / Total) * 100
+        const rawScore = ((bulls - bears) / total) * 100;
+        const moodScore = Math.round(rawScore);
+
+        let label = 'NEUTRAL';
+        if (moodScore >= 20) label = 'BULLISH';
+        if (moodScore <= -20) label = 'BEARISH';
+
+        geniemood = { mood: label, moodScore, bullish: bulls, bearish: bears, neutral: total - bulls - bears };
+        console.log(`[GENIE SERVER] Re-calc Sentiment: ${moodScore}% (${label}) vs Payload: ${payload.market_sentiment?.moodScore}%`);
+    }
+
     // Sync to Telegram Service (Handles Throttling & Logging)
-    // We pass market_sentiment. Logic inside TelegramService derives "Plan A / Plan B" from moodScore.
-    TelegramService.syncStrategies(strategies, payload.market_sentiment, { marketCheck: { mood: payload.market_sentiment.mood, score: payload.market_sentiment.moodScore } });
+    // Pass the RE-CALCULATED 'geniemood' which syncs with Frontend
+    TelegramService.syncStrategies(
+        strategies,
+        geniemood,
+        { marketCheck: { mood: geniemood.mood, score: geniemood.moodScore } }
+    );
 }
 
 // 3. QUALIFIED PICK (Stream B - Micro)

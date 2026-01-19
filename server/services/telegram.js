@@ -34,6 +34,11 @@ class TelegramService {
             try {
                 this.bot = new TelegramBot(this.token, { polling: false });
                 console.log(`✅ Telegram Service Initialized (Enabled: ${this.isEnabled})`);
+
+                // [USER REQUEST]: Send explicit Startup Notification
+                if (this.isEnabled) {
+                    this.sendAlert(`🚀 **SYSTEM ONLINE**\n\nDashboard V3 is active and monitoring.\nTime: ${new Date().toLocaleTimeString()}`, 'INFO');
+                }
             } catch (err) {
                 console.error('❌ Telegram Init Error:', err);
             }
@@ -182,6 +187,17 @@ class TelegramService {
                     if (scenarios && scenarios.marketCheck) {
                         header += `🎯 **GAME PLAN**: ${moodScore > 0 ? 'Plan A (Longs)' : 'Plan B (Shorts)'}\n`;
                     }
+
+                    // [VISUAL UPGRADE] ASCII Gauge
+                    // Range: -100 to +100. Map to 10 bars.
+                    // Bearish (-100 to 0) | Bullish (0 to 100)
+                    const totalBars = 12;
+                    const normalized = Math.min(Math.max(moodScore, -100), 100); // Clamp
+                    const percent = (normalized + 100) / 200; // 0 to 1
+                    const filled = Math.round(percent * totalBars);
+
+                    const bar = '▓'.repeat(filled) + '░'.repeat(totalBars - filled);
+                    header += `\`[${bar}]\`\n`;
 
                     header += `━━━━━━━━━━━━━━\n`;
                 }
