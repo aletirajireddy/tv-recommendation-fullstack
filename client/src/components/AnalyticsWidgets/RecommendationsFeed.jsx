@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import styles from './RecommendationsFeed.module.css';
 import { useTimeStore } from '../../store/useTimeStore';
+import GenieSmart from '../../services/GenieSmart';
 import { Lightbulb, TrendingUp, Anchor, Activity, AlertTriangle } from 'lucide-react';
 
 const StrategyCard = ({ card }) => {
@@ -16,7 +17,7 @@ const StrategyCard = ({ card }) => {
         <div className={`${styles.card} ${typeClass}`}>
             <div className={styles.cardHeader}>
                 <Icon size={18} className={styles.icon} />
-                <span className={styles.confidence}>{card.confidence.toUpperCase()} CONFIDENCE</span>
+                <span className={styles.confidence}>{(card.confidence || 'UNKNOWN').toUpperCase()} CONFIDENCE</span>
             </div>
             <h4 className={styles.title}>{card.title}</h4>
             <p className={styles.description}>{card.description}</p>
@@ -35,21 +36,25 @@ const StrategyCard = ({ card }) => {
     );
 };
 
-// Sub-component for Log Item
-const NotificationItem = ({ note }) => {
+// Sub-component for TLog Item
+const LogItem = ({ note }) => {
     let color = 'var(--text-secondary)';
-    let icon = 'ℹ️';
-    if (note.priority >= 3) { color = '#ef4444'; icon = '🚨'; } // Critical
-    else if (note.priority === 2) { color = '#f59e0b'; icon = '⚡'; } // Important
-    else if (note.trigger_type === 'MARKET_SHIFT') { color = '#3b82f6'; icon = '🔄'; }
+
+    // Level-based Styling
+    if (note.level === 'ALERT' || note.message.includes('🚨')) color = '#ef4444';
+    else if (note.level === 'UPDATE' || note.message.includes('🌊')) color = '#3b82f6';
+    else if (note.message.includes('✅')) color = '#10b981';
 
     return (
         <div className={styles.logItem} style={{ borderLeft: `3px solid ${color}` }}>
             <div className={styles.logHeader}>
-                <span className={styles.logTrigger} style={{ color }}>{icon} {note.trigger_type}</span>
-                <span className={styles.logTime}>{new Date(note.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span className={styles.logTrigger} style={{ color }}>{note.level}</span>
+                <span className={styles.logTime}>{new Date(note.timestamp).toLocaleTimeString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
             </div>
-            <div className={styles.logMessage}>{note.message.replace(/\*\*/g, '')}</div>
+            {/* Render Message with Basic Markdown stripping if needed, or just display as is since it has icons */}
+            <div className={styles.logMessage} style={{ whiteSpace: 'pre-wrap' }}>
+                {note.message.replace(/\*\*/g, '')}
+            </div>
         </div>
     );
 };
@@ -107,7 +112,7 @@ const processHistory = (historyItems, activeCards = []) => {
             groups[key] = {
                 id: key,
                 title: item.label,
-                description: `${new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+                description: `${new Date(item.timestamp).toLocaleTimeString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
                 timestamp: item.timestamp,
                 confidence: 'MAX',
                 type: item.label.includes('INSTITUTIONAL') ? 'opportunity' : 'trend',
@@ -127,22 +132,52 @@ const processHistory = (historyItems, activeCards = []) => {
 };
 
 export default function RecommendationsFeed() {
-    const { analyticsData, notifications, aiHistory, fetchAiHistory } = useTimeStore();
+    const { activeScan, aiHistory, fetchAiHistory, strategyLogs, fetchStrategyLogs } = useTimeStore();
     const [activeTab, setActiveTab] = React.useState('strategies');
-    const recommendations = analyticsData?.recommendations || [];
+
+    // GENIE SMART: Derive Recommendations on the Client Side
+    const recommendations = React.useMemo(() => {
+        if (!activeScan || !activeScan.results) return [];
+
+        const strategyMap = {}; // { 'STRATEGY_NAME': { title, tickers: [], ... } }
+
+        activeScan.results.forEach(tickerData => {
+            const strategies = GenieSmart.deriveStrategies(tickerData);
+
+            strategies.forEach(strat => {
+                if (!strategyMap[strat.name]) {
+                    strategyMap[strat.name] = {
+                        id: strat.name,
+                        title: strat.label || strat.name,
+                        description: `Detected ${strat.confidence} confidence pattern.`,
+                        confidence: strat.confidence,
+                        type: 'opportunity',
+                        tickers: []
+                    };
+                }
+                strategyMap[strat.name].tickers.push({
+                    ticker: tickerData.ticker,
+                    bias: tickerData.bias || (tickerData.netTrend > 0 ? 'BULL' : 'BEAR')
+                });
+            });
+        });
+
+        // Convert Map to Array
+        return Object.values(strategyMap);
+    }, [activeScan]);
 
     // Memoize history cards with filtering
     const historyCards = React.useMemo(() => processHistory(aiHistory, recommendations), [aiHistory, recommendations]);
 
-    // Fetch History when tab is active
+    // Fetch Data on Tab Change
     React.useEffect(() => {
-        if (activeTab === 'history') {
-            fetchAiHistory();
-        }
+        if (activeTab === 'history') fetchAiHistory();
+        if (activeTab === 'logs') fetchStrategyLogs();
     }, [activeTab]);
 
     return (
         <div className={styles.container}>
+            {/* ... header ... */}
             <div className={styles.header}>
                 <div className={styles.titleGroup}>
                     <h3>AI STRATEGY ENGINE</h3>
@@ -182,17 +217,18 @@ export default function RecommendationsFeed() {
                 )}
 
                 {activeTab === 'logs' && (
-                    notifications.length === 0 ? (
+                    !strategyLogs || strategyLogs.length === 0 ? (
                         <div className={styles.emptyState}>
                             <Activity size={24} style={{ opacity: 0.5, marginBottom: 10 }} />
-                            <p>No recent activity logs.</p>
+                            <p>No recent TLogs found.</p>
                         </div>
                     ) : (
-                        [...notifications].reverse().map(note => <NotificationItem key={note.id} note={note} />)
+                        strategyLogs.map(note => <LogItem key={note.id || note.timestamp} note={note} />)
                     )
                 )}
 
                 {activeTab === 'history' && (
+                    // ... existing history render ...
                     historyCards.length === 0 ? (
                         <div className={styles.emptyState}>
                             <Activity size={24} style={{ opacity: 0.5, marginBottom: 10 }} />

@@ -51,7 +51,15 @@ export function GlobalHeader() {
         }
     };
 
-    if (timeline.length === 0) return <div className="card" style={{ padding: '1rem' }}>Loading Timeline...</div>;
+    // Empty State Handling
+    if (timeline.length === 0) {
+        return (
+            <div className="card" style={{ padding: '1rem', textAlign: 'center', opacity: 0.8 }}>
+                <Clock className={styles.icon} size={16} style={{ marginRight: 8, display: 'inline', verticalAlign: 'middle' }} />
+                <span>System Ready - Waiting for Scanner Data...</span>
+            </div>
+        );
+    }
 
     // ... existing rendering logic ...
 

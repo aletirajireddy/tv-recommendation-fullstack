@@ -26,7 +26,7 @@ export function ConfluenceGrid() {
                             <th>Density</th>
                             <th>Cluster</th>
                             <th>Bias</th>
-                            <th>S/I</th>
+                            <th>Avg Score</th>
                             <th>Mom%</th>
                             <th>Wave Type</th>
                             <th>Ticker Timeline</th>
@@ -34,11 +34,11 @@ export function ConfluenceGrid() {
                     </thead>
                     <tbody>
                         {[...analyticsData.time_spread]
-                            .sort((a, b) => new Date(b.full_ts) - new Date(a.full_ts))
+                            .sort((a, b) => new Date(b.time) - new Date(a.time))
                             .map((row, i) => (
                                 <tr key={i} className={row.count > 5 ? styles.highlightRow : ''}>
                                     <td className={styles.dim}>{i + 1}</td>
-                                    <td className={styles.timeCell}>{row.time}</td>
+                                    <td className={styles.timeCell}>{new Date(row.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</td>
                                     <td className={styles.metricCell}>{row.count}</td>
                                     <td className={styles.metricCell}>{row.unique_coins}</td>
                                     <td className={styles.dim}>{row.spread}</td>
@@ -56,7 +56,7 @@ export function ConfluenceGrid() {
                                         {getWaveIcon(row.wave_type)}
                                         {row.wave_type}
                                     </td>
-                                    <td className={styles.timelineCell} title={row.timeline}>{row.timeline}</td>
+                                    <td className={styles.timelineCell} title={row.full_timeline || row.timeline}>{row.timeline}</td>
                                 </tr>
                             ))}
                     </tbody>

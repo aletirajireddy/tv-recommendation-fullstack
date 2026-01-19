@@ -109,7 +109,18 @@ export function FloatingMediaPlayer() {
 
     const currentScan = timeline[currentIndex];
     const isLive = currentIndex === timeline.length - 1;
-    const scanTime = currentScan ? new Date(currentScan.timestamp) : new Date();
+
+    let scanTime = new Date();
+    try {
+        if (currentScan && currentScan.timestamp) {
+            const parsed = new Date(currentScan.timestamp);
+            if (!isNaN(parsed.getTime())) {
+                scanTime = parsed;
+            }
+        }
+    } catch (e) {
+        // Fallback to now
+    }
 
     const handleScrubChange = (e) => {
         setScrubVal(parseInt(e.target.value));

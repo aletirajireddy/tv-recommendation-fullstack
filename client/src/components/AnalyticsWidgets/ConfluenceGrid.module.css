@@ -1,85 +1,85 @@
 .gridContainer {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
+    background: var(--surface-card);
+    border-radius: 12px;
     padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    overflow: hidden;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    margin: 20px 0;
+    border: 1px solid var(--border-light);
 }
 
 .title {
-    margin: 0;
-    font-size: 0.9rem;
+    margin: 0 0 16px 0;
+    font-size: 0.95rem;
     font-weight: 700;
-    letter-spacing: 0.05em;
     color: var(--text-secondary);
     text-transform: uppercase;
-    border-bottom: 2px solid var(--border-subtle);
-    padding-bottom: 8px;
+    letter-spacing: 0.05em;
+    border-bottom: 2px solid var(--primary-accent);
+    display: inline-block;
+    padding-bottom: 4px;
 }
 
 .tableWrapper {
-    flex: 1;
-    /* Take remaining height */
-    overflow-y: auto;
-    /* Enable vertical scrolling */
-    min-height: 200px;
-    /* Crucial for flex child scrolling */
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    overflow-x: auto;
     width: 100%;
-
-    /* Fixed 40vh per request, standard scroll */
-    height: auto;
-    max-height: 40vh;
+    overflow-x: auto;
+    /* Added for vertical scrolling as per user request */
+    max-height: 35vh;
+    overflow-y: auto;
 }
 
 .macroTable {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.75rem;
+    font-size: 0.85rem;
     white-space: nowrap;
 }
 
 .macroTable th {
     text-align: left;
-    color: var(--text-tertiary);
+    padding: 12px 16px;
+    color: var(--text-secondary);
     font-weight: 600;
-    padding: 8px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 2px solid var(--border-light);
+    position: sticky;
+    top: 0;
+    background: var(--surface-card);
+    /* Ensure this is opaque in global CSS */
+    z-index: 50;
+    /* Increased z-index */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    /* Visual separation */
 }
 
 .macroTable td {
-    padding: 8px;
-    border-bottom: 1px solid var(--border-subtle);
-    color: var(--text-secondary);
-}
-
-.highlightRow {
-    background: rgba(255, 255, 255, 0.03);
-    /* Subtle highlight */
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-primary);
 }
 
 .macroTable tr:last-child td {
     border-bottom: none;
 }
 
-/* Columns */
+.macroTable tr:hover {
+    background-color: var(--hover-state);
+}
+
+.highlightRow {
+    background-color: rgba(59, 130, 246, 0.05);
+    /* Light blue tint */
+}
+
 .dim {
     color: var(--text-tertiary);
-    font-family: 'Roboto Mono', monospace;
 }
 
 .timeCell {
-    font-family: 'Roboto Mono', monospace;
-    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-secondary);
 }
 
 .metricCell {
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text-primary);
 }
 
@@ -87,38 +87,36 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-weight: 600;
+    font-weight: 500;
 }
 
 .waveType {
     display: flex;
     align-items: center;
     gap: 6px;
+    color: var(--text-secondary);
     font-style: italic;
 }
 
-.timelineCell {
-    font-family: 'Roboto Mono', monospace;
-    font-size: 0.7rem;
-    color: var(--text-tertiary);
-    max-width: 300px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-/* Sentiment */
 .bull {
     color: var(--success);
-    font-weight: 700;
+    font-weight: 600;
 }
 
 .bear {
     color: var(--error);
-    font-weight: 700;
+    font-weight: 600;
 }
 
-.loading {
-    padding: 2rem;
-    text-align: center;
+.unit {
+    font-size: 0.75em;
+    margin-left: 2px;
     color: var(--text-tertiary);
+}
+
+.timelineCell {
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-secondary);
 }
