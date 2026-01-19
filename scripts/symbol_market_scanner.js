@@ -392,97 +392,115 @@
     // ═══════════════════════════════════════════════════════════════
     // COLUMN DETECTION
     // ═══════════════════════════════════════════════════════════════
-    function detectColumns() {
-        const headers = document.querySelectorAll('thead tr th');
-        if (headers.length === 0) { return null; }
+    function detectTableAndColumns() {
+        const tables = document.querySelectorAll('table');
+        for (let table of tables) {
+            const headers = table.querySelectorAll('thead tr th');
+            if (headers.length === 0) continue;
 
 
-        const columnMap = {};
+            const columnMap = {};
 
-        headers.forEach((th, index) => {
-            const textDiv = th.querySelector('[class*="upperLine"]');
-            // Fallback: Use direct TH text if upperLine not found
-            const text = textDiv ? textDiv.innerText.trim().toLowerCase() : th.innerText.trim().toLowerCase();
-            const combined = `${text} ${(th.getAttribute('title') || '').toLowerCase()}`;
+            headers.forEach((th, index) => {
+                const textDiv = th.querySelector('[class*="upperLine"]');
+                // Fallback: Use direct TH text if upperLine not found
+                const text = textDiv ? textDiv.innerText.trim().toLowerCase() : th.innerText.trim().toLowerCase();
+                const combined = `${text} ${(th.getAttribute('title') || '').toLowerCase()}`;
 
-            if (combined.includes('symbol') || combined.includes('ticker')) {
-                columnMap.TICKER = index;
-            } else if (combined.includes('close') && !combined.includes('dist')) {
-                columnMap.CLOSE = index;
-            } else if (combined.includes('vol spike')) {
-                columnMap.VOL_SPIKE = index;
-            } else if (combined.includes('mom score')) {
-                columnMap.MOM_SCORE = index;
+                if (combined.includes('symbol') || combined.includes('ticker') || combined.includes('coin') || combined.includes('pair') || combined.includes('name') || combined.includes('asset')) {
+                    columnMap.TICKER = index;
+                } else if ((combined.includes('close') || combined.includes('price') || combined.includes('last')) && !combined.includes('dist')) {
+                    columnMap.CLOSE = index;
+                } else if (combined.includes('vol spike')) {
+                    columnMap.VOL_SPIKE = index;
+                } else if (combined.includes('moment') || combined.includes('mom score')) {
+                    columnMap.MOM_SCORE = index;
+                } else if (combined.includes('roc')) {
+                    columnMap.ROC = index;
+                } else if (combined.includes('ema trend')) {
+                    columnMap.EMA_TREND = index;
+                } else if (combined.includes('ema pos')) { // New: Position Code
+                    columnMap.POSITION_CODE = index;
+                }
+
+                // EMA Distances
+                else if (combined.includes('1h ema50 dist')) {
+                    columnMap.EMA50_DIST = index;
+                } else if (combined.includes('1h ema200 dist')) {
+                    columnMap.EMA200_DIST = index;
+                }
+
+                // Support/Resist (Logic & Standard)
+                else if (combined.includes('logic support dist')) {
+                    columnMap.LOGIC_SUPPORT_DIST = index;
+                } else if (combined.includes('logic resist dist')) {
+                    columnMap.LOGIC_RESIST_DIST = index;
+                } else if (combined.includes('support dist')) {
+                    columnMap.SUPPORT_DIST = index;
+                } else if (combined.includes('support stars')) {
+                    columnMap.SUPPORT_STARS = index;
+                } else if (combined.includes('resist dist')) {
+                    columnMap.RESIST_DIST = index;
+                } else if (combined.includes('resist stars')) {
+                    columnMap.RESIST_STARS = index;
+                }
+
+                // Daily Context
+                else if (combined.includes('daily range')) {
+                    columnMap.DAILY_RANGE = index;
+                } else if (combined.includes('daily trend')) {
+                    columnMap.DAILY_TREND = index;
+                }
+
+                // Signals
+                else if (combined.includes('freeze')) {
+                    columnMap.FREEZE = index;
+                } else if (combined.includes('breakout')) {
+                    columnMap.BREAKOUT = index;
+                } else if (combined.includes('net trend')) {
+                    columnMap.NET_TREND = index;
+                } else if (combined.includes('retrace')) {
+                    columnMap.RETRACE_OPP = index;
+                }
+
+                // Cluster Analysis
+                else if (combined.includes('scope count')) {
+                    columnMap.SCOPE_COUNT = index;
+                } else if (combined.includes('scope highest')) {
+                    columnMap.CLUSTER_SCOPE_HIGHEST = index;
+                } else if (combined.includes('compress count')) {
+                    columnMap.CLUSTER_COMPRESS_COUNT = index;
+                } else if (combined.includes('compress highest')) {
+                    columnMap.CLUSTER_COMPRESS_HIGHEST = index;
+                }
+
+                // Flags & Mega Spot
+                else if (combined.includes('all ema flags')) {
+                    columnMap.EMA_FLAGS = index;
+                } else if (combined.includes('htf 200 flags')) {
+                    columnMap.HTF_FLAGS = index;
+                } else if (combined.includes('mega spot')) {
+                    columnMap.MEGA_SPOT_DIST = index;
+                } else if (combined.includes('ema position') || combined.includes('position code')) {
+                    columnMap.POSITION_CODE = index;
+                }
+            });
+
+
+
+            if (columnMap.TICKER !== undefined && columnMap.CLOSE !== undefined) {
+                console.log('[Parse] ✅ Found valid table. Column Mapping:');
+                const debugMap = Object.keys(columnMap).map(key => ({
+                    Key: key,
+                    Index: columnMap[key],
+                    HeaderText: headers[columnMap[key]]?.innerText.replace(/\n/g, ' ').trim() || '???'
+                }));
+                console.table(debugMap);
+                return { map: columnMap, table: table };
             }
-
-            // EMA Distances
-            else if (combined.includes('1h ema50 dist')) {
-                columnMap.EMA50_DIST = index;
-            } else if (combined.includes('1h ema200 dist')) {
-                columnMap.EMA200_DIST = index;
-            }
-
-            // Support/Resist (Logic & Standard)
-            else if (combined.includes('logic support dist')) {
-                columnMap.LOGIC_SUPPORT_DIST = index;
-            } else if (combined.includes('logic resist dist')) {
-                columnMap.LOGIC_RESIST_DIST = index;
-            } else if (combined.includes('support dist')) {
-                columnMap.SUPPORT_DIST = index;
-            } else if (combined.includes('support stars')) {
-                columnMap.SUPPORT_STARS = index;
-            } else if (combined.includes('resist dist')) {
-                columnMap.RESIST_DIST = index;
-            } else if (combined.includes('resist stars')) {
-                columnMap.RESIST_STARS = index;
-            }
-
-            // Daily Context
-            else if (combined.includes('daily range')) {
-                columnMap.DAILY_RANGE = index;
-            } else if (combined.includes('daily trend')) {
-                columnMap.DAILY_TREND = index;
-            }
-
-            // Signals
-            else if (combined.includes('freeze')) {
-                columnMap.FREEZE = index;
-            } else if (combined.includes('breakout')) {
-                columnMap.BREAKOUT = index;
-            } else if (combined.includes('net trend')) {
-                columnMap.NET_TREND = index;
-            } else if (combined.includes('retrace')) {
-                columnMap.RETRACE_OPP = index;
-            }
-
-            // Cluster Analysis
-            else if (combined.includes('scope count')) {
-                columnMap.SCOPE_COUNT = index;
-            } else if (combined.includes('scope highest')) {
-                columnMap.CLUSTER_SCOPE_HIGHEST = index;
-            } else if (combined.includes('compress count')) {
-                columnMap.CLUSTER_COMPRESS_COUNT = index;
-            } else if (combined.includes('compress highest')) {
-                columnMap.CLUSTER_COMPRESS_HIGHEST = index;
-            }
-
-            // Flags & Mega Spot
-            else if (combined.includes('all ema flags')) {
-                columnMap.EMA_FLAGS = index;
-            } else if (combined.includes('htf 200 flags')) {
-                columnMap.HTF_FLAGS = index;
-            } else if (combined.includes('mega spot')) {
-                columnMap.MEGA_SPOT_DIST = index;
-            } else if (combined.includes('ema position') || combined.includes('position code')) {
-                columnMap.POSITION_CODE = index;
-            }
-        });
-
-
-
-        return columnMap.TICKER !== undefined && columnMap.CLOSE !== undefined
-            ? columnMap
-            : null;
+        }
+        console.warn('[Parse] ❌ No valid table found (searched for Symbol + Close headers)');
+        return null;
     }
 
     function extractTicker(row) {
@@ -502,16 +520,17 @@
     // PARSE TABLE
     // ═══════════════════════════════════════════════════════════════
     function parseTableData() {
-        const columnMap = detectColumns();
-        if (!columnMap) {
-            console.warn('[Parse] Column detection failed');
+        const result = detectTableAndColumns();
+        if (!result) {
+            console.warn('[Parse] Table/Column detection failed');
             return [];
         }
+        const { map: columnMap, table } = result;
 
-        const rows = document.querySelectorAll(
-            'tbody tr[class*="listRow"][data-rowkey], tbody tr[data-rowkey]'
-        );
-        console.log(`[Parse] Found ${rows.length} rows. ColumnMap:`, columnMap ? 'OK' : 'FAIL');
+        const rawRows = table.querySelectorAll('tbody tr');
+        const rows = Array.from(rawRows).filter(r => r.querySelectorAll('td').length > 0);
+
+        console.log(`[Parse] Found ${rows.length} valid rows via Content Discovery.`);
         if (rows.length === 0) {
             console.warn('[Parse] No data rows found with selectors: listRow[data-rowkey] OR tr[data-rowkey]');
             // Dump table HTML structure to help debug if user sees console
@@ -523,16 +542,18 @@
         const coins = [];
 
         rows.forEach((row) => {
-            const cells = row.querySelectorAll('td[class*="cell-"]');
+            const cells = row.querySelectorAll('td'); // Just get all cells, ignore class names
             const rowKey = row.getAttribute('data-rowkey') || ''; // Capture BINANCE:ADAUSDT.P
 
             const coin = {
                 row: row,
                 ticker: extractTicker(row),
-                exchange_symbol: rowKey, // NEW FIELD
+                exchange_symbol: rowKey, // Existing
+                datakey: rowKey, // NEW: Explicit request for "datakey"
                 close: parseTvNumber(cells[columnMap.CLOSE]?.innerText),
 
                 // Indicators
+                roc: parseTvNumber(cells[columnMap.ROC]?.innerText), // New
                 volSpike: parseTvNumber(cells[columnMap.VOL_SPIKE]?.innerText),
                 momScore: parseTvNumber(cells[columnMap.MOM_SCORE]?.innerText),
 
@@ -833,6 +854,8 @@
         const data = {
             ticker: coin.ticker,
             cleanTicker: cleanTicker(coin.ticker),
+            datakey: coin.datakey || coin.exchange_symbol, // [NEW] Essential for payload
+            exchange_symbol: coin.exchange_symbol,         // [NEW]
             score: coin.score,
             label: coin.label,
             direction: coin.direction,
@@ -840,36 +863,36 @@
 
             close: coin.close,
             dailyRange: coin.dailyRange,
-            dailyTrend: coin.dailyTrend, // NEW
+            dailyTrend: coin.dailyTrend,
 
             netTrend: coin.netTrend,
             momScore: coin.momScore,
             volSpike: coin.volSpike,
-            breakout: coin.breakout, // NEW
+            breakout: coin.breakout,
 
             resistDist: coin.resistDist,
             resistStars: coin.resistStars,
-            logicResistDist: coin.logicResistDist, // NEW
+            logicResistDist: coin.logicResistDist,
 
             supportDist: coin.supportDist,
             supportStars: coin.supportStars,
-            logicSupportDist: coin.logicSupportDist, // NEW
+            logicSupportDist: coin.logicSupportDist,
 
-            ema50Dist: coin.ema50Dist, // NEW
-            ema200Dist: coin.ema200Dist, // NEW
+            ema50Dist: coin.ema50Dist,
+            ema200Dist: coin.ema200Dist,
 
             positionCode: coin.positionCode,
             megaSpotDist: coin.megaSpotDist,
             retraceOpportunity: coin.retraceOpportunity,
 
-            scopeCount: coin.scopeCount, // NEW
+            scopeCount: coin.scopeCount,
             clusterScopeHighest: coin.clusterScopeHighest,
             compressCount: coin.compressCount,
-            compressHighest: coin.compressHighest, // NEW
+            compressHighest: coin.compressHighest,
 
             freeze: coin.freeze,
-            emaFlags: coin.emaFlags, // NEW
-            htfFlags: coin.htfFlags, // NEW
+            emaFlags: coin.emaFlags,
+            htfFlags: coin.htfFlags,
         };
 
         if (missedReason) {
@@ -1268,97 +1291,45 @@
     // ═══════════════════════════════════════════════════════════════
     // PAYLOAD BUILDER (WITH SAFETY CHECKS AND DI/D SUPPORT)
     // ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
+    // PAYLOAD BUILDER (OPTIMIZED V2 - JAN 2026)
+    // ═══════════════════════════════════════════════════════════════
     function buildFinalPayload(historyEntry, scanType, dataChangeInfo) {
         try {
+            // 1. RECONSTRUCT AI PRIORITY (Lightweight, Readable Keys)
             const aiPriority = {
                 scan: {
                     number: historyEntry.scanNumber,
                     type: scanType,
-                    name: historyEntry.scanName,
-                    timestamp: historyEntry.timestamp,
                     market_mood: historyEntry.marketSentiment.mood,
                     mood_score: historyEntry.marketSentiment.moodScore
                 },
 
                 topOpportunities: {
                     buys: STATE.recommendations.buy.slice(0, 10).map(c => ({
-                        ticker: cleanTicker(c.ticker),
+                        ticker: c.ticker, // Already Clean
+                        cleanTicker: cleanTicker(c.ticker),
                         score: c.score,
                         label: c.label,
-                        price: c.close,
-                        signals: {
-                            netTrend: c.netTrend,
-                            resistDist: c.resistDist,
-                            resistStars: c.resistStars,
-                            momentum: c.momScore,
-                            volSpike: c.volSpike === 1
-                        },
-                        position: {
-                            code: c.positionCode,
-                            megaSpotDist: c.megaSpotDist
-                        },
-                        insights: c.insights,
-                        recommendation: c.score >= 75 ? 'Strong entry' : c.score >= 60 ? 'Good entry' : 'Watch'
+                        direction: 'BULL',
+                        insights: c.insights || []
                     })),
                     sells: STATE.recommendations.sell.slice(0, 10).map(c => ({
-                        ticker: cleanTicker(c.ticker),
+                        ticker: c.ticker,
+                        cleanTicker: cleanTicker(c.ticker),
                         score: c.score,
                         label: c.label,
-                        price: c.close,
-                        signals: {
-                            netTrend: c.netTrend,
-                            supportDist: c.supportDist,
-                            supportStars: c.supportStars,
-                            momentum: c.momScore,
-                            volSpike: c.volSpike === 1
-                        },
-                        position: {
-                            code: c.positionCode,
-                            megaSpotDist: c.megaSpotDist
-                        },
-                        insights: c.insights,
-                        recommendation: c.score >= 75 ? 'Strong short' : c.score >= 60 ? 'Good short' : 'Watch'
+                        direction: 'BEAR',
+                        insights: c.insights || []
                     })),
                     retraces: STATE.recommendations.retrace.slice(0, 10).map(c => ({
-                        ticker: cleanTicker(c.ticker),
+                        ticker: c.ticker,
+                        cleanTicker: cleanTicker(c.ticker),
                         score: c.score,
                         label: c.label,
-                        price: c.close,
-                        retraceLevel: c.retraceOpportunity,
-                        signals: {
-                            netTrend: c.netTrend,
-                            momentum: c.momScore,
-                            volSpike: c.volSpike === 1
-                        },
-                        insights: c.insights,
-                        recommendation: 'Retrace entry'
+                        direction: 'RETRACE',
+                        insights: c.insights || []
                     }))
-                },
-
-                distribution: {
-                    filtered: {
-                        buys: STATE.recommendations.buy.length,
-                        sells: STATE.recommendations.sell.length,
-                        retraces: STATE.recommendations.retrace.length
-                    },
-                    unfiltered: {
-                        buys: STATE.unfiltered.buy.length,
-                        sells: STATE.unfiltered.sell.length,
-                        retraces: STATE.unfiltered.retrace.length
-                    },
-                    quality_ratio: (STATE.recommendations.buy.length + STATE.recommendations.sell.length) /
-                        (STATE.unfiltered.buy.length + STATE.unfiltered.sell.length || 1)
-                },
-
-                pattern: {
-                    last3Scans: STATE.history.slice(-3).map(h => ({
-                        scan: h.scanNumber,
-                        mood: h.marketSentiment.mood,
-                        buys: h.opportunities.buys.length,
-                        sells: h.opportunities.sells.length
-                    })),
-                    trend: detectTrend(),
-                    momentum_shift: detectMomentumShift()
                 },
 
                 highValueMissed: STATE.missed.buy
@@ -1367,169 +1338,119 @@
                     .sort((a, b) => b.score - a.score)
                     .slice(0, 5)
                     .map(c => ({
-                        ticker: cleanTicker(c.ticker),
+                        ticker: c.ticker,
                         score: c.score,
-                        missedBy: c.missedReason,
-                        potential: c.score >= 65 ? 'high' : 'medium'
+                        missedBy: c.missedReason
                     }))
             };
 
-            const backupData = {
-                scanInfo: {
-                    number: historyEntry.scanNumber,
-                    type: scanType,
-                    name: historyEntry.scanName,
-                    timestamp: historyEntry.timestamp,
-                    timeFormatted: historyEntry.timeFormatted
-                },
-                marketState: historyEntry.marketSentiment,
-                filtersApplied: historyEntry.scanParams,
-                opportunities: historyEntry.opportunities,
-                unfilteredOpportunities: historyEntry.unfilteredOpportunities,
-                missedOpportunities: historyEntry.missedOpportunities,
-                counts: historyEntry.counts
-            };
-
-            // ═══════════════════════════════════════════════════════════════
-            // INSTITUTIONAL PULSE PASS-THROUGH
-            // ═══════════════════════════════════════════════════════════════
+            // 2. INSTITUTIONAL PULSE PASS-THROUGH (Buffer Logic)
             let institutionalPulse = { alerts: [] };
-
-            // 1. Consume Buffered Alerts (PASS-THROUGH from alert_scanner.js)
             if (unsafeWindow.pendingAlertBatch && unsafeWindow.pendingAlertBatch.length > 0) {
                 console.log(`[Payload] 📥 Found ${unsafeWindow.pendingAlertBatch.length} buffered alerts from alert_scanner.js`);
-
-                // Clone the array to avoid reference issues
                 institutionalPulse.alerts = [...unsafeWindow.pendingAlertBatch];
-
-                // TRANSACTIONAL UPDATE: Do NOT clear buffer here.
-                // We Wait for 200 OK in handleAutoTrigger/sendPayload to clear it.
-                console.log(`[Payload] 📎 Attached ${institutionalPulse.alerts.length} alerts to payload (Buffer kept until 200 OK)`);
+                console.log(`[Payload] 📎 Attached ${institutionalPulse.alerts.length} alerts to payload`);
             }
 
-            // 2. Legacy/Fallback Logic (if still using gatherInstitutionalPulse)
-            if (scanType === 'alert-triggered') {
-                // We rely primarily on the buffer now, but if gatherInstitutionalPulse logic is still needed for context:
-                // const legacyPulse = gatherInstitutionalPulse();
-                // if (legacyPulse && legacyPulse.alerts) { ... }
+            // 3. MARKET SENTIMENT (Full English Keys)
+            const sentiment = historyEntry.marketSentiment;
+            const market_sentiment = {
+                totalCoins: sentiment.totalCoins,
+                bullish: sentiment.bullish,
+                bearish: sentiment.bearish,
+                neutral: sentiment.neutral,
+                moodScore: sentiment.moodScore,
+                moodEmoji: sentiment.moodEmoji,
+                mood: sentiment.mood,
+                insights: [], // Placeholder for global insights if needed
+                tickers: {
+                    bullish: (sentiment.tickers.bullish || []).map(t => ({
+                        ticker: t.t,
+                        score: t.s,
+                        netTrend: t.nt,
+                        close: t.c,
+                        volSpike: t.v,
+                        momScore: t.m,
+                        label: t.l
+                    })),
+                    bearish: (sentiment.tickers.bearish || []).map(t => ({
+                        ticker: t.t,
+                        score: t.s,
+                        netTrend: t.nt,
+                        close: t.c,
+                        volSpike: t.v,
+                        momScore: t.m,
+                        label: t.l
+                    }))
+                }
+            };
+
+            // 4. RESULTS (The Raw Data Source)
+            // Flatten all lists into a single deduplicated list
+            const uniqueMap = new Map();
+            const timestampNow = new Date().toISOString();
+
+            const processItem = (item, matchedStrategy) => {
+                if (!uniqueMap.has(item.ticker)) {
+                    // Create Base Object
+                    uniqueMap.set(item.ticker, {
+                        ticker: item.ticker,
+                        // status: REMOVED per user request (redundant)
+                        datakey: item.datakey || item.exchange_symbol || `BINANCE:${item.ticker}`,
+                        strategies: [matchedStrategy],
+                        data: {
+                            ...item, // Spread all table columns (roc, momScore, etc.)
+                            ticker: item.ticker, // Explicitly add ticker again
+                            timestamp: timestampNow // [NEW] Explicit Timestamp
+                        }
+                    });
+                } else {
+                    // Append strategy
+                    const existing = uniqueMap.get(item.ticker);
+                    if (!existing.strategies.includes(matchedStrategy)) {
+                        existing.strategies.push(matchedStrategy);
+                    }
+                }
+            };
+
+            // Process ALL Sources (Raw Table Data)
+            // [UPDATED] Use historyEntry.allTickers (100% of scanned items) if available
+            if (historyEntry.allTickers && historyEntry.allTickers.length > 0) {
+                historyEntry.allTickers.forEach(i => processItem(i, i.direction || 'SCAN'));
+            } else {
+                // Fallback for older history entries
+                STATE.unfiltered.buy.forEach(i => processItem(i, 'BUY'));
+                STATE.unfiltered.sell.forEach(i => processItem(i, 'SELL'));
+                STATE.unfiltered.retrace.forEach(i => processItem(i, 'RETRACE'));
             }
 
-            const scanContext = {
-                type: scanType,
-                triggeredBy: scanType === 'alert-triggered' && institutionalPulse.alerts.length > 0 ? {
-                    alertCount: institutionalPulse.alerts.length,
-                    firstAlert: institutionalPulse.alerts[0] ? {
-                        ticker: institutionalPulse.alerts[0].asset.ticker,
-                        time: institutionalPulse.alerts[0].signal.timestamp
-                    } : null
-                } : null
-            };
+            // Redundant check on recommendations just in case (usually subset)
+            STATE.recommendations.buy.forEach(i => processItem(i, 'BUY'));
+            STATE.recommendations.sell.forEach(i => processItem(i, 'SELL'));
+            STATE.recommendations.retrace.forEach(i => processItem(i, 'RETRACE'));
 
-            const metadata = {
-                dataChanged: dataChangeInfo ? dataChangeInfo.hasChanged : true,
-                timeSinceLastSend: dataChangeInfo ? Math.round(dataChangeInfo.timeSinceLastSend / 1000) : null,
-                changeReason: dataChangeInfo ? dataChangeInfo.reason : 'N/A'
-            };
 
             const payload = {
                 id: `scan_${Date.now()}`,
-                trigger: scanType,
+                trigger: scanType, // Consistent with 'manual', 'auto', 'alert-triggered'
                 timestamp: historyEntry.timestamp,
-                // ═══════════════════════════════════════════════════════════════
-                // RESULT DEDUPLICATION (OPTIMIZED SECTION 2)
-                // ═══════════════════════════════════════════════════════════════
-                results: (() => {
-                    const uniqueMap = new Map();
-
-                    // Helper to merge data
-                    const procesItem = (item, type, status) => {
-                        const ticker = item.ticker;
-                        if (!uniqueMap.has(ticker)) {
-                            // First time seeing this ticker: Initialize with raw data
-                            uniqueMap.set(ticker, {
-                                ...item,
-                                status: status, // Initial status
-                                matchedStrategies: [type], // Track which strategies picked it up
-                                missedReason: item.missedReason || null, // Initial reason
-
-                                // Context Injection (Vice-Versa Link)
-                                marketMood: historyEntry.marketSentiment.mood,
-                                marketScore: historyEntry.marketSentiment.moodScore
-                            });
-                        } else {
-                            // Merge with existing
-                            const existing = uniqueMap.get(ticker);
-
-                            // 1. Upgrade Status if needed (PASS overrides MISSED)
-                            if (status === 'PASS' && existing.status !== 'PASS') {
-                                existing.status = 'PASS';
-                                existing.label = item.label; // Use the label from the winning strategy
-                                existing.direction = item.direction; // Use direction from the winner
-                            }
-
-                            // 2. Track Strategy
-                            if (!existing.matchedStrategies.includes(type)) {
-                                existing.matchedStrategies.push(type);
-                            }
-
-                            // 3. Merge Missed Reasons (if both missed, or just to keep history)
-                            if (item.missedReason) {
-                                if (existing.missedReason) {
-                                    if (!existing.missedReason.includes(item.missedReason)) {
-                                        existing.missedReason += ` | ${type}: ${item.missedReason}`;
-                                    }
-                                } else {
-                                    existing.missedReason = `${type}: ${item.missedReason}`;
-                                }
-                            }
-                        }
-                    };
-
-                    // Process ALL lists
-                    historyEntry.opportunities.buys.forEach(i => procesItem(i, 'BUY', 'PASS'));
-                    historyEntry.missedOpportunities.buys.forEach(i => procesItem(i, 'BUY', 'MISSED'));
-
-                    historyEntry.opportunities.sells.forEach(i => procesItem(i, 'SELL', 'PASS'));
-                    historyEntry.missedOpportunities.sells.forEach(i => procesItem(i, 'SELL', 'MISSED'));
-
-                    historyEntry.opportunities.retraces.forEach(i => procesItem(i, 'RETRACE', 'PASS'));
-                    historyEntry.missedOpportunities.retraces.forEach(i => procesItem(i, 'RETRACE', 'MISSED'));
-
-                    return Array.from(uniqueMap.values());
-                })(),
+                results: Array.from(uniqueMap.values()),
                 aiPriority: aiPriority,
-                backupData: backupData,
-                scanContext: scanContext,
-                metadata: metadata,
-                // Section 1: Institutional Pulse
-                institutional_pulse: institutionalPulse,
-                // Section 4: Market Sentiment (New Requirement)
-                market_sentiment: historyEntry.marketSentiment
+                market_sentiment: market_sentiment,
+                institutional_pulse: institutionalPulse
             };
-
-            if (institutionalPulse.alerts.length > 0) {
-                console.log(`[Payload] ✅ Attached ${institutionalPulse.alerts.length} alerts to payload.institutional_pulse`);
-                // For legacy compat if needed
-                payload.institutionalPulse = institutionalPulse;
-            } else {
-                console.log('[Payload] ℹ️ No pending alerts to attach');
-            }
 
             return payload;
 
         } catch (error) {
             console.error('[Payload] ❌ Critical error building payload:', error);
             return {
-                aiPriority: {
-                    scan: {
-                        number: historyEntry.scanNumber,
-                        type: scanType,
-                        error: 'Payload build error'
-                    }
-                },
-                backupData: historyEntry,
-                scanContext: { type: scanType, error: error.message },
-                metadata: { error: true }
+                id: `error_${Date.now()}`,
+                trigger: scanType,
+                error: error.message,
+                results: [],
+                market_sentiment: {},
+                institutional_pulse: { alerts: [] }
             };
         }
     }
@@ -1555,7 +1476,7 @@
             const changeDetection = detectDataChange('auto-alert-triggered');
             const payload = buildFinalPayload(historyEntry, 'auto-alert-triggered', changeDetection);
 
-            sendPayloadWithCleanup(payload, changeDetection);
+            sendPayload(payload, changeDetection);
 
             // Reset alert batch state
             STATE.alertBatchPending = false;
@@ -1587,15 +1508,16 @@
 
         console.log(`[AutoTrigger] 🤖 Sending market data (no alerts)`);
         const payload = buildFinalPayload(historyEntry, 'auto', changeDetection);
-        sendPayloadWithCleanup(payload, changeDetection);
+        sendPayload(payload, changeDetection);
     }
 
     // ═══════════════════════════════════════════════════════════════
     // SEND PAYLOAD WITH CLEANUP (DRY HELPER)
     // ═══════════════════════════════════════════════════════════════
-    function sendPayloadWithCleanup(payload, changeDetection) {
+    function sendPayload(payload, changeDetection = {}) {
         console.log(`\n${'═'.repeat(60)}`);
         console.log(`📦 SENDING PAYLOAD: ${payload.trigger}`);
+        console.log(`📦 FULL PAYLOAD DEBUG:`, payload); // REQUESTED LOG
         console.log(`${'═'.repeat(60)}`);
         console.log(`   Endpoint: ${CONFIG.AUTO_TRIGGER_ENDPOINT}`);
         console.log(`   Alerts: ${payload.institutional_pulse?.alerts?.length || 0}`);
@@ -1829,6 +1751,8 @@
                 scanParams: { ...STATE.currentFilters },
 
                 marketSentiment: sentiment,
+
+                allTickers: scored.map(c => serializeTickerForHistory(c)), // [NEW] Complete Raw List
 
                 unfilteredOpportunities: {
                     buys: unfilteredBuys.map((c) => serializeTickerForHistory(c)),
@@ -2109,6 +2033,7 @@
                 }
 
                 const payload = buildFinalPayload(historyEntry, scanType, changeDetection);
+                console.log('📦 FULL PAYLOAD DEBUG:', payload);
 
                 console.log(`\n${'═'.repeat(60)}`);
                 console.log('🚨 ALERT-TRIGGERED SCAN COMPLETE - SENDING TO BACKEND');
@@ -2129,6 +2054,18 @@
                 STATE.lastSentTime = Date.now();
                 window.batchedAlerts = null;
 
+            } else {
+                // MANUAL or FALLBACK
+                // Force send without hash check (User requested it)
+                const payload = buildFinalPayload(historyEntry, scanType || 'manual', { hasChanged: true }); // Assume changed for manual
+
+                console.log(`\n${'═'.repeat(60)}`);
+                console.log('🎯 MANUAL SCAN COMPLETE - DEBUG LOGGING ENABLED');
+                console.log(`📦 FULL PAYLOAD DEBUG:`, payload);
+                console.log(`${'═'.repeat(60)}`);
+
+                sendPayload(payload);
+                STATE.lastSentTime = Date.now();
                 console.log(`${'═'.repeat(60)}\n`);
             }
 
@@ -2400,26 +2337,76 @@
         toggleChartEvents: clickAllEventElements,
     };
 
+    function flushNextOfflineItem() {
+        const queue = OfflineStore.getQueue();
+        if (queue.length === 0) return;
+
+        const item = queue[0];
+        console.log(`[Sync] Flushing offline item ${item.id}...`);
+
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: CONFIG.AUTO_TRIGGER_ENDPOINT,
+            data: JSON.stringify(item.payload),
+            headers: { 'Content-Type': 'application/json' },
+            onload: (response) => {
+                // [UPDATED] Transactional Removal: ONLY Valid HTTP 200 or 409 (Conflict/Duplicate)
+                if (response.status === 200 || response.status === 409) {
+                    if (response.status === 409) {
+                        console.warn(`[Sync] ⚠️ Item ${item.id} already exists (Duplicate). Removing from queue.`);
+                    } else {
+                        console.log(`[Sync] ✅ Successfully flushed item ${item.id}`);
+                        // Update Sync Head (Last Alert TS) 
+                        try {
+                            const resJson = JSON.parse(response.responseText);
+                            if (resJson.last_alert_ts) {
+                                const ts = new Date(resJson.last_alert_ts).getTime();
+                                if (ts > (unsafeWindow.latestConfirmedAlertTs || 0)) {
+                                    unsafeWindow.latestConfirmedAlertTs = ts;
+                                    console.log(`[Sync] 🔄 Updated Confirm Head: ${resJson.last_alert_ts}`);
+                                }
+                            }
+                        } catch (e) { }
+                    }
+
+                    // [CRITICAL] Remove the head ONLY after success
+                    const updatedQueue = OfflineStore.getQueue(); // Reload to be safe
+                    if (updatedQueue.length > 0 && updatedQueue[0].id === item.id) {
+                        updatedQueue.shift(); // Remove head
+                        OfflineStore.saveQueue(updatedQueue);
+                    }
+
+                    // Recursively process next item
+                    setTimeout(() => flushNextOfflineItem(), 1000); // Small delay to breathe
+                } else {
+                    console.warn(`[Sync] ❌ Failed to flush ${item.id} (Status ${response.status}). Retrying later.`);
+                }
+            },
+            onerror: (err) => {
+                console.error(`[Sync] ❌ Network error flashing ${item.id}`);
+            },
+            timeout: 10000
+        });
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // INITIALIZATION
     // ═══════════════════════════════════════════════════════════════
+    const STARTUP_DELAY_MS = 3 * 60 * 1000; // 3 Minutes
+
+    console.log(`[Init] ⏳ WARM-UP PHASE: Script will start in ${STARTUP_DELAY_MS / 1000} seconds...`);
+
     setTimeout(() => {
+        console.log('[Init] 🟢 CONNECTING SYSTEMS (Warm-up Complete)...');
         setupScanButtonListener();
         startAutoScan();
         startAlertMonitor();
-    }, 2000);
+        // Check for offline items immediately on wakeup
+        flushNextOfflineItem();
+    }, STARTUP_DELAY_MS);
 
-    console.log('✅ Ultra Scalper v15.0 ready');
-    console.log('🎯 Shortcuts:');
-    console.log('   Shift+Alt+Z - Manual trigger with fresh scan & send to AI');
-    console.log('   Alt+U - Manual scan & restart timer');
-    console.log('   Alt+K - Copy recommendations to clipboard');
-    console.log('   Alt+L - Toggle chart event checkboxes (FIXED)');
-    console.log('   Alt+P - Pause/Resume auto-scan');
-    console.log(`⏰ Auto-scans every ${CONFIG.INTERVAL_MINUTES} min`);
-    console.log(`🤖 Auto-trigger after every ${CONFIG.AUTO_TRIGGER_AFTER_SCANS} auto-scans (with change detection)`);
-    console.log(`🚨 Alert monitor active (checks every 2s)`);
-    console.log('💾 Smart change detection enabled (Option B: Balanced)');
-    console.log('🎯 Di/D support: +1 (Bullish) | -2 (Bearish)');
+    console.log('✅ Ultra Scalper v16.0 (Master) Loaded');
+    console.log('   Shift+Alt+Z - Manual trigger (Ready after warm-up)');
+    console.log('   Alt+U - Manual scan (Ready after warm-up)');
 
 })();

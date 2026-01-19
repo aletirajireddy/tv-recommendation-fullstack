@@ -6,10 +6,12 @@ import { ScanResults } from './components/ScanResults';
 import { PulseFeed } from './components/PulseFeed';
 import { AlertsAnalyzer } from './components/AnalyticsWidgets/AlertsAnalyzer';
 import { ConfluenceGrid } from './components/AnalyticsWidgets/ConfluenceGrid';
+import { MarketStructureWidget } from './components/AnalyticsWidgets/MarketStructureWidget';
 import { AlphaScatter } from './components/AnalyticsWidgets/AlphaScatter';
 import { TrendFlowChart } from './components/AnalyticsWidgets/TrendFlowChart';
 import RecommendationsFeed from './components/AnalyticsWidgets/RecommendationsFeed';
 import ScenarioBoard from './components/AnalyticsWidgets/ScenarioBoard';
+
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
 import { MonitorDetailModal } from './components/MonitorDetailModal';
@@ -44,7 +46,13 @@ function App() {
             <>
               {/* ROW 1: ENHANCED MACRO SUMMARY (Full Width) */}
               <div className={styles.analyticsFullRow}>
+                <MarketStructureWidget />
                 <ConfluenceGrid />
+              </div>
+
+              {/* ROW 1.5: SCENARIO PLANNING (Plan A vs Plan B) */}
+              <div className={styles.analyticsFullRow} style={{ marginBottom: '16px' }}>
+                <ScenarioBoard />
               </div>
 
 
@@ -63,10 +71,7 @@ function App() {
                 <AlphaScatter />
               </div>
 
-              {/* ROW 4: SCENARIO PLANNING (War Room) */}
-              <div className={styles.analyticsFullRow}>
-                <ScenarioBoard />
-              </div>
+
             </>
           </div>
         )}

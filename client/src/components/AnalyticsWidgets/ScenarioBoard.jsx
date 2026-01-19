@@ -3,7 +3,7 @@ import { useTimeStore } from '../../store/useTimeStore';
 
 const ScenarioBoard = () => {
     // Decoupled from lookbackHours - We want strict "Tactical" logic (Last 1h)
-    const { activeScan } = useTimeStore();
+    const { activeScan, marketMood } = useTimeStore();
     const [scenarios, setScenarios] = useState({ planA: [], planB: [], marketCheck: null });
     const [loading, setLoading] = useState(true);
 
@@ -124,18 +124,18 @@ const ScenarioBoard = () => {
                     <span style={{ fontSize: '1.2rem' }}>⚔️</span>
                     <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: '#2c3e50' }}>SCENARIO PLANNING</h3>
                 </div>
-                {scenarios.marketCheck && (
+                {marketMood && (
                     <div className="market-context" style={{
                         fontSize: '0.85rem',
                         padding: '4px 12px',
                         borderRadius: '20px',
-                        backgroundColor: scenarios.marketCheck.mood.includes('BULLISH') ? '#d4edda' :
-                            scenarios.marketCheck.mood.includes('BEARISH') ? '#f8d7da' : '#e2e3e5',
-                        color: scenarios.marketCheck.mood.includes('BULLISH') ? '#155724' :
-                            scenarios.marketCheck.mood.includes('BEARISH') ? '#721c24' : '#383d41',
+                        backgroundColor: marketMood.label.includes('BULLISH') || marketMood.label.includes('EUPHORIC') ? '#d4edda' :
+                            marketMood.label.includes('BEARISH') || marketMood.label.includes('PANIC') ? '#f8d7da' : '#e2e3e5',
+                        color: marketMood.label.includes('BULLISH') || marketMood.label.includes('EUPHORIC') ? '#155724' :
+                            marketMood.label.includes('BEARISH') || marketMood.label.includes('PANIC') ? '#721c24' : '#383d41',
                         fontWeight: '600'
                     }}>
-                        Current Context: {scenarios.marketCheck.mood} ({scenarios.marketCheck.score})
+                        Current Context: {marketMood.label} ({marketMood.moodScore})
                     </div>
                 )}
             </div>
