@@ -11,7 +11,7 @@ import { SentimentGauge } from './ResearchWidgets/SentimentGauge';
 import { LatencyCard } from './ResearchWidgets/LatencyCard';
 
 export function AnalyticsDashboard() {
-    const { fetchResearch, researchData } = useTimeStore();
+    const { fetchResearch, researchData, marketMood } = useTimeStore();
 
     // Data is pre-fetched by useTimeStore during app init and updates.
     // relying on 'researchData' subscription.
@@ -63,10 +63,10 @@ export function AnalyticsDashboard() {
             {/* 4. SENSORS - Col 3 (Vertical Stack) */}
             <div className={styles.sensorGrid}>
                 <div className={`${styles.card} ${styles.sensorCard}`} style={{ justifyContent: 'center', alignItems: 'center', padding: '0.5rem' }}>
-                    <SentimentGauge score={researchData.moodScore} />
+                    <SentimentGauge score={marketMood ? marketMood.moodScore : 0} />
                 </div>
                 <LatencyCard ms={researchData.latency} />
             </div>
-        </div>
+        </div >
     );
 }

@@ -1,88 +1,79 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const dbPath = path.resolve(__dirname, 'dashboard.db');
-const db = new Database(dbPath); // Will create new file since we moved the old one
+// V3 Database: Explicitly named to differentiate from legacy versions
+const dbPath = path.resolve(__dirname, 'dashboard_v3.db');
+const db = new Database(dbPath);
 
-// Enable WAL for concurrency
+console.log(`🔌 Connected to V3 Database: ${dbPath}`);
+
+// Enable WAL for concurrency and performance
 db.pragma('journal_mode = WAL');
 
-// 1. SCANS (The Timeline Master)
+// ============================================================================
+// 1. SCANS (Timeline & Index)
+// ============================================================================
+// Stores the "when" and "why" of every scan. Lightweight index.
 db.exec(`
     CREATE TABLE IF NOT EXISTS scans (
         id TEXT PRIMARY KEY,
-        timestamp TEXT NOT NULL,       -- ISO String (The logical time of the scan)
-        trigger_type TEXT DEFAULT 'auto',
-        
-        -- Metadata for "Time Context" Widget
-        latency INTEGER,              -- ms taken to process
-        change_reason TEXT,           -- Why this scan exists
+        timestamp TEXT NOT NULL,       -- ISO 8601 UTC (Source of Truth)
+        trigger TEXT,                  -- 'auto', 'manual', 'alert-triggered'
         
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 `);
 
-// 2. MARKET_STATES (Section 4: Macro View)
+// ============================================================================
+// 2. SCAN_RESULTS (The "Full Blob" Storage)
+// ============================================================================
+// Stores the ENTIRE JSON payload. Solves "Schema Fragility" and "Redundancy".
+// We no longer shred data into 26 columns. We store the blob.
 db.exec(`
-    CREATE TABLE IF NOT EXISTS market_states (
+    CREATE TABLE IF NOT EXISTS scan_results (
         scan_id TEXT PRIMARY KEY,
-        mood TEXT,                    -- 'BULLISH', 'BEARISH'
-        mood_score INTEGER,           -- -100 to 100
-        counts_json TEXT,             -- { bullish: 10, bearish: 5 }
-        tickers_json TEXT,            -- [{ t:'BTC', s:80, nt:60 }, ...] (The Lightweight Replay Lists)
+        raw_data JSON NOT NULL,        -- The complete { id, results, market_sentiment } object
+        
         FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
     );
 `);
 
-// 3. SCAN_ENTRIES (Section 2: The Logic Results)
-// Normalized: One row per ticker per scan
-db.exec(`
-    CREATE TABLE IF NOT EXISTS scan_entries (
-        scan_id TEXT,
-        ticker TEXT,
-        status TEXT,                  -- 'PASS' or 'MISSED'
-        label TEXT,                   -- 'STRONG BUY', etc.
-        direction TEXT,               -- 'BULL' or 'BEAR'
-        
-        strategies_json TEXT,         -- ['BUY', 'RETRACE']
-        missed_reason TEXT,           -- Combined text
-        
-        -- The visual replay payload (Raw 26 cols + Context)
-        raw_data_json TEXT,
-        
-        PRIMARY KEY (scan_id, ticker),
-        FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-    );
-`);
-
-// 4. PULSE_EVENTS (Section 1: Raw Stream)
+// ============================================================================
+// 3. PULSE_EVENTS (Alert Stream - Stream A)
+// ============================================================================
+// Stores individual alerts extracted from 'institutional_pulse'.
+// Conforms to Rule #6: Timestamp must be parsed from signal data.
 db.exec(`
     CREATE TABLE IF NOT EXISTS pulse_events (
-        id TEXT PRIMARY KEY,
-        scan_id TEXT,
-        timestamp INTEGER,
+        id TEXT PRIMARY KEY,          -- Alert ID
+        scan_id TEXT,                 -- Parent Scan ID
+        timestamp TEXT NOT NULL,      -- ISO 8601 UTC (Combined Date + Time from Signal)
         ticker TEXT,
-        type TEXT,
-        payload_json TEXT,
-        FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-    );
-`);
-
-// 5. AI NOTIFICATIONS (Telegram Log)
-db.exec(`
-    CREATE TABLE IF NOT EXISTS ai_notifications (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        scan_id TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        trigger_type TEXT,            -- 'MARKET_SHIFT', 'BURST', 'HIGH_SCOPE'
-        message TEXT,
-        priority INTEGER,             -- 1=Info, 2=Important, 3=Critical
+        type TEXT,                    -- 'INSTITUTIONAL_LEVEL', etc.
+        payload_json JSON,            -- The specific alert object
         
         FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
     );
 `);
 
-// 6. SYSTEM SETTINGS (Key-Value Persistence)
+// ============================================================================
+// 4. QUALIFIED_PICKS (Picker Stream - Stream B)
+// ============================================================================
+// Stores isolated "Pick" events from the Coin Scanner script.
+// Distinct from "Macro Scans".
+db.exec(`
+    CREATE TABLE IF NOT EXISTS qualified_picks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker TEXT NOT NULL,
+        price REAL,
+        timestamp TEXT NOT NULL,      -- ISO 8601 UTC
+        raw_data JSON                 -- The full pick payload
+    );
+`);
+
+// ============================================================================
+// 5. SYSTEM SETTINGS (Persistence)
+// ============================================================================
 db.exec(`
     CREATE TABLE IF NOT EXISTS system_settings (
         key TEXT PRIMARY KEY,
@@ -90,6 +81,6 @@ db.exec(`
     );
 `);
 
-console.log('✅ Database (v2) Initialized: dashboard.db');
+console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks');
 
 module.exports = db;

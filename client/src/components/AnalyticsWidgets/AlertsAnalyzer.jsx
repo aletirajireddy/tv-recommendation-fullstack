@@ -4,6 +4,8 @@ import styles from './AlertsAnalyzer.module.css';
 import { Activity, TrendingUp, TrendingDown, Target, Zap } from 'lucide-react';
 import { format } from 'date-fns';
 
+
+
 export function AlertsAnalyzer() {
     const { analyticsData, lookbackHours, setLookbackHours } = useTimeStore();
 
@@ -17,7 +19,7 @@ export function AlertsAnalyzer() {
 
     if (!analyticsData || !analyticsData.volume_intent) return <div className={styles.loading}>Initializing Insight Engine...</div>;
 
-    const { volume_intent, predictions, insights } = analyticsData;
+    const { volume_intent, predictions, insights, market_structure } = analyticsData;
     const totalVolume = volume_intent.bullish + volume_intent.bearish;
     const bullPct = totalVolume > 0 ? (volume_intent.bullish / totalVolume) * 100 : 50;
 
@@ -53,6 +55,8 @@ export function AlertsAnalyzer() {
                 </div>
             </div>
 
+            {/* NEW: MARKET STRUCTURE BAR - MOVED TO PARENT */}
+
             <div className={styles.grid}>
                 {/* COL 1: VOLUME INTENT */}
                 <div className={styles.card}>
@@ -69,12 +73,47 @@ export function AlertsAnalyzer() {
                     </div>
                 </div>
 
-                {/* COL 2: PREDICTION CARDS (NEURAL PATTERNS) */}
+                {/* COL 2: STRUCTURAL PRIORITY (REPURPOSED) */}
                 <div className={styles.card}>
-                    <h4>NEURAL PATTERNS & SCOPE PREDICTIONS</h4>
+                    <h4>STRUCTURAL PRIORITY FOCUS</h4>
                     <div className={styles.predictionList}>
-                        {predictions.length === 0 && <div className={styles.empty}>No High Confidence Setups Detected</div>}
+                        {(!market_structure || (market_structure.mega_spot.length === 0 && market_structure.testing_support.length === 0)) && predictions.length === 0 && (
+                            <div className={styles.empty}>No Critical Structures Detected</div>
+                        )}
 
+                        {/* 1. MEGA SPOTS (Highest Priority) */}
+                        {(Array.isArray(market_structure?.mega_spot) ? market_structure.mega_spot : []).map((coin, i) => (
+                            <div key={`mega-${i}`} className={styles.predictionCard} style={{ borderLeft: '3px solid #ab47bc' }}>
+                                <div className={styles.predHeader}>
+                                    <span className={styles.coin}>{coin}</span>
+                                    <span className={styles.badge} style={{ color: '#ab47bc', background: 'rgba(171, 71, 188, 0.1)' }}>
+                                        MEGA SPOT
+                                    </span>
+                                </div>
+                                <div className={styles.reason}>
+                                    <Target size={14} />
+                                    Institutional Confluence Zone (5xx)
+                                </div>
+                            </div>
+                        ))}
+
+                        {/* 2. FRICTION / TESTING (Medium Priority) */}
+                        {(Array.isArray(market_structure?.testing_support) ? market_structure.testing_support : []).map((coin, i) => (
+                            <div key={`test-${i}`} className={styles.predictionCard} style={{ borderLeft: '3px solid #ffa726' }}>
+                                <div className={styles.predHeader}>
+                                    <span className={styles.coin}>{coin}</span>
+                                    <span className={styles.badge} style={{ color: '#ffa726', background: 'rgba(255, 167, 38, 0.1)' }}>
+                                        TESTING 200 EMA
+                                    </span>
+                                </div>
+                                <div className={styles.reason}>
+                                    <Activity size={14} />
+                                    Price interaction with key level (4xx)
+                                </div>
+                            </div>
+                        ))}
+
+                        {/* 3. FALLBACK: Neural Algo Predictions */}
                         {predictions.map((p, i) => (
                             <div key={i} className={styles.predictionCard}>
                                 <div className={styles.predHeader}>
