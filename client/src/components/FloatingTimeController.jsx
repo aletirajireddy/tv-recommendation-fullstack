@@ -130,7 +130,7 @@ export function FloatingTimeController() {
             <div className={styles.labelGroup}>
                 <Clock size={16} className={styles.icon} />
                 <span className={styles.valueDisplay}>
-                    {localVal.toFixed(1)}h
+                    {localVal.toFixed(0)}h
                 </span>
                 <span className={styles.label}>LOOKBACK</span>
             </div>
@@ -140,7 +140,7 @@ export function FloatingTimeController() {
                     type="range"
                     min="1"
                     max={maxRange}
-                    step="0.5"
+                    step="1"
                     value={localVal}
                     orient="vertical" // Firefox
                     onChange={handleChange}
