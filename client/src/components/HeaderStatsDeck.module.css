@@ -260,45 +260,52 @@
     }
 }
 
-/* MOBILE ADAPTIVE (< 768px) */
-@media (max-width: 768px) {
+/* MOBILE ADAPTIVE (< 1024px) */
+@media (max-width: 1024px) {
     .deckContainer {
+        display: block;
+        /* Stack blocks */
+        height: auto;
+        padding-bottom: 0;
+        gap: 0;
+        overflow-x: visible;
+        /* No scroll, correct wrapping */
+    }
+
+    .interactiveZone {
+        margin-right: 0;
+        margin-bottom: 12px;
+        width: 100%;
         overflow-x: auto;
-        padding-bottom: 8px;
-        /* Space for scrollbar */
-        gap: 12px;
+        /* Allow stats to scroll if needed horizontally */
         -webkit-overflow-scrolling: touch;
-
-        /* Hide scrollbar for cleaner look, or keep it */
-        scrollbar-width: none;
-        /* Firefox */
-        -ms-overflow-style: none;
-        /* IE */
+        padding-bottom: 4px;
     }
 
-    .deckContainer::-webkit-scrollbar {
+    /* Hide the vertical separator between Zone and System */
+    .deckContainer>.divider {
         display: none;
-        /* Chrome/Safari */
-    }
-
-    /* Enforce min-widths so it scrolls instead of shrinking */
-    .sectionMood {
-        min-width: 140px;
-    }
-
-    .sectionBreadth {
-        min-width: 140px;
-    }
-
-    .sectionMovers {
-        min-width: 260px;
     }
 
     .sectionSystem {
-        min-width: 200px;
+        width: 100%;
+        border-top: 1px solid var(--border-subtle);
+        padding-top: 12px;
+        margin-top: 4px;
+        justify-content: space-between;
+        /* Spread content */
+        flex-direction: row;
+        align-items: center;
+        background: transparent;
     }
 
-    .cardLabel {
-        font-size: 0.7rem;
+    /* Adjust System Card Internal Layout for Row */
+    .sectionSystem .cardLabel {
+        justify-content: flex-start;
+        width: auto;
+    }
+
+    .sectionSystem .timeDisplay {
+        align-items: flex-end;
     }
 }

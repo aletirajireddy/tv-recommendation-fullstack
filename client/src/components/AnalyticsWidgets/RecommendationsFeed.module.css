@@ -50,6 +50,28 @@
     /* Custom Scrollbar for sleekness */
     scrollbar-width: thin;
     scrollbar-color: var(--border-subtle) transparent;
+
+    /* Mobile: Native Touch Scroll */
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+}
+
+/* Responsive: Force Vertical Stack on Mobile */
+@media (max-width: 1024px) {
+    .feed {
+        flex-direction: column;
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding-right: 4px;
+        max-height: 500px;
+        /* Allow taller scroll on mobile */
+    }
+
+    .card {
+        min-width: unset !important;
+        width: 100% !important;
+        flex: 0 0 auto !important;
+    }
 }
 
 /* Vertical Feed Mode */

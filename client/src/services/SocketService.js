@@ -1,7 +1,7 @@
 import { io } from "socket.io-client";
 
 // URL for the Backend V3
-const SOCKET_URL = "http://localhost:3000";
+const SOCKET_URL = `http://${window.location.hostname}:3000`;
 
 class SocketService {
     constructor() {

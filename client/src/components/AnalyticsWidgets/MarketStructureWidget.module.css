@@ -127,3 +127,22 @@
     color: var(--text-tertiary);
     font-style: italic;
 }
+
+/* Responsive: Switch to Vertical Stack on Mobile/Tablet */
+@media (max-width: 1024px) {
+    .grid {
+        grid-template-columns: 1fr !important;
+        /* Stack vertically */
+    }
+
+    .bucket {
+        min-height: 150px;
+        /* Reduced height for stacked view */
+        max-height: 400px;
+    }
+
+    .body {
+        max-height: 300px;
+        /* Limit inner scroll height */
+    }
+}

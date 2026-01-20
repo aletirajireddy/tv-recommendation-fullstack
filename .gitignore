@@ -9,3 +9,5 @@ coverage
 *.db
 *.db-journal
 dump.pm2
+*.db-wal
+*.db-shm

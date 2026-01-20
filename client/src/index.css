@@ -65,6 +65,13 @@ body {
     background-color: var(--bg-app);
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
+
+    /* [MOBILE FIX] Prevent Horizontal Scroll Globally */
+    width: 100%;
+    overflow-x: hidden;
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+    /* Remove tap highlight on mobile */
 }
 
 *,
