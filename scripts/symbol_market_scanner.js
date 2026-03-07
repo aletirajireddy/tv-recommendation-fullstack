@@ -1674,13 +1674,15 @@
 
             const unfilteredBuys = unfiltered
                 .filter((c) => c.direction === 'BULL')
-                .sort((a, b) => b.score - a.score);
+                .sort((a, b) => b.score - a.score || b.netTrend - a.netTrend); // Tie-break: High Score -> High Trend
+
             const unfilteredSells = unfiltered
                 .filter((c) => c.direction === 'BEAR')
-                .sort((a, b) => b.score - a.score);
+                .sort((a, b) => b.score - a.score || a.netTrend - b.netTrend); // Tie-break: High Score -> Low Trend (Strong Bear)
+
             const unfilteredRetraces = unfiltered
                 .filter((c) => (c.retraceOpportunity || 0) >= 1)
-                .sort((a, b) => b.score - a.score);
+                .sort((a, b) => b.score - a.score || b.netTrend - a.netTrend);
 
             STATE.unfiltered = {
                 buy: unfilteredBuys,
@@ -1694,13 +1696,13 @@
 
             const buys = filtered
                 .filter((c) => c.direction === 'BULL')
-                .sort((a, b) => b.score - a.score);
+                .sort((a, b) => b.score - a.score || b.netTrend - a.netTrend);
             const sells = filtered
                 .filter((c) => c.direction === 'BEAR')
-                .sort((a, b) => b.score - a.score);
+                .sort((a, b) => b.score - a.score || a.netTrend - b.netTrend); // Strongest Bear (Negative Trend)
             const retraces = filtered
                 .filter((c) => (c.retraceOpportunity || 0) >= 1)
-                .sort((a, b) => b.score - a.score);
+                .sort((a, b) => b.score - a.score || b.netTrend - a.netTrend);
 
             STATE.recommendations = {
                 buy: buys,

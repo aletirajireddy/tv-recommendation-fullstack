@@ -115,14 +115,18 @@ const Bucket = ({ title, count, items, icon: Icon, color, bgColor, highlight }) 
         </div>
         <div className={styles.body}>
             {items.length === 0 ? <span className={styles.empty}>--</span> : (
-                items.slice(0, 8).map((item, i) => ( // Limit visual display
+                items.map((item, i) => (
                     <div key={i} className={styles.chip} style={{ borderLeftColor: color }}>
                         <span className={styles.ticker}>{item.cleanTicker || item.ticker}</span>
-                        {item.score !== 0 && <span className={styles.score} style={{ color: item.score > 0 ? 'var(--success)' : 'var(--error)' }}>{item.score}</span>}
+                        {/* Use momScore if score is stagnant, but for now allow score. */}
+                        {(item.score !== undefined) && (
+                            <span className={styles.score} style={{ color: item.score >= 50 ? 'var(--success)' : 'var(--error)' }}>
+                                {item.score}
+                            </span>
+                        )}
                     </div>
                 ))
             )}
-            {items.length > 8 && <div className={styles.more}>+{items.length - 8} more</div>}
         </div>
     </div>
 );
