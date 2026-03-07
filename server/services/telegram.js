@@ -149,21 +149,20 @@ class TelegramService {
                 if (tickerHash !== oldHash) isUpdate = true;
             }
 
-            // THROTTLING LOGIC (10 Minute Cooldown for same Strategy ID unless content changed drastically)
+            // THROTTLING LOGIC (10 Minute Cooldown)
             const now = Date.now();
             const lastSent = this.cooldownMap.get(strat.id) || 0;
             const COOLDOWN_MS = 10 * 60 * 1000; // 10 Minutes
 
-            // Only throttle if it's NOT a new event and NOT a significant update
-            // However, user complained about spam. So we enforce strict cooldown even on updates if too frequent.
-            if (now - lastSent < COOLDOWN_MS && !isNew) {
-                // Determine if this update is "Urgent" enough to bypass cooldown
-                // For now, suppress it.
-                // console.log(`[Telegram] Throttled: ${strat.title}`);
+            // Strict Anti-Spam: Unless it's a brand new strategy, enforce the cooldown.
+            // Small updates to the ticker list will be ignored until the cooldown expires.
+            if (!isNew && (now - lastSent < COOLDOWN_MS)) {
+                // console.log(`[Telegram] Throttled: ${strat.title} (Cooldown active)`);
                 continue;
             }
 
             if (isNew || isUpdate) {
+                // If it's an update, but the cooldown has expired, we process it and reset the timer.
                 this.cooldownMap.set(strat.id, now);
 
                 let icon = 'ℹ️';
@@ -176,9 +175,9 @@ class TelegramService {
                 // --- BUILD HEADER (Mood & Splits) ---
                 let header = '';
                 if (marketSentiment) {
-                    const { moodScore, bullish, bearish, neutral } = marketSentiment;
-                    const moodIcon = moodScore > 20 ? '🟢' : (moodScore < -20 ? '🔴' : '🟡');
-                    const moodLabel = moodScore > 20 ? 'BULLISH' : (moodScore < -20 ? 'BEARISH' : 'NEUTRAL');
+                    const { moodScore, mood, bullish, bearish, neutral } = marketSentiment;
+                    const moodIcon = moodScore >= 20 ? '🟢' : (moodScore <= -20 ? '🔴' : '🟡');
+                    const moodLabel = mood || (moodScore >= 20 ? 'BULLISH' : (moodScore <= -20 ? 'BEARISH' : 'NEUTRAL'));
 
                     header = `\n━━━━━━━━━━━━━━\n` +
                         `🔮 **GENIE MOOD**: ${moodIcon} ${moodLabel} (${moodScore})\n`;
