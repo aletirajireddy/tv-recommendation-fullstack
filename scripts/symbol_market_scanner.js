@@ -166,14 +166,21 @@
         }
     };
 
-    function sendPayload(payload) {
+    function sendPayload(payload, changeDetection = {}) {
         OfflineStore.prune();
 
         // TRANSACTIONAL COUNT: Capture how many alerts we are taking
         // This effectively "locks" this specific batch for removal upon success
         const alertsToSendCount = payload.institutional_pulse && payload.institutional_pulse.alerts ? payload.institutional_pulse.alerts.length : 0;
 
-        console.log(`[Send] Sending payload ${payload.id} (${payload.trigger})... containing ${alertsToSendCount} alerts`);
+        console.log(`\n${'═'.repeat(60)}`);
+        console.log(`📦 SENDING PAYLOAD: ${payload.trigger}`);
+        console.log(`📦 FULL PAYLOAD DEBUG:`, payload);
+        console.log(`${'═'.repeat(60)}`);
+        console.log(`   Endpoint: ${CONFIG.AUTO_TRIGGER_ENDPOINT}`);
+        console.log(`   Alerts: ${alertsToSendCount}`);
+        console.log(`   Data Changed: ${changeDetection.hasChanged}`);
+        console.log(`${'═'.repeat(60)}\n`);
 
         GM_xmlhttpRequest({
             method: 'POST',
@@ -182,7 +189,8 @@
             headers: { 'Content-Type': 'application/json' },
             onload: (response) => {
                 if (response.status === 200) {
-                    console.log(`✅ Data sent successfully: ${payload.id}`);
+                    console.log(`✅ Payload sent successfully: ${payload.id}`);
+
                     if (response.responseText) {
                         try {
                             const resJson = JSON.parse(response.responseText);
@@ -198,18 +206,19 @@
                                 }
                             }
                         } catch (e) {
-                            console.warn('[Response] JSON Parse Warning', e);
+                            console.warn('[Sync] ⚠️ JSON Parse Error on response', e);
                         }
                     }
 
                     // TRANSACTIONAL FLUSH: Only remove exactly what we sent
                     // This creates a "Sliding Window" that preserves any NEW alerts that arrived during network latency
                     if (alertsToSendCount > 0 && unsafeWindow.pendingAlertBatch) {
-                        console.log(`[Send] 🧹 Flushing ${alertsToSendCount} confirmed alerts (Splice)`);
+                        console.log(`[Cleanup] 🧹 Flushing ${alertsToSendCount} confirmed alerts (Splice)`);
                         unsafeWindow.pendingAlertBatch.splice(0, alertsToSendCount);
-                        console.log(`[Send] 📦 Buffer remaining: ${unsafeWindow.pendingAlertBatch.length}`);
+                        console.log(`[Cleanup] 📦 Buffer remaining: ${unsafeWindow.pendingAlertBatch.length}`);
                     }
 
+                    STATE.lastSentTime = Date.now();
                     flushNextOfflineItem();
                 } else {
                     console.warn(`❌ Backend error ${response.status}. Saving to offline store.`);
@@ -241,21 +250,43 @@
             data: JSON.stringify(item.payload),
             headers: { 'Content-Type': 'application/json' },
             onload: (response) => {
-                // 200 (OK) or 409 (Duplicate/Already Exists) -> Treat as success to clear queue
+                // [UPDATED] Transactional Removal: ONLY Valid HTTP 200 or 409 (Conflict/Duplicate)
                 if (response.status === 200 || response.status === 409) {
                     if (response.status === 409) {
-                        console.warn(`[Sync] ⚠️ Scan ${item.id} already exists on server (Duplicate). Discarding from queue.`);
+                        console.warn(`[Sync] ⚠️ Item ${item.id} already exists (Duplicate). Removing from queue.`);
                     } else {
-                        console.log(`✅ Flushed item ${item.id}`);
+                        console.log(`[Sync] ✅ Successfully flushed item ${item.id}`);
+                        // Update Sync Head (Last Alert TS) 
+                        try {
+                            const resJson = JSON.parse(response.responseText);
+                            if (resJson.last_alert_ts) {
+                                const ts = new Date(resJson.last_alert_ts).getTime();
+                                if (ts > (unsafeWindow.latestConfirmedAlertTs || 0)) {
+                                    unsafeWindow.latestConfirmedAlertTs = ts;
+                                    console.log(`[Sync] 🔄 Updated Confirm Head: ${resJson.last_alert_ts}`);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn("[Sync] JSON Parse Error on offline flush sync:", e);
+                        }
                     }
-                    const newQueue = OfflineStore.getQueue().slice(1);
-                    OfflineStore.saveQueue(newQueue);
-                    setTimeout(flushNextOfflineItem, 1000);
+
+                    // [CRITICAL] Remove the head ONLY after success
+                    const updatedQueue = OfflineStore.getQueue(); // Reload to be safe
+                    if (updatedQueue.length > 0 && updatedQueue[0].id === item.id) {
+                        updatedQueue.shift(); // Remove head
+                        OfflineStore.saveQueue(updatedQueue);
+                    }
+
+                    // Recursively process next item
+                    setTimeout(() => flushNextOfflineItem(), 1000); // Small delay to breathe
                 } else {
-                    console.warn(`⚠️ ❌ Flush failed for ${item.id}. Status: ${response.status} | Response: ${response.responseText.slice(0, 100)}`);
+                    console.warn(`[Sync] ❌ Failed to flush ${item.id} (Status ${response.status}). Retrying later.`);
                 }
             },
-            onerror: () => console.warn(`❌ Flush network error for ${item.id}`),
+            onerror: (err) => {
+                console.error(`[Sync] ❌ Network error flashing ${item.id}`);
+            },
             timeout: 10000
         });
     }
@@ -1511,77 +1542,7 @@
         sendPayload(payload, changeDetection);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // SEND PAYLOAD WITH CLEANUP (DRY HELPER)
-    // ═══════════════════════════════════════════════════════════════
-    function sendPayload(payload, changeDetection = {}) {
-        console.log(`\n${'═'.repeat(60)}`);
-        console.log(`📦 SENDING PAYLOAD: ${payload.trigger}`);
-        console.log(`📦 FULL PAYLOAD DEBUG:`, payload); // REQUESTED LOG
-        console.log(`${'═'.repeat(60)}`);
-        console.log(`   Endpoint: ${CONFIG.AUTO_TRIGGER_ENDPOINT}`);
-        console.log(`   Alerts: ${payload.institutional_pulse?.alerts?.length || 0}`);
-        console.log(`   Data Changed: ${changeDetection.hasChanged}`);
-        console.log(`${'═'.repeat(60)}\n`);
 
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: CONFIG.AUTO_TRIGGER_ENDPOINT,
-            data: JSON.stringify(payload),
-            headers: { 'Content-Type': 'application/json' },
-            onload: (response) => {
-                if (response.status === 200) {
-                    console.log(`✅ Payload sent successfully`);
-
-                    // Smart sync
-                    if (response.responseText) {
-                        try {
-                            const resJson = JSON.parse(response.responseText);
-                            console.log(`✅ SERVER RESPONSE [200 OK]`);
-                            console.log(`   Trigger: ${resJson.trigger || 'N/A'}`);
-                            console.log(`   Saved TS: ${resJson.timestamp || 'N/A'}`);
-
-                            if (resJson.last_alert_ts) {
-                                const ts = new Date(resJson.last_alert_ts).getTime();
-                                console.log(`   Latest Alert TS: ${resJson.last_alert_ts}`);
-
-                                if (ts > (unsafeWindow.latestConfirmedAlertTs || 0)) {
-                                    unsafeWindow.latestConfirmedAlertTs = ts;
-                                    console.log(`   [Sync] 🔄 Updated local head to: ${resJson.last_alert_ts}`);
-                                }
-                            }
-                        } catch (e) {
-                            console.warn('   [Sync] ⚠️ JSON Parse Error on response', e);
-                        }
-                    }
-
-                    // ✅ TRANSACTIONAL CLEAR: Only on 200 OK
-                    if (unsafeWindow.pendingAlertBatch && unsafeWindow.pendingAlertBatch.length > 0) {
-                        console.log(`[Cleanup] 🧹 Cleared ${unsafeWindow.pendingAlertBatch.length} alerts`);
-                        unsafeWindow.pendingAlertBatch = [];
-                    }
-
-                    STATE.lastSentTime = Date.now();
-
-                    // Flush next offline item if any
-                    flushNextOfflineItem();
-
-                } else {
-                    console.warn(`❌ Backend error ${response.status} - saving to OfflineStore`);
-                    OfflineStore.add(payload);
-                }
-            },
-            onerror: (error) => {
-                console.error('❌ Send failed - saving to OfflineStore:', error);
-                OfflineStore.add(payload);
-            },
-            ontimeout: () => {
-                console.error('⏱️ Timeout - saving to OfflineStore');
-                OfflineStore.add(payload);
-            },
-            timeout: 10000
-        });
-    }
 
     // ═══════════════════════════════════════════════════════════════
     // PROCESS DATA (MAIN PROCESSING FUNCTION)
@@ -2040,8 +2001,7 @@
                 console.log(`\n${'═'.repeat(60)}`);
                 console.log('🚨 ALERT-TRIGGERED SCAN COMPLETE - SENDING TO BACKEND');
                 console.log(`${'═'.repeat(60)}`);
-                console.log(`   AI Priority: ${JSON.stringify(payload.aiPriority).length} bytes`);
-                console.log(`   Backup Data: ${JSON.stringify(payload.backupData).length} bytes`);
+                console.log(`   AI Priority: ${(JSON.stringify(payload.aiPriority) || '').length} bytes`);
                 if (payload.institutionalPulse) {
                     console.log(`   Institutional Pulse: ${payload.institutionalPulse.alerts ? payload.institutionalPulse.alerts.length : 0} alerts`);
                     if (payload.institutionalPulse.consensus && payload.institutionalPulse.consensus.strongSignals) {
@@ -2339,57 +2299,7 @@
         toggleChartEvents: clickAllEventElements,
     };
 
-    function flushNextOfflineItem() {
-        const queue = OfflineStore.getQueue();
-        if (queue.length === 0) return;
 
-        const item = queue[0];
-        console.log(`[Sync] Flushing offline item ${item.id}...`);
-
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: CONFIG.AUTO_TRIGGER_ENDPOINT,
-            data: JSON.stringify(item.payload),
-            headers: { 'Content-Type': 'application/json' },
-            onload: (response) => {
-                // [UPDATED] Transactional Removal: ONLY Valid HTTP 200 or 409 (Conflict/Duplicate)
-                if (response.status === 200 || response.status === 409) {
-                    if (response.status === 409) {
-                        console.warn(`[Sync] ⚠️ Item ${item.id} already exists (Duplicate). Removing from queue.`);
-                    } else {
-                        console.log(`[Sync] ✅ Successfully flushed item ${item.id}`);
-                        // Update Sync Head (Last Alert TS) 
-                        try {
-                            const resJson = JSON.parse(response.responseText);
-                            if (resJson.last_alert_ts) {
-                                const ts = new Date(resJson.last_alert_ts).getTime();
-                                if (ts > (unsafeWindow.latestConfirmedAlertTs || 0)) {
-                                    unsafeWindow.latestConfirmedAlertTs = ts;
-                                    console.log(`[Sync] 🔄 Updated Confirm Head: ${resJson.last_alert_ts}`);
-                                }
-                            }
-                        } catch (e) { }
-                    }
-
-                    // [CRITICAL] Remove the head ONLY after success
-                    const updatedQueue = OfflineStore.getQueue(); // Reload to be safe
-                    if (updatedQueue.length > 0 && updatedQueue[0].id === item.id) {
-                        updatedQueue.shift(); // Remove head
-                        OfflineStore.saveQueue(updatedQueue);
-                    }
-
-                    // Recursively process next item
-                    setTimeout(() => flushNextOfflineItem(), 1000); // Small delay to breathe
-                } else {
-                    console.warn(`[Sync] ❌ Failed to flush ${item.id} (Status ${response.status}). Retrying later.`);
-                }
-            },
-            onerror: (err) => {
-                console.error(`[Sync] ❌ Network error flashing ${item.id}`);
-            },
-            timeout: 10000
-        });
-    }
 
     // ═══════════════════════════════════════════════════════════════
     // INITIALIZATION

@@ -260,12 +260,22 @@ export const useTimeStore = create((set, get) => ({
 
             // 🛠️ DATA NORMALIZATION: Flatten the V3 'data' nesting for Frontend consumption
             // This ensures widgets can access property directly (e.g. item.close) without checking item.data.close
+            // 🛠️ DATA NORMALIZATION: Flatten the V3 'data' nesting for Frontend consumption
+            // This ensures widgets can access property directly (e.g. item.close) without checking item.data.close
             const normalizedResults = (data.results || []).map(item => {
+                // 1. Flatten Data
                 // If 'data' exists, merge it up. If not, assume it's already flat.
-                if (item.data) {
-                    return { ...item.data, ...item, data: undefined }; // Spread data first, then meta, remove identifier
-                }
-                return item;
+                let flatItem = item.data ? { ...item.data, ...item, data: undefined } : { ...item };
+
+                // 2. Genie Smart Override (Rule #1: Client-Side Scoring Truth)
+                // We overwrite the static 'score', 'label', 'insights' with fresh logical values
+                const smart = GenieSmart.calculateScore(flatItem);
+
+                return {
+                    ...flatItem,
+                    ...smart, // Overwrites score, label, direction, insights
+                    // Keep original properties that are not recalculated if needed, but 'smart' handles the core metrics
+                };
             });
 
             // Update the payload

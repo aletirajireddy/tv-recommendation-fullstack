@@ -11,6 +11,89 @@
 
 const GenieSmart = {
 
+    // ═══════════════════════════════════════════════════════════════
+    // CONSTANTS & CONFIG
+    // ═══════════════════════════════════════════════════════════════
+
+    POSITION_CODE_SCORES: {
+        530: 35, 502: 35, 430: 32, 403: 32, 521: 30,
+        500: 28, 104: 28, 340: 28, 231: 25, 221: 20,
+        212: 15, 222: 10, 421: 18, 412: 18
+    },
+
+    /**
+     * 0. Calculate Quality Score (Client-Side Derivative)
+     * Replaces the need for the scanner script to send a pre-calculated score.
+     * @param {Object} d - The raw coin data object (flattened)
+     */
+    calculateScore: (d) => {
+        let score = 0;
+        const insights = [];
+
+        // 1. Base Score from Position Code
+        score += GenieSmart.POSITION_CODE_SCORES[d.positionCode] || 0;
+
+        // 2. Mega Zone
+        if (d.megaSpotDist !== null && Math.abs(d.megaSpotDist) <= 0.5) {
+            score += 20;
+            insights.push('🎯 Mega zone');
+        }
+
+        // 3. Trend Alignment
+        const isBullishTrend = (d.netTrend || 0) >= 60;
+        const isDailyBull = (d.dailyTrend || 0) === 1;
+
+        if ((d.resistDist || 0) >= 2.0 && isBullishTrend) {
+            score += 20;
+            insights.push('💪 Strong trend');
+            if (isDailyBull) {
+                score += 5;
+                insights.push('☀️ Daily align');
+            }
+        }
+
+        // 4. Confluence
+        if ((d.supportStars || d.resistStars || 0) >= 4) {
+            score += 12;
+            insights.push('⭐ High confluence');
+        }
+
+        // 5. Momentum & Volume
+        if ((d.momScore || 0) >= 2) {
+            score += d.momScore === 3 ? 7 : 5;
+        }
+        if (d.volSpike === 1) {
+            score += 3;
+            insights.push('📊 Volume');
+        }
+
+        // 6. Breakout Signal (NEW)
+        if (d.breakout === 1) {
+            score += 10;
+            insights.push('🚀 Breakout');
+        }
+
+        // 7. Warning Signs (Penalties/Insights)
+        if ((d.dailyRange || 0) > 80) insights.push('⚠️ Late entry');
+        if ((d.compressCount || 0) >= 3)
+            insights.push(`⚡ Compressed(${d.compressCount})`);
+        if (d.freeze === 1) insights.push('❄️ Frozen');
+
+        // Derived Logic for Label/Color
+        let direction = 'NEUTRAL';
+        if ((d.resistDist || 0) >= 2.0) direction = 'BULL';
+        else if ((d.supportDist || 0) <= -2.0) direction = 'BEAR';
+
+        // Label Logic
+        let label = '💤 WEAK';
+        if (score >= 90) label = '🚀 MEGA';
+        else if (score >= 75) label = '💪 STRONG';
+        else if (score >= 60) label = '✅ GOOD';
+        else if (score >= 45) label = '👀 WATCH';
+
+        return { score, label, direction, insights };
+    },
+
     /**
      * 1. Analyze Global Market Mood
      * Aggregates individual coin data to determine the overall vibe.
@@ -22,40 +105,41 @@ const GenieSmart = {
         let bullish = 0;
         let bearish = 0;
         let neutral = 0;
-        let totalScore = 0;
-        let validCount = 0;
 
+        // Count Directions based on Position Code
+        // 1xx = Bearish, 3xx/5xx = Bullish, 2xx/4xx = Neutral/Choppy
         tickers.forEach(t => {
-            // Unpack Data (Handle V3 Flat or Nested)
             const d = t.data || t;
+            const code = d.positionCode || 0;
 
-            // Direction Logic
-            if (d.direction === 'BULL') bullish++;
-            else if (d.direction === 'BEAR') bearish++;
+            if (code >= 300) bullish++;          // 300+ (Bullish Trend, Mega Spot)
+            else if (code >= 100 && code < 200) bearish++; // 100-199 (Bearish Trend)
             else neutral++;
-
-            // Global Mood Score Calculation
-            // We weigh 'momScore' and 'netTrend' heavily
-            const score = d.score || 0; // Use the pre-calc score from Pine if available
-            if (score !== 0) {
-                totalScore += score;
-                validCount++;
-            }
         });
 
-        const avgScore = validCount > 0 ? Math.round(totalScore / validCount) : 0;
+        const total = tickers.length;
+
+        // 🎯 GENIE MOOD FORMULA (Net Flow %)
+        // Range: -100 (All Bear) to +100 (All Bull)
+        // 0 = Perfect Balance
+        let rawScore = 0;
+        if (total > 0) {
+            rawScore = ((bullish - bearish) / total) * 100;
+        }
+
+        const avgScore = Math.round(rawScore);
 
         // Derive Label
         let label = 'NEUTRAL';
-        if (avgScore > 20) label = 'BULLISH';
-        if (avgScore > 50) label = 'EUPHORIC';
-        if (avgScore < -20) label = 'BEARISH';
-        if (avgScore < -50) label = 'PANIC';
+        if (avgScore >= 20) label = 'BULLISH';
+        if (avgScore >= 60) label = 'EUPHORIC';
+        if (avgScore <= -20) label = 'BEARISH';
+        if (avgScore <= -60) label = 'PANIC';
 
         return {
             moodScore: avgScore,
             label,
-            stats: { bullish, bearish, total: tickers.length }
+            stats: { bullish, bearish, total }
         };
     },
 

@@ -45,7 +45,68 @@ app.post('/scan-report', (req, res) => {
         db.prepare('INSERT INTO scans (id, timestamp, trigger) VALUES (?, ?, ?)')
             .run(scanId, timestamp, trigger);
 
-        // B. Insert Scan Results (JSON Blob)
+        // [AUDIT]: Preserve Raw Browser Sentiment (Before Overwrite)
+        if (payload.market_sentiment) {
+            db.prepare(`
+                INSERT INTO raw_market_sentiment_log 
+                (scan_id, timestamp, raw_mood_score, raw_label, raw_bullish, raw_bearish)
+                VALUES (?, ?, ?, ?, ?, ?)
+            `).run(
+                scanId,
+                timestamp,
+                payload.market_sentiment.moodScore || 0,
+                payload.market_sentiment.mood || 'UNKNOWN',
+                payload.market_sentiment.bullish || 0,
+                payload.market_sentiment.bearish || 0
+            );
+        }
+
+        // [INSTITUTIONAL GRADE]: Ingress Sanitization
+        // We do NOT trust the Scanner's pre-calculated scores.
+        // We re-derive everything here so the Database contains the "Genie Truth".
+        if (payload.results && Array.isArray(payload.results)) {
+            let bulls = 0, bears = 0, neutral = 0;
+
+            payload.results.forEach(item => {
+                const d = item.data || item;
+
+                // 1. Force Recalculate Score
+                const genieScore = calculateGenieScore(d);
+
+                // 2. Overwrite Payload
+                if (item.data) item.data.score = genieScore;
+                item.score = genieScore;
+
+                // 3. Track Breadth for Mood
+                const code = d.positionCode || 0;
+                if (code >= 300) bulls++;
+                else if (code >= 100 && code < 200) bears++;
+                else neutral++;
+            });
+
+            // 4. Force Recalculate Market Sentiment (Net Flow)
+            const total = payload.results.length;
+            const flowScore = total > 0 ? ((bulls - bears) / total) * 100 : 0;
+            const moodScore = Math.round(flowScore);
+
+            let label = 'NEUTRAL';
+            if (moodScore >= 20) label = 'BULLISH';
+            if (moodScore >= 60) label = 'EUPHORIC';
+            if (moodScore <= -20) label = 'BEARISH';
+            if (moodScore <= -60) label = 'PANIC';
+
+            payload.market_sentiment = {
+                mood: label,
+                moodScore: moodScore,
+                bullish: bulls,
+                bearish: bears,
+                neutral: neutral
+            };
+
+            console.log(`[INGRESS] Sanitized Scan: ${moodScore}% (${label}) | Overwrote Scores`);
+        }
+
+        // B. Insert Scan Results (Sanitized JSON Blob)
         db.prepare('INSERT INTO scan_results (scan_id, raw_data) VALUES (?, ?)')
             .run(scanId, JSON.stringify(payload));
 
@@ -187,34 +248,11 @@ function analyzeProactiveStrategies(payload) {
     // The payload.market_sentiment comes from the client scanner's legacy logic.
     // We must RE-CALCULATE the "Genie Score" here to ensure Telegram matches the Dashboard.
 
-    let geniemood = { mood: 'NEUTRAL', moodScore: 0, bullish: 0, bearish: 0 };
+    // [GENIE SYNC]: Payload is already Sanitized at Ingress (app.post)
+    // We can trust payload.market_sentiment now.
+    const geniemood = payload.market_sentiment || { mood: 'NEUTRAL', moodScore: 0 };
 
-    // Symmetric Calculation (Same as GenieSmart.js)
-    if (results && results.length > 0) {
-        let bulls = 0;
-        let bears = 0;
-        results.forEach(item => {
-            const d = item.data || item;
-            const pCode = d.positionCode || 0;
-            if (pCode >= 300) bulls++; // 3xx, 5xx
-            if (pCode >= 100 && pCode < 200) bears++; // 1xx
-        });
-
-        const total = results.length;
-        // Score = (Net Flow / Total) * 100
-        const rawScore = ((bulls - bears) / total) * 100;
-        const moodScore = Math.round(rawScore);
-
-        let label = 'NEUTRAL';
-        if (moodScore >= 20) label = 'BULLISH';
-        if (moodScore <= -20) label = 'BEARISH';
-
-        geniemood = { mood: label, moodScore, bullish: bulls, bearish: bears, neutral: total - bulls - bears };
-        console.log(`[GENIE SERVER] Re-calc Sentiment: ${moodScore}% (${label}) vs Payload: ${payload.market_sentiment?.moodScore}%`);
-    }
-
-    // Sync to Telegram Service (Handles Throttling & Logging)
-    // Pass the RE-CALCULATED 'geniemood' which syncs with Frontend
+    // Sync to Telegram Service
     TelegramService.syncStrategies(
         strategies,
         geniemood,
@@ -615,5 +653,56 @@ const PORT = 3000;
 server.listen(PORT, () => {
     console.log(`🚀 V3 Server running on port ${PORT}`);
 });
+
+/**
+ * Server-Side Mirror of GenieSmart.calculateScore
+ * Ensures Telegram alerts match the Client Dashboard.
+ */
+function calculateGenieScore(d) {
+    const POSITION_CODE_SCORES = {
+        530: 35, 502: 35, 430: 32, 403: 32, 521: 30,
+        500: 28, 104: 28, 340: 28, 231: 25, 221: 20,
+        212: 15, 222: 10, 421: 18, 412: 18
+    };
+
+    let score = 0;
+
+    // 1. Base Score
+    score += POSITION_CODE_SCORES[d.positionCode] || 0;
+
+    // 2. Mega Zone
+    if (d.megaSpotDist !== null && Math.abs(d.megaSpotDist) <= 0.5) {
+        score += 20;
+    }
+
+    // 3. Trend Alignment
+    const isBullishTrend = (d.netTrend || 0) >= 60;
+    const isDailyBull = (d.dailyTrend || 0) === 1;
+
+    if ((d.resistDist || 0) >= 2.0 && isBullishTrend) {
+        score += 20;
+        if (isDailyBull) score += 5;
+    }
+
+    // 4. Confluence
+    if ((d.supportStars || d.resistStars || 0) >= 4) {
+        score += 12;
+    }
+
+    // 5. Momentum & Volume
+    if ((d.momScore || 0) >= 2) {
+        score += d.momScore === 3 ? 7 : 5;
+    }
+    if (d.volSpike === 1) {
+        score += 3;
+    }
+
+    // 6. Breakout
+    if (d.breakout === 1) {
+        score += 10;
+    }
+
+    return score;
+}
 
 

@@ -81,6 +81,24 @@ db.exec(`
     );
 `);
 
+// ============================================================================
+// 6. RAW SENTIMENT LOG (Audit/Backtest Only)
+// ============================================================================
+// Stores the "Legacy" Browser-Calculated Sentiment BEFORE Server Overwrite.
+// Strictly for comparing Client vs Server logic drift.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS raw_market_sentiment_log (
+        scan_id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        raw_mood_score INTEGER,
+        raw_label TEXT,
+        raw_bullish INTEGER,
+        raw_bearish INTEGER,
+        
+        FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+    );
+`);
+
 console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks');
 
 module.exports = db;

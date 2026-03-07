@@ -133,11 +133,13 @@ The Dashboard is no longer just for "Scanning"; it is for "Game Planning".
 *   **Usage**: The user must be able to see these two lists *before* the volatility hits.
 *   **Telegram Sync**: These scenarios must be passed to the Telegram Engine to provide "Game Plan" context in alerts.
 
-### Rule #11: Telegram Smart Throttling & Chunking
-To prevent "Notification Fatigue", the Telegram engine must adhere to:
-*   **Throttling**: 10-Minute Cooldown for the same Strategy ID (unless the ticker list changes significantly).
-*   **Chunking**: If a strategy qualifies 50+ coins (Mega Pump), the message MUST be split into chunks (max 3800 chars) to guarantee 100% delivery.
-*   **Context Header**: Every alert must start with the "Genie Mood" and "Game Plan" (Plan A/B).
+### Rule #12: Ingress Sanitization & The "Black Box" Log
+**Institutional Grade Data Integrity** requires that the Database and Telegram always reflect the "Genie Truth", not the raw Scanner output.
+*   **Ingress Logic**: Upon receiving `/scan-report`, the Server **IMMEDIATELY RE-CALCULATES** all scores (`calculateGenieScore`) and Market Mood (`Net Flow`).
+*   **Overwrite Mandate**: The Server **OVERWRITES** `payload.results[].score` and `payload.market_sentiment` before saving to `scan_results`.
+*   **The Black Box (`raw_market_sentiment_log`)**: The *original* Browser-sent sentiment is archived in a separate table.
+    *   **STRICT PROHIBITION**: This table is for **Audit & Backtesting ONLY**.
+    *   **NEVER** use `raw_market_sentiment_log` to drive Widgets, Alerts, or API responses. It exists solely to detect logic drift between Browser and Server.
 
 ---
 
@@ -146,8 +148,7 @@ To prevent "Notification Fatigue", the Telegram engine must adhere to:
 
 ### 6.1 The "Scan Report" Payload Structure
 The `/scan-report` endpoint expects this exact JSON structure.
-`institutional_pulse` contains the buffered alerts processed by `alert_scanner.js`.
-`results` contains the raw 26-column data from the table.
+**NOTE**: The Server sanitize/overwrites `score` and `market_sentiment` at Ingress.
 
 ```json
 {
@@ -166,9 +167,9 @@ The `/scan-report` endpoint expects this exact JSON structure.
                 "datakey": "BINANCE:ADAUSDT.P",
                 "exchange_symbol": "BINANCE:ADAUSDT.P",
                 
-                // --- COMPUTED ---
-                "score": 28,
-                "label": "💤 WEAK",
+                // --- COMPUTED (Sanitized by Server) ---
+                "score": 28,            // Server-Calculated Genie Score
+                "label": "💤 WEAK",     // Browser Label (Legacy)
                 "direction": "BULL",
                 "insights": [],
                 
@@ -176,21 +177,47 @@ The `/scan-report` endpoint expects this exact JSON structure.
                 "close": 0.3929,
                 "netTrend": -76,
                 "momScore": 0,
-                "volSpike": 0,
-                "positionCode": 104,
-                // ... [See Full 26-Column Mapping Below]
-                
-                "timestamp": "2026-01-15T20:13:51.281Z"
+                // ...
             }
         }
     ],
     "aiPriority": { ... },       // Lean AI Context
-    "market_sentiment": { ... }, // Global Mood
+    "market_sentiment": {        // Sanitized by Server (Net Flow Logic)
+        "mood": "BEARISH",
+        "moodScore": -82,
+        "bullish": 5,
+        "bearish": 35,
+        "neutral": 2
+    }, 
     "institutional_pulse": {     // Buffered Alerts
         "alerts": [ ... ] 
     }
 }
 ```
+
+### 6.2 The 26-Column Mapping (Sacred Schema)
+*(Unchanged)*
+
+[... Table Omitted for Brevity ...]
+
+---
+
+## 10. Phase 2: Institutional Hardening (Jan 2026)
+**The Shift from Retail Signal Chasing to Institutional Context Trading.**
+
+### 10.1 System Audit Findings
+*   **Logic Upgrade**: Moving to "Net Flow" Sentiment Logic (`(Bulls-Bears)/Total`) fixed the "Bullish in Red Market" bug.
+*   **Ingress Sanitization**: The Server now acts as the Governor, enforcing Genie Logic on all incoming data.
+*   **Audit Logging**: The `raw_market_sentiment_log` provides a forensic trail of Browser vs Server logic.
+
+### 10.2 Final Architecture State
+*   **Brain**: `GenieSmart.js` (Client) & `calculateGenieScore` (Server Ingress) - **SYNCED**.
+*   **Heart**: `Pulse Engine` (Server-Side Aggregation).
+*   **Nerves**: `TelegramService.js` (Driven by Sanitized Ingress Data).
+*   **Eyes**: `ScenarioBoard.jsx` (Plan A / Plan B Visualizer).
+
+**This system is now rated "Institutional Grade" for Discretionary Scalping.**
+*(End of Document)*
 
 ### 6.2 The 26-Column Mapping (Sacred Schema)
 This table maps the **Pine Script Table Index** to the **JSON Property**.
