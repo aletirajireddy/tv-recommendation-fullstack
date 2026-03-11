@@ -339,5 +339,32 @@ The system must monitor the 26-column data stream for specific state transitions
 *   **Eyes**: `ScenarioBoard.jsx` (Plan A / Plan B Visualizer)
 
 **This system is now rated "Institutional Grade" for Discretionary Scalping.**
+
+---
+
+## 11. Phase 3: The Scout-to-Master Pipeline (March 2026)
+**The introduction of an autonomous momentum discovery pipeline.**
+
+### 11.1 The Dual-Scanner Architecture
+*   **Area 1 (The Scout)**: `coin_scanner.js` running on a high-velocity screener to detect volume spikes and momentum births.
+*   **Area 2 (The Watchlist)**: Our curated target list.
+*   **The Problem**: Area 1 generates noise if we alert on every breakout.
+*   **The Solution**: We implemented "Gate 8" (Velocity) and "Gate 20" (Stable). Area 1 watches a newly born coin for X minutes. If it survives, it is requested to be added to Area 2 via the Clipboard/Automa bridge.
+
+### 11.2 The Dedicated Market Context API
+*   **Separation of Concerns**: We NEVER pollute the high-fidelity `scan_results` (Stream A) or `pulse_events` with raw momentum pings from the Scout (Stream B).
+*   **Stream B Logging**: `/qualified-pick` logs to a dedicated `scout_logs` table.
+*   **Context Telemetry**: A new endpoint `/api/market-context` receives periodic DOM-scraped states from `coin_scanner.js`.
+    *   It reports the **Total Count** of coins in the global screener (Area 1).
+    *   It reports the **Active Tickers** currently in the user's Watchlist (Area 2).
+    *   *Usage*: This drives pure UI Dashboard widgets (e.g., "Market Breadth", "Watchlist Health") without triggering alerts or corrupting technical indicator histories.
+
+### 11.3 State Management & Edge Cases
+The frontend script (`coin_scanner.js`) employs a strict state machine to prevent infinite loops and ghost alerts:
+1.  **Ghosts (pausedAt)**: A 5-minute grace period if a coin vanishes from the screener.
+2.  **The Fade (prune_list)**: Stream A governs weakness. If Stream A marks a coin weak, the backend adds it to the `prune_list` clipboard payload, and the Scout ignores it.
+3.  **Graduation Lock (graduatedSet)**: A 60-minute ignores-lock for coins that successfully hit Gate 20 to prevent re-alerting.
+4.  **Watchlist Sync**: `coin_scanner.js` parses the Area 2 DOM natively. If it sees a coin already exists in the Watchlist, it bypasses the entire Gate 8/20 scouting process.
+
 *(End of Document)*
 

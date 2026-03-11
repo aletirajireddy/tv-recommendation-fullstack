@@ -179,6 +179,33 @@ db.prepare(`
     )
 `).run();
 
+// Initialize Area 1 Scout Logs
+// Stores momentum coins vetted by Stream B independently from Stream A logs
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS area1_scout_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        exchange TEXT DEFAULT 'BINANCE',
+        price REAL,
+        type TEXT,
+        vol_change REAL,
+        raw_data TEXT
+    )
+`).run();
+
+// Initialize Market Context Logs
+// Stores passive telemetry like Watchlist breadth and Screener counts from Stream B
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS market_context_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        screener_total_count INTEGER,
+        watchlist_count INTEGER,
+        payload_json TEXT
+    )
+`).run();
+
 /**
  * 🦅 PROACTIVE AI STRATEGY ENGINE
  * Detects patterns in the 26-column data and syncs with Telegram
@@ -261,25 +288,27 @@ function analyzeProactiveStrategies(payload) {
 }
 
 // 3. QUALIFIED PICK (Stream B - Micro / Test Log)
-// Writes to 'qualified_picks_log' for testing and shortlisting without colliding Stream A
+// Writes to 'area1_scout_logs' for testing and shortlisting without colliding Stream A
 app.post('/qualified-pick', (req, res) => {
     const { ticker, price, type, move, direction, total_market_count, market_snapshot } = req.body;
-    console.log(`[PICKER] 🎯 V3 Pick (Log): ${ticker} (${type})`);
+    const exchange = req.body.exchange || 'BINANCE';
+    const volChange = req.body.volChange || 0;
+    console.log(`[PICKER] 🎯 V3 Pick (Log): ${exchange}:${ticker} (${type})`);
 
     try {
         const now = new Date().toISOString();
 
         // 1. SAVE TO NEW LOG TABLE (Don't impact main active_ledger)
         db.prepare(`
-            INSERT INTO qualified_picks_log (ticker, price, type, timestamp, raw_data)
-            VALUES (?, ?, ?, ?, ?)
-        `).run(ticker, price, type, now, JSON.stringify(req.body));
+            INSERT INTO area1_scout_logs (ticker, exchange, price, type, timestamp, vol_change, raw_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(ticker, exchange, price, type, now, volChange, JSON.stringify(req.body));
 
         // Let the UI know a pick came in
         io.emit('ledger-update', { ticker, price, signal: type });
 
         // 2. GENERATE FEEDBACK LOOP FOR COIN SCANNER
-        let masterList = [];
+        let activeList = [];
         let pruneList = [];
 
         // Cross-reference with Stream A (Macro Scans) if available
@@ -293,11 +322,8 @@ app.post('/qualified-pick', (req, res) => {
                     const cleanTicker = item.ticker;
                     const fullTicker = item.datakey || `BINANCE:${cleanTicker}`; // Ensure proper format for Screener
 
-                    // IF it's a STABLE coin from Stream B, UI might want it, but the scanner only cares if it's STRONG.
-                    // Let's identify STRONG coins to force the scanner to watch (Master List)
-                    if (d.score >= 40 || d.breakout === 1) {
-                        masterList.push(fullTicker);
-                    }
+                    // Any coin monitored by Stream A is in the Active List
+                    activeList.push(fullTicker);
 
                     // Let's identify WEAK or DEAD coins to force the scanner to drop (Prune List)
                     if (d.score <= 30 || d.freeze === 1) {
@@ -307,12 +333,18 @@ app.post('/qualified-pick', (req, res) => {
             }
         }
 
+        // The newly requested coin from Stream B
+        const alertFullTicker = `${exchange}:${ticker}`;
+        const newGraduates = [alertFullTicker];
+
         res.json({
             message: "Saved to Log",
             ai_suggestion: "TRACKING",
-            // Return comma-separated strings as expected by coin_scanner.js
-            master_watchlist: masterList.join(','),
-            prune_list: pruneList.join(',')
+            // 4-Part Payload for mix & match on the frontend
+            active_list: activeList,
+            prune_list: [...new Set(pruneList)],
+            new_graduates: newGraduates,
+            master_targets: [...new Set([...activeList, ...newGraduates])]
         });
 
     } catch (e) {
@@ -683,6 +715,58 @@ app.get('/api/analytics/research', (req, res) => {
         });
     } catch (e) {
         console.error("Research Analytics Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 9. MARKET CONTEXT TELEMETRY (Phase 3)
+// Passive telemetry from frontend scraper (Watchlist breadth, total screener counts)
+app.post('/api/market-context', (req, res) => {
+    try {
+        const payload = req.body;
+        const now = new Date().toISOString();
+
+        db.prepare(`
+            INSERT INTO market_context_logs (timestamp, screener_total_count, watchlist_count, payload_json)
+            VALUES (?, ?, ?, ?)
+        `).run(
+            now,
+            payload.screener_total_count || 0,
+            payload.watchlist_count || 0,
+            JSON.stringify(payload)
+        );
+
+        // Optionally emit to frontend for live dashboard updates
+        io.emit('market-context-update', payload);
+
+        res.json({ success: true, message: "Market context telemetry saved." });
+    } catch (e) {
+        console.error("Market Context Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET: Latest Market Context for Dashboard Widgets
+app.get('/api/market-context/latest', (req, res) => {
+    try {
+        const row = db.prepare(`
+            SELECT timestamp, screener_total_count, watchlist_count, payload_json 
+            FROM market_context_logs 
+            ORDER BY rowid DESC 
+            LIMIT 1
+        `).get();
+
+        if (!row) {
+            return res.json({ status: "No data available", timestamp: null });
+        }
+
+        const data = JSON.parse(row.payload_json);
+        // Inject the exact server timestamp back into the response for time-sync displays
+        data.server_timestamp = row.timestamp;
+
+        res.json(data);
+    } catch (e) {
+        console.error("Error fetching market context:", e);
         res.status(500).json({ error: e.message });
     }
 });
