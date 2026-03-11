@@ -6,15 +6,17 @@
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_setClipboard
+// @grant        GM_openInTab
 // @connect      localhost
 // ==/UserScript==
 
 (function () {
     'use strict';
-
     const CONFIG = {
-        SCAN_MS: 60000,
-        GATE_8: 8, GATE_20: 20,
+        SCAN_MS: 60000, // Reduced to 30s scans for testing
+        GATE_8: 8,      // VELOCITY alert after 1 minute (was 8)
+        GATE_20: 20,     // STABLE alert after 2 minutes (was 20)
         BACKEND_URL: "http://localhost:3000/qualified-pick",
         FIELDS: { SYMBOL: "TickerUniversal", RATING: "TechnicalRating|TimeResolution1D", PRICE: "Price" }
     };
@@ -68,21 +70,11 @@
                     }
 
                     const serverInfo = JSON.parse(response.responseText);
+                    console.log(`[DATA-RECEIVED] Master: ${serverInfo.master_watchlist || 'None'} | Prune: ${serverInfo.prune_list || 'None'}`);
 
-                    // 1. LOGGING & HISTORY
+                    // 1. LOGGING
                     console.log(`%c[SERVER ${status} @ ${ts}] %c${payload.ticker}: ${serverInfo.ai_suggestion || 'Processed'}`,
-                        STYLES.SERVER, "color: #b39ddb; font-style: italic;");
-
-                    // Archive Response
-                    debugServerHistory.push({
-                        ts: ts,
-                        prune: serverInfo.prune_list,
-                        master: serverInfo.master_watchlist
-                    });
-                    console.log("[DEBUG HISTORY]", debugServerHistory);
-
-
-                    // 2. PRUNE LIST (Feedback Loop)
+                        STYLES.SERVER, "color: #b39ddb; font-style: italic;");                    // 2. PRUNE LIST (Feedback Loop)
                     if (serverInfo.prune_list && typeof serverInfo.prune_list === 'string') {
                         const pruneList = serverInfo.prune_list.split(',').filter(s => s.trim().length > 0);
                         let prunedCount = 0;
@@ -106,7 +98,33 @@
                         const masterList = serverInfo.master_watchlist.split(',').filter(s => s.trim().length > 0);
                         // Update Global Target Set (Duplicates handled by Set)
                         masterList.forEach(key => serverTargetSet.add(key));
-                        console.log(`%c[MASTER] Target Set Size: ${serverTargetSet.size}`, "color: #ff9800;");
+                        console.log(`%c[MASTER] Target Set:`, "color: #ff9800;", Array.from(serverTargetSet));
+
+                        // Copy to Clipboard feature for easy pasting
+                        const clipboardString = masterList.join(',');
+                        if (clipboardString) {
+                            try {
+                                GM_setClipboard(clipboardString);
+                                console.log(`%c 📋 Copied Master List! %c 👉 `,
+                                    "color: #4caf50; font-weight: bold;",
+                                    "background: #ff9800; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px; font-size: 14px;"
+                                );
+
+                                // Automa Workaround: Open a dummy URL that Automa's "When visiting a website" trigger can detect
+                                // Throttled to 15 minutes to prevent tab spam during fast scans
+                                const now = Date.now();
+                                if (now - window.lastAutomaTriggerMs > 15 * 60 * 1000 || !window.lastAutomaTriggerMs) {
+                                    GM_openInTab("https://www.tradingview.com/cex-screener/lEINSjG1/", { active: false, insert: true, setParent: true });
+                                    window.lastAutomaTriggerMs = now;
+                                    console.log(`%c 🤖 Fired Automa Trigger (Next allowed in 5m)`, "color: #9c27b0; font-style: italic;");
+                                } else {
+                                    const minLeft = (15 - ((now - window.lastAutomaTriggerMs) / 60000)).toFixed(1);
+                                    console.log(`%c 🤖 Skipped Automa Trigger (Cooldown: ${minLeft}m left)`, "color: #9c27b0; font-style: italic;");
+                                }
+                            } catch (err) {
+                                console.error("Clipboard copy failed:", err);
+                            }
+                        }
                     }
 
                 } catch (e) {
@@ -116,7 +134,20 @@
         });
     }
 
+    function ensureWatchlistPanelOpen() {
+        // Find the specific toggle button on the right sidebar (data-name='base')
+        const panelBtn = document.querySelector('button[data-name="base"]');
+        if (!panelBtn) return;
+
+        const isPressed = panelBtn.getAttribute('aria-pressed') === 'true';
+        if (!isPressed) {
+            console.log('[Panel] 📂 Opening Base Right Panel...');
+            panelBtn.click();
+        }
+    }
+
     function monitor() {
+        ensureWatchlistPanelOpen();
         mapHeaders();
         const rows = document.querySelectorAll('tbody tr[data-rowkey]');
         const seenInThisScan = new Set();

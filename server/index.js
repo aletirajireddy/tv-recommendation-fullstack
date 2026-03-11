@@ -260,23 +260,61 @@ function analyzeProactiveStrategies(payload) {
     );
 }
 
-// 3. QUALIFIED PICK (Stream B - Micro)
-// Writes to 'qualified_picks'
+// 3. QUALIFIED PICK (Stream B - Micro / Test Log)
+// Writes to 'qualified_picks_log' for testing and shortlisting without colliding Stream A
 app.post('/qualified-pick', (req, res) => {
-    const { ticker, price, type, move, direction, total_market_count } = req.body;
-    console.log(`[PICKER] 🎯 V3 Pick: ${ticker} (${type})`);
+    const { ticker, price, type, move, direction, total_market_count, market_snapshot } = req.body;
+    console.log(`[PICKER] 🎯 V3 Pick (Log): ${ticker} (${type})`);
 
     try {
         const now = new Date().toISOString();
 
+        // 1. SAVE TO NEW LOG TABLE (Don't impact main active_ledger)
         db.prepare(`
-            INSERT INTO qualified_picks (ticker, price, timestamp, raw_data)
-            VALUES (?, ?, ?, ?)
-        `).run(ticker, price, now, JSON.stringify(req.body));
+            INSERT INTO qualified_picks_log (ticker, price, type, timestamp, raw_data)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(ticker, price, type, now, JSON.stringify(req.body));
 
+        // Let the UI know a pick came in
         io.emit('ledger-update', { ticker, price, signal: type });
 
-        res.json({ message: "Saved", ai_suggestion: "TRACKING" });
+        // 2. GENERATE FEEDBACK LOOP FOR COIN SCANNER
+        let masterList = [];
+        let pruneList = [];
+
+        // Cross-reference with Stream A (Macro Scans) if available
+        // We only READ scans for retrieval purposes, not modifying them.
+        const latestScan = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
+        if (latestScan) {
+            const scanData = JSON.parse(latestScan.raw_data);
+            if (scanData.results && scanData.results.length > 0) {
+                scanData.results.forEach(item => {
+                    const d = item.data || item;
+                    const cleanTicker = item.ticker;
+                    const fullTicker = item.datakey || `BINANCE:${cleanTicker}`; // Ensure proper format for Screener
+
+                    // IF it's a STABLE coin from Stream B, UI might want it, but the scanner only cares if it's STRONG.
+                    // Let's identify STRONG coins to force the scanner to watch (Master List)
+                    if (d.score >= 40 || d.breakout === 1) {
+                        masterList.push(fullTicker);
+                    }
+
+                    // Let's identify WEAK or DEAD coins to force the scanner to drop (Prune List)
+                    if (d.score <= 30 || d.freeze === 1) {
+                        pruneList.push(fullTicker);
+                    }
+                });
+            }
+        }
+
+        res.json({
+            message: "Saved to Log",
+            ai_suggestion: "TRACKING",
+            // Return comma-separated strings as expected by coin_scanner.js
+            master_watchlist: masterList.join(','),
+            prune_list: pruneList.join(',')
+        });
+
     } catch (e) {
         console.error("Pick Error:", e);
         res.status(500).json({ error: e.message });

@@ -72,6 +72,22 @@ db.exec(`
 `);
 
 // ============================================================================
+// 4B. QUALIFIED_PICKS_LOG (Test/Log Stream)
+// ============================================================================
+// Stores isolated "Pick" events into a separate log table for shortlisting and testing
+// without impacting Stream A or the main active_ledger.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS qualified_picks_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker TEXT NOT NULL,
+        price REAL,
+        type TEXT,                    -- VELOCITY or STABLE
+        timestamp TEXT NOT NULL,      -- ISO 8601 UTC
+        raw_data JSON                 -- The full pick payload
+    );
+`);
+
+// ============================================================================
 // 5. SYSTEM SETTINGS (Persistence)
 // ============================================================================
 db.exec(`
