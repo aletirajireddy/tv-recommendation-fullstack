@@ -22,15 +22,17 @@ export const SpeedBreakerRuler = ({ currentPrice, levels }) => {
       else if (l.name.includes("Base")) bgStyle = { backgroundColor: '#3B82F6' }; // Blue
       else if (l.name.includes("Neck")) bgStyle = { backgroundColor: '#F97316' }; // Orange
       else if (l.name.includes("Fib")) bgStyle = { backgroundColor: '#FACC15' }; // Yellow
+      else if (l.name.startsWith("W_")) bgStyle = { backgroundColor: '#8B5CF6' }; // Purple (Weekly)
+      else if (l.name.startsWith("M_")) bgStyle = { backgroundColor: '#10B981' }; // Emerald (Monthly)
 
       return (
         <div 
           key={idx}
-          className={`absolute top-0 bottom-0 w-[5px] cursor-pointer group rounded-full transition-all hover:w-[8px] hover:z-20`}
+          className={`absolute top-0 bottom-0 w-[5px] cursor-pointer group/marker rounded-full transition-all hover:w-[8px] hover:z-20`}
           style={{ left: `${leftPos}%`, transform: 'translateX(-50%)', ...bgStyle }}
         >
           {/* Tooltip on hover */}
-          <div className="absolute opacity-0 group-hover:opacity-100 transition-opacity bg-black text-xs text-white p-2 rounded -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap z-50 pointer-events-none shadow-lg border border-gray-700">
+          <div className="absolute opacity-0 group-hover/marker:opacity-100 transition-opacity bg-black text-xs text-white p-2 rounded -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap z-50 pointer-events-none shadow-lg border border-gray-700">
             {l.name} ({distPct > 0 ? '+' : ''}{distPct.toFixed(2)}%)
           </div>
         </div>

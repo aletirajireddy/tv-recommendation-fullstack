@@ -68,10 +68,7 @@ export default function FusionDashboard() {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="text-xs uppercase tracking-wider sticky top-0 z-20" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-tertiary)' }}>
-              <th className="p-3 font-medium" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Ticker & Time</th>
-              <th className="p-3 font-medium text-center" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Active</th>
-              <th className="p-3 font-medium text-center" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Dir</th>
-              <th className="p-3 font-medium text-center" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Bursts</th>
+              <th className="p-3 font-medium" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Asset</th>
               <th className="p-3 font-medium text-right" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Mom %</th>
               <th className="p-3 font-medium text-right" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Volume</th>
               <th className="p-3 font-medium text-right" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Day %</th>
@@ -84,7 +81,7 @@ export default function FusionDashboard() {
           <tbody className="divide-y" style={{ divideColor: 'var(--border-subtle)' }}>
             {!fusionData || fusionData.length === 0 ? (
               <tr>
-                <td colSpan="11" className="p-8 text-center text-gray-500">
+                <td colSpan="8" className="p-8 text-center text-gray-500">
                   No Fusion data available yet. Waiting for webhooks...
                 </td>
               </tr>
@@ -97,39 +94,38 @@ export default function FusionDashboard() {
                 return (
                 <React.Fragment key={row.ticker}>
                   <tr className="transition-colors group hover:bg-[var(--bg-hover)]" style={{ borderBottomColor: isExpanded ? 'transparent' : 'var(--border-subtle)' }}>
-                    <td className="p-3 cursor-pointer" onClick={() => toggleRow(row.ticker)}>
-                      <div className="font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-                        {row.ticker.replace('BINANCE:', '').replace('.P', '')}
+                    <td className="p-3 cursor-pointer min-w-[200px]" onClick={() => toggleRow(row.ticker)}>
+                      <div className="flex items-center gap-2">
+                        <div className="font-bold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+                          {row.ticker.replace('BINANCE:', '').replace('.P', '')}
+                          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>({row.price})</span>
+                        </div>
+                        
+                        {/* Stream Active Dot (Green if active in any stream) */}
+                        <div className={`w-2 h-2 rounded-full ${(row.signals?.A || row.signals?.B || row.signals?.C) ? 'bg-[#059669]' : 'bg-[var(--gray-400)]'}`} style={{ boxShadow: (row.signals?.A || row.signals?.B || row.signals?.C) ? '0 0 6px #059669' : 'none' }} title="Stream Active"></div>
+
+                        {/* Dir icon */}
+                        {row.momentum?.direction > 0 && (
+                          <div className="flex items-center justify-center w-[18px] h-[18px] rounded ml-1 shadow-sm" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10B981', border: '1px solid rgba(16, 185, 129, 0.3)' }} title="Bullish">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+                          </div>
+                        )}
+                        {row.momentum?.direction < 0 && (
+                          <div className="flex items-center justify-center w-[18px] h-[18px] rounded ml-1 shadow-sm" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#EF4444', border: '1px solid rgba(239, 68, 68, 0.3)' }} title="Bearish">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+                          </div>
+                        )}
+                        
+                        {/* Burst Badge */}
+                        {burstCount > 0 && (
+                          <div className="px-1.5 py-0.5 rounded text-[10px] font-bold inline-flex items-center" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--error)' }}>
+                            🔥 {burstCount}
+                          </div>
+                        )}
                       </div>
                       <div className="text-[10px] mt-1 whitespace-nowrap" style={{ color: 'var(--text-tertiary)' }}>
                         {row.timestamp ? formatDistanceToNow(new Date(row.timestamp), { addSuffix: true }) : 'Unknown'}
                       </div>
-                    </td>
-                    
-                    <td className="p-3">
-                      <div className="flex items-center justify-center">
-                        <SignalLight active={row.signals?.A} color="bg-[#059669]" label="A" />
-                        <SignalLight active={row.signals?.B} color="bg-[#3B82F6]" label="B" />
-                        <SignalLight active={row.signals?.C} color="bg-[#8B5CF6]" label="C" />
-                      </div>
-                    </td>
-                    
-                    <td className="p-3 text-center">
-                      {row.momentum?.direction > 0 ? (
-                        <span className="px-2 py-1 rounded text-xs font-bold" style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success-text)', border: '1px solid var(--success)' }}>BUY</span>
-                      ) : row.momentum?.direction < 0 ? (
-                        <span className="px-2 py-1 rounded text-xs font-bold" style={{ backgroundColor: 'var(--error-bg)', color: 'var(--error-text)', border: '1px solid var(--error)' }}>SELL</span>
-                      ) : (
-                        <span className="px-2 py-1 rounded text-xs" style={{ backgroundColor: 'var(--gray-200)', color: 'var(--text-tertiary)' }}>--</span>
-                      )}
-                    </td>
-
-                    <td className="p-3 text-center">
-                      {burstCount > 0 ? (
-                         <div className="px-2 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--error)' }}>
-                           🔥 {burstCount}
-                         </div>
-                      ) : <span className="text-gray-500">-</span>}
                     </td>
                     
                     <td className="p-3 text-right font-mono text-sm max-w-[80px]">
