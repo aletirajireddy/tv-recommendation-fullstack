@@ -830,14 +830,10 @@ app.post('/api/webhook/smart-levels', (req, res) => {
         const ticker = payload.ticker;
         const price = parseFloat(payload.price || 0);
         
-        // Convert timestamp (e.g. 1773840300000) to ISO 8601 UTC
-        let parsedTimestamp = new Date().toISOString();
-        if (payload.timestamp) {
-            const timestampNum = parseInt(payload.timestamp, 10);
-            if (!isNaN(timestampNum)) {
-                parsedTimestamp = new Date(timestampNum).toISOString();
-            }
-        }
+        // TradingView's {{time}} placeholder outputs the BAR OPEN time (e.g. 09:35 for a 5m bar).
+        // If the alert triggers at 09:38, the UI sees it as "3 minutes ago" instantly. 
+        // To fix this discrepancy, we force the timestamp to the exact Server Receive Time for all live webhooks.
+        const parsedTimestamp = new Date().toISOString();
         
         const direction = payload.momentum?.direction !== undefined ? parseInt(payload.momentum.direction, 10) : 0;
         const roc_pct = payload.momentum?.roc_pct !== undefined ? parseFloat(payload.momentum.roc_pct) : 0.0;

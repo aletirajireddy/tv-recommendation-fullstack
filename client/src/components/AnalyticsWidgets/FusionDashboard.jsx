@@ -124,7 +124,7 @@ export default function FusionDashboard() {
                         )}
                       </div>
                       <div className="text-[10px] mt-1 whitespace-nowrap" style={{ color: 'var(--text-tertiary)' }}>
-                        {row.timestamp ? formatDistanceToNow(new Date(row.timestamp), { addSuffix: true }) : 'Unknown'}
+                        {row.timestamp ? `${format(new Date(row.timestamp), 'MMM d, h:mm a')} (${formatDistanceToNow(new Date(row.timestamp), { addSuffix: true })})` : 'Unknown'}
                       </div>
                     </td>
                     
@@ -206,7 +206,7 @@ export default function FusionDashboard() {
                                       <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
                                         {formatDistanceToNow(new Date(burst.timestamp), { addSuffix: true })}
                                       </span>
-                                      <span className="text-[10px] text-gray-500">{format(new Date(burst.timestamp), 'h:mm a')}</span>
+                                      <span className="text-[10px] text-gray-500">{format(new Date(burst.timestamp), 'MMM d, h:mm a')}</span>
                                     </div>
                                     <div className="flex items-center gap-4">
                                       <span className="text-xs font-mono font-medium">{formatPct(burst.roc_pct)} Mom</span>
