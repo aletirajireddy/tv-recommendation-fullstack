@@ -70,10 +70,10 @@ export default function FusionDashboard() {
             <tr className="text-xs uppercase tracking-wider sticky top-0 z-20" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-tertiary)' }}>
               <th className="p-3 font-medium" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Asset</th>
               <th className="p-3 font-medium text-right" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Mom %</th>
-              <th className="p-3 font-medium text-right" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Volume</th>
-              <th className="p-3 font-medium text-right" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Day %</th>
-              <th className="p-3 font-medium text-right w-32" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Next UP ⬆️</th>
-              <th className="p-3 font-medium text-right w-32" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Next DOWN ⬇️</th>
+              <th className="p-3 font-medium text-right hidden md:table-cell" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Volume</th>
+              <th className="p-3 font-medium text-right hidden md:table-cell" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Day %</th>
+              <th className="p-3 font-medium text-right w-32 hidden lg:table-cell" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Next UP ⬆️</th>
+              <th className="p-3 font-medium text-right w-32 hidden lg:table-cell" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Next DOWN ⬇️</th>
               <th className="p-3 font-medium pl-6 w-1/3 min-w-[400px]" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Speed Breakers</th>
               <th className="p-3 w-12" style={{ borderBottom: '1px solid var(--border-subtle)' }}></th>
             </tr>
@@ -132,15 +132,15 @@ export default function FusionDashboard() {
                       {formatPct(row.momentum?.roc_pct)}
                     </td>
                     
-                    <td className="p-3 text-right font-mono text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    <td className="p-3 text-right font-mono text-sm hidden md:table-cell" style={{ color: 'var(--text-secondary)' }}>
                       {formatVolume(row.volume_proxy)}
                     </td>
                     
-                    <td className="p-3 text-right font-mono text-sm max-w-[80px]">
+                    <td className="p-3 text-right font-mono text-sm max-w-[80px] hidden md:table-cell">
                       {formatPct(row.dayChangePct)}
                     </td>
                     
-                    <td className="p-3 text-right truncate">
+                    <td className="p-3 text-right truncate hidden lg:table-cell">
                       {row.nextUp ? (
                         <div className="flex flex-col items-end">
                           <span className="font-mono text-sm text-[var(--success)]">+{row.nextUp.dist_pct?.toFixed(2)}%</span>
@@ -149,7 +149,7 @@ export default function FusionDashboard() {
                       ) : <span style={{ color: 'var(--text-tertiary)' }}>--</span>}
                     </td>
                     
-                    <td className="p-3 text-right truncate">
+                    <td className="p-3 text-right truncate hidden lg:table-cell">
                       {row.nextDown ? (
                         <div className="flex flex-col items-end">
                           <span className="font-mono text-sm text-[var(--error)]">{row.nextDown.dist_pct?.toFixed(2)}%</span>

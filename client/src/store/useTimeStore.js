@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import SocketService from '../services/SocketService';
 import GenieSmart from '../services/GenieSmart';
 
-const API_BASE = `http://${window.location.hostname}:3000/api`;
+const API_BASE = '/api';
 
 export const useTimeStore = create((set, get) => ({
     // 1. STATE
@@ -261,7 +261,7 @@ export const useTimeStore = create((set, get) => ({
             // V3 API returns the raw JSON Blob
             // Note: API route is /api/scan/:id (added in index.js?) 
             // Check index.js: app.get('/api/scan/:id', ...) YES
-            const res = await fetch(`http://${window.location.hostname}:3000/api/scan/${scanId}`, {
+            const res = await fetch(`/api/scan/${scanId}`, {
                 signal: controller.signal
             });
 
