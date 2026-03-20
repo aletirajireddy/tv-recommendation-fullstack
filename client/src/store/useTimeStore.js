@@ -18,7 +18,8 @@ export const useTimeStore = create((set, get) => ({
     aiHistory: [],     // New History State
     analyticsData: null,
     researchData: null, // New Research Data
-    viewMode: 'analytics', // 'monitor' | 'analytics' | 'research'
+    fusionData: null, // New Fusion Dashboard Data
+    viewMode: 'analytics', // 'monitor' | 'analytics' | 'research' | 'fusion'
     telegramEnabled: true, // Method to Toggle Global Notifications
     lookbackHours: 720, // Default 30 days to capture all data
     isMonitorModalOpen: false, // New Modal State
@@ -118,6 +119,15 @@ export const useTimeStore = create((set, get) => ({
             console.log('⚡ Picker Update:', data);
             // In V3, we might want to refresh a "Watchlist" component here
             // For now, simpler notification or just log
+        });
+
+        // Handle Stream C Webhook Updates (Fusion Dashboard)
+        SocketService.on('smart-level-update', (data) => {
+            console.log('⚡ Smart Level Update:', data);
+            // If the user is currently looking at the Fusion dashboard, refresh its data instantly
+            if (get().viewMode === 'fusion') {
+                get().fetchFusionData();
+            }
         });
     },
 
@@ -379,6 +389,18 @@ export const useTimeStore = create((set, get) => ({
                 console.error('Research API Error:', err);
                 set({ researchData: null });
             }
+        }
+    },
+
+    fetchFusionData: async () => {
+        try {
+            const res = await fetch(`${API_BASE}/fusion/dashboard`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            set({ fusionData: data.records || [] });
+        } catch (err) {
+            console.error('Failed to fetch Fusion Dashboard data:', err);
+            set({ fusionData: [] });
         }
     },
 }));

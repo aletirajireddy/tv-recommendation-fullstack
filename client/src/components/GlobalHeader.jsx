@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
-import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart, Target } from 'lucide-react';
 import styles from './GlobalHeader.module.css';
 import { format, formatDistanceToNow } from 'date-fns';
 import { HeaderStatsDeck } from './HeaderStatsDeck';
@@ -94,6 +94,13 @@ export function GlobalHeader() {
                         title="Research Dashboard"
                     >
                         <LineChart size={14} /> JET
+                    </button>
+                    <button
+                        className={viewMode === 'fusion' ? styles.activeMode : styles.inactiveMode}
+                        onClick={() => setViewMode('fusion')}
+                        title="Fusion Command Center"
+                    >
+                        <Target size={14} /> FUSION
                     </button>
                 </div>
             </div>

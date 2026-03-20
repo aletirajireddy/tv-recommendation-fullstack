@@ -115,6 +115,22 @@ db.exec(`
     );
 `);
 
-console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks');
+// ============================================================================
+// 7. STREAM C (Smart Levels Webhook)
+// ============================================================================
+// Stores isolated "Smart Levels" alerts from TradingView webhooks.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS smart_level_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker TEXT NOT NULL,
+        timestamp TEXT NOT NULL,      -- ISO 8601 UTC
+        price REAL,
+        direction INTEGER,
+        roc_pct REAL,
+        raw_data JSON NOT NULL        -- The Full Payload
+    );
+`);
+
+console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events');
 
 module.exports = db;

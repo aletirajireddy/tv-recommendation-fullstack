@@ -30,6 +30,12 @@ We deliberately chose a **Pass-Through Architecture** for `alert_scanner.js`.
 *   **Problem**: PM2 spawning `npm run start` on Windows caused persistent popup windows.
 *   **Fix**: We wrote `client/start_client.js`. It uses `child_process.spawn` to invoke the `vite` binary *directly* via Node, bypassing `npm.cmd` and `cmd.exe`. It explicitly sets `shell: false`. **Preserve this script.**
 
+### ADR-04: Session Persistence via Greasemonkey Storage
+*   **Decision**: Use `GM_setValue` / `GM_getValue` to persist script state across reloads.
+*   **Reason**: Area 1 momentum gating (20-min cycle) is volatile. A page refresh or tab crash originally reset all progress to zero.
+*   **Strategy**: Periodic state snapshots (Registry, Graduates, ActiveSet, and Automa Cooldown) stored in isolated Greasemonkey storage.
+*   **Status**: Design approved; Implementation active in `coin_scanner.js` to prevent "Re-Gating" and "Automa Spaming" loops.
+
 ## 3. Critical Code Paths
 
 ### Data Ingestion
@@ -140,6 +146,19 @@ The Dashboard is no longer just for "Scanning"; it is for "Game Planning".
 *   **The Black Box (`raw_market_sentiment_log`)**: The *original* Browser-sent sentiment is archived in a separate table.
     *   **STRICT PROHIBITION**: This table is for **Audit & Backtesting ONLY**.
     *   **NEVER** use `raw_market_sentiment_log` to drive Widgets, Alerts, or API responses. It exists solely to detect logic drift between Browser and Server.
+
+### Rule #13: Persistence & Resilience (The "15-Min Guard")
+The Scout Engine (`coin_scanner.js`) must be resilient to page reloads and temporary browser closures.
+*   **State Snapshot**: The `pipelineRegistry` and `graduatedSet` must be serialized to persistent storage (preferably `GM_setValue`).
+*   **Staleness Logic**: Upon hydration (after a reload), the script MUST check the `bornAt` timestamp of every coin in the registry.
+    *   **Action**: If the script was inactive for > 15 minutes, the coin is considered "Stale" and must be pruned to maintain institutional data integrity.
+    *   **Goal**: To allow quick refreshes without losing momentum progress, while preventing "zombie" data from surviving long downtimes.
+
+### Rule #14: Stateful Backend Sync (The "Cumulative Clipboard")
+**Institutional Grade Resilience** requires that the system never "misses" a qualified coin due to browser race conditions or transient failures.
+*   **The Logic**: The Server acts as the session buffer. Both `/qualified-pick` and `/api/market-context` return all stable picks from the **last 60 minutes**.
+*   **The Payload**: The `new_graduates` array in the response is **Cumulative**. It reflects the "Target State" of what the watchlist should contain.
+*   **Heartbeat Sync**: `coin_scanner.js` performs a "Sync Check" during every 5-minute telemetry heartbeat. This ensures that even if an Automa trigger was skipped or a tab crashed, the watchlist is **self-healing** and will align with the server's truth within minutes.
 
 ---
 
@@ -365,6 +384,26 @@ The frontend script (`coin_scanner.js`) employs a strict state machine to preven
 2.  **The Fade (prune_list)**: Stream A governs weakness. If Stream A marks a coin weak, the backend adds it to the `prune_list` clipboard payload, and the Scout ignores it.
 3.  **Graduation Lock (graduatedSet)**: A 60-minute ignores-lock for coins that successfully hit Gate 20 to prevent re-alerting.
 4.  **Watchlist Sync**: `coin_scanner.js` parses the Area 2 DOM natively. If it sees a coin already exists in the Watchlist, it bypasses the entire Gate 8/20 scouting process.
+
+---
+
+## 12. Phase 4: Stream C (Smart Levels Webhook) & The Next-Gen Engine
+**A dedicated ingestion pipeline for Smart Level alerts, serving as the foundation for our next-generation recommendation engine.**
+
+### 12.1 Objective & The Long-Term Vision
+*   **The Context**: Currently, our AI Engine and Macro Dashboard rely on 26-column data scraped via Tampermonkey (Stream A). While robust, it lacks the nuanced, "physical chart" feel of exact price level respect.
+*   **The Vision**: Stream C ingests rich context (Mega spots, 200 EMAs, daily/hourly logic, RSI matrices, and momentum direction/ROC). This data provides the spatial awareness of a human trader. It will eventually power our **primary recommendation engine** and **institutional burst macro alerts**, allowing the AI to make far more accurate predictions by understanding *exactly where* price is relative to key structural nodes.
+*   **The Rollout Strategy (Isolate & Play)**: We are building Stream C to operate side-by-side with Stream A. **DO NOT REMOVE OR DISTURB STREAM A.** Stream C will act as an isolated, resilient, plug-and-play module. Once thoroughly tested step-by-step, we will systematically shift our macro sentiment analysis and smart engines to rely on Stream C.
+
+### 12.2 Stream C Components
+1.  **Ingestion API**: `POST /api/webhook/smart-levels` receives complex JSON payloads directly from TradingView webhooks.
+2.  **Schema Storage**: The `smart_level_events` table stores the `ticker`, normalized exact `timestamp` in ISO 8601 UTC, derived `direction`/`roc`, and the untouchable `raw_data` JSON blob. This respects the V3 rule of avoiding schema fragility by embracing the raw blob format.
+3.  **Tailscale Funnel**: TradingView cannot hit localhost. Stream C relies on Tailscale Funnel to securely tunnel public webhook POSTs to the local Express server on port 3000 (`tailscale funnel 3000`).
+
+### 12.3 Data Integrity Rules for Stream C
+*   **No Side Effects**: Stream C ingestion must NEVER execute backend recalculations that alter Stream A (`scan_results`) or Stream B (`area1_scout_logs`). It is read-only in terms of aggregate market context until the final cutover. The momentum values (like `direction: -2`) will eventually replace Stream A's `momScore` logic, but for now they remain strictly within Stream C.
+*   **Time Normalization**: The payload provides UNIX epoch timestamps (e.g. `1773840300000`). The server MUST convert this to an ISO 8601 UTC string before saving to database to maintain architectural consistency with Streams A & B.
+*   **Data Availability**: Any future enhancements that use Stream C data for dashboard overlays (Smart Levels or RSI matrix references) must fetch from the dedicated Stream C endpoints, preserving the separation of concerns.
 
 *(End of Document)*
 

@@ -11,6 +11,7 @@ import { AlphaScatter } from './components/AnalyticsWidgets/AlphaScatter';
 import { TrendFlowChart } from './components/AnalyticsWidgets/TrendFlowChart';
 import RecommendationsFeed from './components/AnalyticsWidgets/RecommendationsFeed';
 import ScenarioBoard from './components/AnalyticsWidgets/ScenarioBoard';
+import FusionDashboard from './components/AnalyticsWidgets/FusionDashboard';
 
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
@@ -37,6 +38,11 @@ function App() {
             {/* Floating controls still useful in research mode? Maybe. Leaving out for focus as per previous "Jet Mode" designs, or adding back if requested.
                     Actually, let's keep MonitorDetailModal available just in case.
                 */}
+          </div>
+        ) : viewMode === 'fusion' ? (
+          /* NEW FUSION MODE (Stream C + A + B) */
+          <div className={styles.colAnalytics} style={{ padding: '0 24px' }}>
+            <FusionDashboard />
           </div>
         ) : (
           /* DEFAULT TIMELINE VIEW */

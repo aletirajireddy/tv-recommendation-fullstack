@@ -1,3 +1,6 @@
+@tailwind components;
+@tailwind utilities;
+
 :root {
     /* ═══════════════════════════════════════════════════════════════
      DESIGN SYSTEM: AA+ ACCESSIBILITY (Light Mode)

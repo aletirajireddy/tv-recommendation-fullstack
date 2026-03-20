@@ -307,12 +307,20 @@ app.post('/qualified-pick', (req, res) => {
         // Let the UI know a pick came in
         io.emit('ledger-update', { ticker, price, signal: type });
 
-        // 2. GENERATE FEEDBACK LOOP FOR COIN SCANNER
+        // 2. GENERATE FEEDBACK LOOP FOR COIN SCANNER (Stateful & Cumulative)
         let activeList = [];
         let pruneList = [];
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 
-        // Cross-reference with Stream A (Macro Scans) if available
-        // We only READ scans for retrieval purposes, not modifying them.
+        // A. Get Historical Stable Picks (Last 60 Minutes)
+        const historicalPicks = db.prepare(`
+            SELECT DISTINCT exchange, ticker 
+            FROM area1_scout_logs 
+            WHERE type = 'STABLE' AND timestamp > ?
+        `).all(oneHourAgo);
+        const historicalTargetSet = new Set(historicalPicks.map(p => `${p.exchange}:${p.ticker}`));
+
+        // B. Cross-reference with Stream A (Macro Scans)
         const latestScan = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
         if (latestScan) {
             const scanData = JSON.parse(latestScan.raw_data);
@@ -320,12 +328,10 @@ app.post('/qualified-pick', (req, res) => {
                 scanData.results.forEach(item => {
                     const d = item.data || item;
                     const cleanTicker = item.ticker;
-                    const fullTicker = item.datakey || `BINANCE:${cleanTicker}`; // Ensure proper format for Screener
+                    const fullTicker = item.datakey || `BINANCE:${cleanTicker}`;
 
-                    // Any coin monitored by Stream A is in the Active List
                     activeList.push(fullTicker);
 
-                    // Let's identify WEAK or DEAD coins to force the scanner to drop (Prune List)
                     if (d.score <= 30 || d.freeze === 1) {
                         pruneList.push(fullTicker);
                     }
@@ -333,14 +339,14 @@ app.post('/qualified-pick', (req, res) => {
             }
         }
 
-        // The newly requested coin from Stream B
-        const alertFullTicker = `${exchange}:${ticker}`;
-        const newGraduates = [alertFullTicker];
+        // C. Construct Cumulative Graduate List
+        const currentFullTicker = `${exchange}:${ticker}`;
+        historicalTargetSet.add(currentFullTicker);
+        const newGraduates = Array.from(historicalTargetSet).filter(t => !activeList.includes(t));
 
         res.json({
             message: "Saved to Log",
             ai_suggestion: "TRACKING",
-            // 4-Part Payload for mix & match on the frontend
             active_list: activeList,
             prune_list: [...new Set(pruneList)],
             new_graduates: newGraduates,
@@ -736,10 +742,49 @@ app.post('/api/market-context', (req, res) => {
             JSON.stringify(payload)
         );
 
+        // --- STATEFUL SYNC FEEDBACK LOOP (Resilience) ---
+        let activeList = [];
+        let pruneList = [];
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+        // 1. Get Graduates from last 60m
+        const historicalPicks = db.prepare(`
+            SELECT DISTINCT exchange, ticker 
+            FROM area1_scout_logs 
+            WHERE type = 'STABLE' AND timestamp > ?
+        `).all(oneHourAgo);
+        const historicalTargetSet = new Set(historicalPicks.map(p => `${p.exchange}:${p.ticker}`));
+
+        // 2. Get Macro Watchlist
+        const latestScan = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
+        if (latestScan) {
+            const scanData = JSON.parse(latestScan.raw_data);
+            if (scanData.results) {
+                scanData.results.forEach(item => {
+                    const d = item.data || item;
+                    const fullTicker = item.datakey || `BINANCE:${item.ticker}`;
+                    activeList.push(fullTicker);
+                    if (d.score <= 30 || d.freeze === 1) pruneList.push(fullTicker);
+                });
+            }
+        }
+
+        const newGraduates = Array.from(historicalTargetSet).filter(t => !activeList.includes(t));
+
         // Optionally emit to frontend for live dashboard updates
         io.emit('market-context-update', payload);
 
-        res.json({ success: true, message: "Market context telemetry saved." });
+        console.log(`[TELEMETRY] 📡 Received Context @ ${now} | Screener: ${payload.screener_total_count} | Watchlist: ${payload.watchlist_count}`);
+
+        res.json({ 
+            success: true, 
+            message: "Market context telemetry saved.",
+            active_list: activeList,
+            prune_list: [...new Set(pruneList)],
+            new_graduates: newGraduates,
+            master_targets: [...new Set([...activeList, ...newGraduates])]
+        });
+
     } catch (e) {
         console.error("Market Context Error:", e);
         res.status(500).json({ error: e.message });
@@ -767,6 +812,263 @@ app.get('/api/market-context/latest', (req, res) => {
         res.json(data);
     } catch (e) {
         console.error("Error fetching market context:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ============================================================================
+// STREAM C - SMART LEVELS WEBHOOK
+// ============================================================================
+app.post('/api/webhook/smart-levels', (req, res) => {
+    try {
+        const payload = req.body;
+        
+        if (!payload || !payload.ticker) {
+            return res.status(400).json({ error: "Invalid payload missing ticker" });
+        }
+        
+        const ticker = payload.ticker;
+        const price = parseFloat(payload.price || 0);
+        
+        // Convert timestamp (e.g. 1773840300000) to ISO 8601 UTC
+        let parsedTimestamp = new Date().toISOString();
+        if (payload.timestamp) {
+            const timestampNum = parseInt(payload.timestamp, 10);
+            if (!isNaN(timestampNum)) {
+                parsedTimestamp = new Date(timestampNum).toISOString();
+            }
+        }
+        
+        const direction = payload.momentum?.direction !== undefined ? parseInt(payload.momentum.direction, 10) : 0;
+        const roc_pct = payload.momentum?.roc_pct !== undefined ? parseFloat(payload.momentum.roc_pct) : 0.0;
+        
+        db.prepare(`
+            INSERT INTO smart_level_events (ticker, timestamp, price, direction, roc_pct, raw_data)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+            ticker,
+            parsedTimestamp,
+            price,
+            direction,
+            roc_pct,
+            JSON.stringify(payload)
+        );
+        
+        console.log(`[STREAM-C] 🧠 Smart Levels Webhook Received: ${ticker} | Dir: ${direction} | ROC: ${roc_pct}%`);
+        
+        // Emit for dashboard reactivity (Optional future use)
+        io.emit('smart-level-update', { ticker, direction, timestamp: parsedTimestamp });
+        
+        res.json({ success: true, ticker });
+    } catch (e) {
+        console.error("Stream C Webhook Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ============================================================================
+// STREAM HUB: FUSION DASHBOARD ENDPOINT (A + B + C Consolidation)
+// ============================================================================
+app.get('/api/fusion/dashboard', (req, res) => {
+    try {
+        // 1. Get the latest Stream C events per ticker
+        const streamC_Rows = db.prepare(`
+            SELECT ticker, timestamp as alert_time, price, direction, roc_pct, raw_data 
+            FROM smart_level_events 
+            WHERE id IN (
+                SELECT MAX(id) FROM smart_level_events GROUP BY ticker
+            )
+            ORDER BY timestamp DESC
+        `).all();
+
+        // 2. Get latest Stream A snapshot (Macro)
+        const latestMacroRow = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
+        const macroTickers = new Set();
+        const macroDataMap = {}; // store ticker -> volume/changes
+        if (latestMacroRow && latestMacroRow.raw_data) {
+            const parsedMacro = JSON.parse(latestMacroRow.raw_data);
+            if (parsedMacro.results) {
+                parsedMacro.results.forEach(r => {
+                    const d = r.data || r;
+                    macroTickers.add(r.ticker);
+                    macroDataMap[r.ticker] = d;
+                });
+            }
+        }
+
+        // 3. Get recent Stream B activity (Last 60 mins)
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const streamB_Rows = db.prepare(`
+            SELECT ticker, MAX(vol_change) as maxVolChange 
+            FROM area1_scout_logs 
+            WHERE timestamp > ?
+            GROUP BY ticker
+        `).all(oneHourAgo);
+        const scoutTickers = new Set(streamB_Rows.map(r => r.ticker));
+        const scoutDataMap = {};
+        streamB_Rows.forEach(r => scoutDataMap[r.ticker] = r.maxVolChange);
+
+        // 3.5 Get Burst History (Last 24 Hours of Stream C alerts for these tickers)
+        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const burstRows = db.prepare(`
+            SELECT ticker, timestamp, direction, roc_pct 
+            FROM smart_level_events 
+            WHERE timestamp > ?
+            ORDER BY timestamp DESC
+        `).all(twentyFourHoursAgo);
+        
+        const burstHistoryMap = {};
+        burstRows.forEach(r => {
+            if (!burstHistoryMap[r.ticker]) {
+                burstHistoryMap[r.ticker] = [];
+            }
+            burstHistoryMap[r.ticker].push({
+                timestamp: r.timestamp,
+                direction: r.direction,
+                roc_pct: r.roc_pct
+            });
+        });
+
+        // 4. Consolidate and Compute Distances
+        const dashboardData = streamC_Rows.map(row => {
+            const raw = JSON.parse(row.raw_data);
+            const currentPrice = row.price;
+            
+            // Calculate Day Change directly from Stream C payload
+            let dayChangePct = null;
+            if (raw.today_change_pct !== undefined) {
+                dayChangePct = parseFloat(raw.today_change_pct);
+            } else if (raw.momentum && raw.momentum.day_change_pct !== undefined) {
+                dayChangePct = parseFloat(raw.momentum.day_change_pct);
+            } else if (raw.smart_levels?.htf_daily?.open?.p) {
+                const dayOpen = parseFloat(raw.smart_levels.htf_daily.open.p);
+                if (dayOpen > 0) {
+                    dayChangePct = ((currentPrice - dayOpen) / dayOpen) * 100;
+                }
+            }
+
+            // Extract all price levels from smart_levels object
+            const levels = [];
+            const sl = raw.smart_levels || {};
+            
+            // Helper to extract nested 'p' (price) and 's' (stars) and attach a name
+            const extractLevel = (obj, name) => {
+                if (obj && obj.p) {
+                    levels.push({ name, price: parseFloat(obj.p), stars: obj.s || 0 });
+                }
+            };
+
+            extractLevel(sl.mega_spot, 'Mega Spot');
+            if (sl.emas_200) {
+                extractLevel(sl.emas_200.m5, '5m_200_EMA');
+                extractLevel(sl.emas_200.m15, '15m_200_EMA');
+                extractLevel(sl.emas_200.h1, '1H_200_EMA');
+                extractLevel(sl.emas_200.h4, '4H_200_EMA');
+            }
+            if (sl.daily_logic) {
+                extractLevel(sl.daily_logic.base_supp, 'D_Base_Supp');
+                extractLevel(sl.daily_logic.base_res, 'D_Base_Res');
+                extractLevel(sl.daily_logic.neck_supp, 'D_Neck_Supp');
+                extractLevel(sl.daily_logic.neck_res, 'D_Neck_Res');
+            }
+            if (sl.hourly_logic) {
+                extractLevel(sl.hourly_logic.base_supp, '1H_Base_Supp');
+                extractLevel(sl.hourly_logic.base_res, '1H_Base_Res');
+                extractLevel(sl.hourly_logic.neck_supp, '1H_Neck_Supp');
+                extractLevel(sl.hourly_logic.neck_res, '1H_Neck_Res');
+            }
+            if (sl.h4_logic) {
+                extractLevel(sl.h4_logic.neck_supp, '4H_Neck_Supp');
+                extractLevel(sl.h4_logic.neck_res, '4H_Neck_Res');
+            }
+            if (sl.fibs_618) {
+                extractLevel(sl.fibs_618.h1, '1H_Fib618');
+                extractLevel(sl.fibs_618.d1, 'D_Fib618');
+                extractLevel(sl.fibs_618.w1, 'W_Fib618');
+            }
+            if (sl.htf_weekly) {
+                extractLevel(sl.htf_weekly.open, 'W_Open');
+                extractLevel(sl.htf_weekly.high, 'W_High');
+                extractLevel(sl.htf_weekly.low, 'W_Low');
+                extractLevel(sl.htf_weekly.close, 'W_Close');
+            }
+            if (sl.htf_monthly) {
+                extractLevel(sl.htf_monthly.open, 'M_Open');
+                extractLevel(sl.htf_monthly.high, 'M_High');
+                extractLevel(sl.htf_monthly.low, 'M_Low');
+                extractLevel(sl.htf_monthly.close, 'M_Close');
+            }
+
+            // Find NEXT UP (Resistance)
+            const resistances = levels.filter(l => l.price > currentPrice).sort((a, b) => a.price - b.price);
+            const nextUp = resistances.length > 0 ? resistances[0] : null;
+            let nextUpParam = null;
+            if (nextUp) {
+                nextUpParam = {
+                    name: nextUp.name,
+                    price: nextUp.price,
+                    dist_pct: ((nextUp.price - currentPrice) / currentPrice) * 100
+                };
+            }
+
+            // Find NEXT DOWN (Support)
+            const supports = levels.filter(l => l.price < currentPrice).sort((a, b) => b.price - a.price);
+            const nextDown = supports.length > 0 ? supports[0] : null;
+            let nextDownParam = null;
+            if (nextDown) {
+                nextDownParam = {
+                    name: nextDown.name,
+                    price: nextDown.price,
+                    dist_pct: ((nextDown.price - currentPrice) / currentPrice) * 100
+                };
+            }
+
+            // A/B/C Signal Lights
+            const inStreamA = macroTickers.has(row.ticker);
+            const inStreamB = scoutTickers.has(row.ticker);
+            const inStreamC = true; // inherently true since we query from Stream C
+
+            // Extract Volume strictly from Stream C payload
+            let reportedVol = '--';
+            if (raw.today_volume !== undefined) {
+                reportedVol = raw.today_volume;
+            } else if (raw.volume && raw.volume.day_vol !== undefined && raw.volume.day_vol !== null) {
+                reportedVol = raw.volume.day_vol;
+            }
+
+            return {
+                ticker: row.ticker,
+                timestamp: row.alert_time,
+                price: currentPrice,
+                dayChangePct: dayChangePct,
+                momentum: {
+                    direction: row.direction,
+                    roc_pct: row.roc_pct
+                },
+                signals: {
+                    A: inStreamA,
+                    B: inStreamB,
+                    C: inStreamC
+                },
+                volume_proxy: reportedVol,
+                nextUp: nextUpParam,
+                nextDown: nextDownParam,
+                // Pass raw array of levels so frontend can draw the complete "Speed Breaker Ruler"
+                allLevels: levels,
+                // Burst History
+                bursts: burstHistoryMap[row.ticker] || [],
+                burstCount: (burstHistoryMap[row.ticker] || []).length
+            };
+        });
+
+        res.json({
+            success: true,
+            count: dashboardData.length,
+            records: dashboardData
+        });
+
+    } catch(e) {
+        console.error("Fusion Dashboard Error:", e);
         res.status(500).json({ error: e.message });
     }
 });
