@@ -1,8 +1,22 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import styles from './RecommendationsFeed.module.css';
 import { useTimeStore } from '../../store/useTimeStore';
 import GenieSmart from '../../services/GenieSmart';
-import { Lightbulb, TrendingUp, Anchor, Activity, AlertTriangle } from 'lucide-react';
+import { Lightbulb, TrendingUp, Anchor, Activity, AlertTriangle, Clock } from 'lucide-react';
+
+const timeAgo = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHrs = Math.floor(diffMins / 60);
+    if (diffHrs < 24) return `${diffHrs}h ago`;
+    return `${Math.floor(diffHrs / 24)}d ago`;
+};
 
 const StrategyCard = ({ card }) => {
     let Icon = Lightbulb;
@@ -23,11 +37,19 @@ const StrategyCard = ({ card }) => {
             <p className={styles.description}>{card.description}</p>
 
             {card.tickers && card.tickers.length > 0 && (
-                <div className={styles.tickerList}>
+                <div className={styles.tickerList} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {card.tickers.map((t, idx) => (
-                        <div key={idx} className={styles.tickerChip}>
-                            {t.ticker}
-                            {t.bias && <span className={(t.bias === 'LONG' || t.bias === 'BULL') ? styles.tagLong : styles.tagShort}>{t.bias}</span>}
+                        <div key={idx} className={styles.tickerChip} style={{ display: 'flex', justifyContent: 'space-between', width: '100%', padding: '6px 8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontWeight: 600 }}>{t.ticker}</span>
+                                {t.bias && <span className={(t.bias === 'LONG' || t.bias === 'BULL') ? styles.tagLong : styles.tagShort}>{t.bias}</span>}
+                            </div>
+                            {t.scanTime && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-tertiary)', fontSize: '10px' }}>
+                                    <Clock size={10} />
+                                    <span>{timeAgo(t.scanTime)}</span>
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>
@@ -59,84 +81,14 @@ const LogItem = ({ note }) => {
     );
 };
 
-const HistoryItem = ({ item }) => {
-    const isBull = item.direction === 'BULL';
-    const color = isBull ? '#10b981' : '#ef4444'; // Success/Error
-    const arrow = isBull ? '▲' : '▼';
-
-    return (
-        <div className={styles.logItem} style={{ borderLeft: `3px solid ${color}` }}>
-            <div className={styles.logHeader}>
-                <span style={{ color: 'var(--text-primary)', fontWeight: '700' }}>
-                    {item.ticker} <span style={{ color, fontSize: '0.9em' }}>{arrow} {item.direction}</span>
-                </span>
-                <span className={styles.logTime}>
-                    {new Date(item.timestamp).toLocaleTimeString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                </span>
-            </div>
-            <div className={styles.logMessage} style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>{item.label}</span>
-                <span style={{ color: 'var(--text-tertiary)', fontSize: '10px' }}>Mood: {item.mood_score > 0 ? '+' : ''}{item.mood_score}%</span>
-            </div>
-        </div>
-    );
-};
-
-// Helper to filter and group history
-const processHistory = (historyItems, activeCards = []) => {
-    // 1. Get Set of Active Signatures to Filter Out
-    // We treat "Active" as currently live strategies. History should only show what is NOT active.
-    const activeSignatures = new Set();
-    activeCards.forEach(card => {
-        if (card.tickers) {
-            card.tickers.forEach(t => {
-                const key = `${t.ticker}_${card.title}`;
-                activeSignatures.add(key);
-            });
-        }
-    });
-
-    // 2. Filter History
-    const filteredHistory = historyItems.filter(item => {
-        const key = `${item.ticker}_${item.label}`;
-        return !activeSignatures.has(key);
-    });
-
-    const groups = {};
-
-    filteredHistory.forEach(item => {
-        const timeKey = new Date(item.timestamp).setSeconds(0, 0);
-        const key = `${timeKey}_${item.label}`;
-
-        if (!groups[key]) {
-            groups[key] = {
-                id: key,
-                title: item.label,
-                description: `${new Date(item.timestamp).toLocaleTimeString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
-                timestamp: item.timestamp,
-                confidence: 'MAX',
-                type: item.label.includes('INSTITUTIONAL') ? 'opportunity' : 'trend',
-                tickers: []
-            };
-        }
-        groups[key].tickers.push({
-            ticker: item.ticker,
-            bias: item.direction
-        });
-    });
-
-    return Object.values(groups).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).map(g => ({
-        ...g,
-        description: `${g.tickers.length} alerts detected at ${g.description}. Watch for follow-through.`
-    }));
-};
+// Removed HistoryItem and processHistory as per user request
 
 export default function RecommendationsFeed() {
-    const { activeScan, aiHistory, fetchAiHistory, strategyLogs, fetchStrategyLogs, useSmartLevelsContext } = useTimeStore();
+    const { activeScan, strategyLogs, fetchStrategyLogs, useSmartLevelsContext } = useTimeStore();
     const [activeTab, setActiveTab] = React.useState('strategies');
 
     // GENIE SMART: Derive Recommendations on the Client Side
-    const recommendations = React.useMemo(() => {
+    const recommendations = useMemo(() => {
         if (!activeScan || !activeScan.results) return [];
 
         const strategyMap = {}; // { 'STRATEGY_NAME': { title, tickers: [], ... } }
@@ -157,21 +109,27 @@ export default function RecommendationsFeed() {
                 }
                 strategyMap[strat.name].tickers.push({
                     ticker: tickerData.ticker,
-                    bias: tickerData.bias || (tickerData.netTrend > 0 ? 'BULL' : 'BEAR')
+                    bias: tickerData.bias || (tickerData.netTrend > 0 ? 'BULL' : 'BEAR'),
+                    scanTime: activeScan.timestamp
                 });
             });
         });
 
         // Convert Map to Array
         return Object.values(strategyMap);
-    }, [activeScan]);
+    }, [activeScan, useSmartLevelsContext]);
 
-    // Memoize history cards with filtering
-    const historyCards = React.useMemo(() => processHistory(aiHistory, recommendations), [aiHistory, recommendations]);
+    // Fast-tick force re-render for live "Time Ago" display updates
+    const [, setTick] = useState(0);
+    useEffect(() => {
+        if (activeTab === 'strategies') {
+            const interval = setInterval(() => setTick(t => t + 1), 30000); // 30s update
+            return () => clearInterval(interval);
+        }
+    }, [activeTab]);
 
     // Fetch Data on Tab Change
-    React.useEffect(() => {
-        if (activeTab === 'history') fetchAiHistory();
+    useEffect(() => {
         if (activeTab === 'logs') fetchStrategyLogs();
     }, [activeTab]);
 
@@ -194,12 +152,6 @@ export default function RecommendationsFeed() {
                         onClick={() => setActiveTab('logs')}
                     >
                         Log
-                    </button>
-                    <button
-                        className={`${styles.tab} ${activeTab === 'history' ? styles.active : ''}`}
-                        onClick={() => setActiveTab('history')}
-                    >
-                        History
                     </button>
                 </div>
             </div>
@@ -224,18 +176,6 @@ export default function RecommendationsFeed() {
                         </div>
                     ) : (
                         strategyLogs.map(note => <LogItem key={note.id || note.timestamp} note={note} />)
-                    )
-                )}
-
-                {activeTab === 'history' && (
-                    // ... existing history render ...
-                    historyCards.length === 0 ? (
-                        <div className={styles.emptyState}>
-                            <Activity size={24} style={{ opacity: 0.5, marginBottom: 10 }} />
-                            <p>No history (last 48h).</p>
-                        </div>
-                    ) : (
-                        historyCards.map(card => <StrategyCard key={card.id} card={card} />)
                     )
                 )}
             </div>
