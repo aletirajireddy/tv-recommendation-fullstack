@@ -131,6 +131,24 @@ db.exec(`
     );
 `);
 
-console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events');
+// ============================================================================
+// 8. INSTITUTIONAL INTEREST (High-Conviction Webhooks)
+// ============================================================================
+// Stores isolated "Institutional Interest" alerts based on the bar_move_pct signature.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS institutional_interest_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker TEXT NOT NULL,
+        timestamp TEXT NOT NULL,      -- ISO 8601 UTC
+        price REAL,
+        direction INTEGER,
+        bar_move_pct REAL,
+        today_change_pct REAL,
+        today_volume REAL,
+        raw_data JSON NOT NULL
+    );
+`);
+
+console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events');
 
 module.exports = db;

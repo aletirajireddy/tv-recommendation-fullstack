@@ -816,6 +816,84 @@ app.get('/api/market-context/latest', (req, res) => {
     }
 });
 
+// 9b. MARKET PARTICIPATION PULSE (Inflow/Outflow + Directional Heat)
+app.get('/api/analytics/participation-pulse', (req, res) => {
+    try {
+        const hours = parseInt(req.query.hours) || 24;
+        const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+        // Get chronological logs
+        const rows = db.prepare(`
+            SELECT timestamp, payload_json 
+            FROM market_context_logs 
+            WHERE timestamp > ?
+            ORDER BY timestamp ASC
+        `).all(cutoff);
+
+        const timeline = [];
+        let previousSet = new Map(); // ticker -> rowData
+
+        rows.forEach(row => {
+            const data = JSON.parse(row.payload_json);
+            const currentSnap = data.screener_visible_snapshot || [];
+            
+            const currentSet = new Map();
+            currentSnap.forEach(coin => {
+                currentSet.set(coin.full, coin);
+            });
+
+            // Calculate Inflow & Outflow if we have a previous set (skip first row as baseline)
+            if (previousSet.size > 0 && currentSet.size > 0) {
+                let inflowCount = 0;
+                let inflowHeat = 0;
+                let outflowCount = 0;
+                let outflowHeat = 0;
+
+                // Check Inflows
+                currentSet.forEach((coinData, ticker) => {
+                    if (!previousSet.has(ticker)) {
+                        inflowCount++;
+                        // Extract DOM indicators
+                        const mom = parseFloat(coinData['Mom Score'] || coinData['ROC %'] || coinData['Mom'] || 0);
+                        const trend = parseFloat(coinData['Net Trend Signal'] || coinData['Net Trend'] || 0);
+                        // Synthesize Heat Score: Mom is typically -3 to +3, Trend is -100 to +100
+                        inflowHeat += (mom * 5) + (trend * 0.5); 
+                    }
+                });
+
+                // Check Outflows
+                previousSet.forEach((coinData, ticker) => {
+                    if (!currentSet.has(ticker)) {
+                        outflowCount++;
+                        const mom = parseFloat(coinData['Mom Score'] || coinData['ROC %'] || coinData['Mom'] || 0);
+                        const trend = parseFloat(coinData['Net Trend Signal'] || coinData['Net Trend'] || 0);
+                        outflowHeat += (mom * 5) + (trend * 0.5);
+                    }
+                });
+
+                timeline.push({
+                    time: row.timestamp,
+                    inflow: inflowCount,
+                    inflow_heat: Math.round(inflowHeat),
+                    outflow: outflowCount,
+                    outflow_heat: Math.round(outflowHeat),
+                    net: inflowCount - outflowCount,
+                    total_visible: currentSet.size
+                });
+            }
+
+            previousSet = currentSet;
+        });
+
+        // Optimization: return only the last 50 points to save bandwidth on dashboard
+        res.json({ success: true, timeline: timeline.slice(-60) });
+
+    } catch (e) {
+        console.error("Pulse Analytics Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // ============================================================================
 // STREAM C - SMART LEVELS WEBHOOK
 // ============================================================================

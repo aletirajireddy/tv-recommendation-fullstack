@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import { formatDistanceToNow, format } from 'date-fns';
 import { SpeedBreakerRuler } from './SpeedBreakerRuler';
+import { ParticipationPulseWidget } from './ParticipationPulseWidget';
 
 const SignalLight = ({ active, color, label }) => (
   <div className="flex flex-col items-center justify-center mx-1" title={label}>
@@ -63,6 +64,8 @@ export default function FusionDashboard() {
           Refresh Data
         </button>
       </div>
+
+      <ParticipationPulseWidget />
 
       <div className="overflow-auto flex-1">
         <table className="w-full text-left border-collapse">

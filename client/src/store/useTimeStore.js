@@ -19,6 +19,7 @@ export const useTimeStore = create((set, get) => ({
     analyticsData: null,
     researchData: null, // New Research Data
     fusionData: null, // New Fusion Dashboard Data
+    participationPulse: [], // Phase 8: Inflow/Outflow Participation Data
     viewMode: 'analytics', // 'monitor' | 'analytics' | 'research' | 'fusion'
     telegramEnabled: true, // Method to Toggle Global Notifications
     lookbackHours: 720, // Default 30 days to capture all data
@@ -127,6 +128,14 @@ export const useTimeStore = create((set, get) => ({
             // If the user is currently looking at the Fusion dashboard, refresh its data instantly
             if (get().viewMode === 'fusion') {
                 get().fetchFusionData();
+            }
+        });
+
+        // Handle Stream B Market Context Updates (Telemetry)
+        SocketService.on('market-context-update', (data) => {
+            console.log('⚡ Market Context Telemetry Update', data);
+            if (get().viewMode === 'fusion') {
+                get().fetchParticipationPulse();
             }
         });
     },
@@ -401,6 +410,18 @@ export const useTimeStore = create((set, get) => ({
         } catch (err) {
             console.error('Failed to fetch Fusion Dashboard data:', err);
             set({ fusionData: [] });
+        }
+    },
+
+    fetchParticipationPulse: async () => {
+        try {
+            const res = await fetch(`${API_BASE}/analytics/participation-pulse?hours=${get().lookbackHours}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            set({ participationPulse: data.timeline || [] });
+        } catch (err) {
+            console.error('Failed to fetch Participation Pulse data:', err);
+            set({ participationPulse: [] });
         }
     },
 }));
