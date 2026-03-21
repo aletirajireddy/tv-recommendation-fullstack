@@ -111,37 +111,9 @@ app.post('/scan-report', (req, res) => {
             .run(scanId, JSON.stringify(payload));
 
         // C. Process Buffered Alerts (if any)
-        const alerts = payload.institutional_pulse?.alerts || [];
-        if (alerts.length > 0) {
-            console.log(`[PULSE] ❤️ Processing ${alerts.length} alerts from batch`);
-            const insertStmt = db.prepare(`
-                INSERT INTO pulse_events (scan_id, timestamp, ticker, type, payload_json)
-                VALUES (?, ?, ?, ?, ?)
-            `);
-
-            // Transaction for performance
-            const processBatch = db.transaction((batch) => {
-                for (const alert of batch) {
-                    // Try to extract a "Real" Execution Time from the alert signal if available
-                    // Fallback to Scan Timestamp if not
-                    let realTime = timestamp;
-                    if (alert.signal && alert.signal.date && alert.signal.timestamp) {
-                        // Attempt parse: "Fri Jan 16 2026" + "01:32:00 am"
-                        try {
-                            // Simple heuristic, or just trust the Date.parse if format is standard
-                            const composite = `${alert.signal.date} ${alert.signal.timestamp}`;
-                            const parsed = new Date(composite);
-                            if (!isNaN(parsed.getTime())) {
-                                realTime = parsed.toISOString();
-                            }
-                        } catch (e) { }
-                    }
-
-                    insertStmt.run(scanId, realTime, alert.asset?.ticker || 'UNKNOWN', 'ALERT', JSON.stringify(alert));
-                }
-            });
-            processBatch(alerts);
-        }
+        // [DEPRECATED - Phase 10]: HTML sidebar scraping is gone. Alerts are now handled exclusively
+        // via Stream C webhooks and merged in the 'unified_alerts' VIEW.
+        // We no longer insert into pulse_events here.
 
         // D. EMIT SOCKET UPDATE (Live)
         // Send a lightweight notification to frontend
@@ -419,26 +391,20 @@ app.get('/api/analytics/pulse', (req, res) => {
         const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
         // A. Multi-Widget Aggregation (One Pass)
-        // Group by Scan ID for Time Spread, but also aggregate overall stats
+        // Group by Time Bucket (Minute) to simulate Bursts since webhooks have no scan_id
         const spreadRows = db.prepare(`
             SELECT 
                 MAX(timestamp) as batch_time,
                 count(*) as count,
-                AVG(
-                    CASE 
-                        WHEN COALESCE(json_extract(payload_json, '$.signal.d'), json_extract(payload_json, '$.signal.di')) > 0 THEN 1.0 
-                        WHEN COALESCE(json_extract(payload_json, '$.signal.d'), json_extract(payload_json, '$.signal.di')) < 0 THEN -1.0 
-                        ELSE 0 
-                    END
-                ) as avg_bias,
-                AVG(json_extract(payload_json, '$.signal.mom')) as avg_mom,
-                AVG(json_extract(payload_json, '$.signal.score')) as avg_score,
-                SUM(CASE WHEN COALESCE(json_extract(payload_json, '$.signal.d'), json_extract(payload_json, '$.signal.di')) > 0 THEN 1 ELSE 0 END) as bull_count,
-                SUM(CASE WHEN COALESCE(json_extract(payload_json, '$.signal.d'), json_extract(payload_json, '$.signal.di')) < 0 THEN 1 ELSE 0 END) as bear_count,
+                AVG(direction) as avg_bias,
+                AVG(strength) as avg_mom,
+                AVG(strength) as avg_score,
+                SUM(CASE WHEN direction > 0 THEN 1 ELSE 0 END) as bull_count,
+                SUM(CASE WHEN direction < 0 THEN 1 ELSE 0 END) as bear_count,
                 group_concat(DISTINCT ticker) as tickers
-            FROM pulse_events 
+            FROM unified_alerts 
             WHERE timestamp > ? 
-            GROUP BY scan_id
+            GROUP BY strftime('%Y-%m-%d %H:%M', timestamp)
             ORDER BY batch_time DESC
             LIMIT 20
         `).all(cutoff);
@@ -524,11 +490,11 @@ app.get('/api/analytics/pulse', (req, res) => {
         const signalRows = db.prepare(`
             SELECT 
                 ticker,
-                json_extract(payload_json, '$.signal.mom') as mom,
-                json_extract(payload_json, '$.signal.score') as score,
-                COALESCE(json_extract(payload_json, '$.signal.d'), json_extract(payload_json, '$.signal.di')) as bias_val,
-                json_extract(payload_json, '$.volSpike') as volSpike
-            FROM pulse_events
+                timestamp,
+                strength as mom,
+                direction as bias_val,
+                origin
+            FROM unified_alerts
             WHERE timestamp > ?
             ORDER BY timestamp DESC
             LIMIT 50
@@ -538,10 +504,12 @@ app.get('/api/analytics/pulse', (req, res) => {
             const biasVal = r.bias_val || 0;
             return {
                 ticker: r.ticker,
+                time: r.timestamp,
                 x: parseFloat(r.mom || 0),
-                y: parseFloat(r.score || 50),
+                y: r.origin === 'INSTITUTIONAL' ? 100 : 50, // Highlight institutional sweeps on Y-Axis
                 bias: biasVal > 0 ? 'BULLISH' : (biasVal < 0 ? 'BEARISH' : 'NEUTRAL'),
-                volSpike: !!r.volSpike
+                volSpike: r.origin === 'INSTITUTIONAL', // Treat institutional as volume spike visually
+                origin: r.origin
             };
         });
 
@@ -657,7 +625,7 @@ app.get('/api/analytics/research', (req, res) => {
         const velocityRows = db.prepare(`
             SELECT * FROM (
                 SELECT strftime('%Y-%m-%dT%H:%M:00.000Z', timestamp) as timeSlot, count(*) as count
-                FROM pulse_events
+                FROM unified_alerts
                 WHERE timestamp > ? AND timestamp <= ?
                 GROUP BY timeSlot
                 ORDER BY timeSlot DESC
@@ -670,7 +638,7 @@ app.get('/api/analytics/research', (req, res) => {
         // B. Persistence (Top Active Tickers)
         const persistenceRows = db.prepare(`
             SELECT ticker, count(*) as scans
-            FROM pulse_events
+            FROM unified_alerts
             WHERE timestamp > ? AND timestamp <= ?
             GROUP BY ticker
             ORDER BY scans DESC
@@ -682,9 +650,9 @@ app.get('/api/analytics/research', (req, res) => {
         // In a real 'Rejection' system, we'd check for specific 'rejected' event types.
         const sentimentRows = db.prepare(`
             SELECT 
-                SUM(CASE WHEN COALESCE(json_extract(payload_json, '$.signal.d'), json_extract(payload_json, '$.signal.di')) > 0 THEN 1 ELSE 0 END) as bulls,
-                SUM(CASE WHEN COALESCE(json_extract(payload_json, '$.signal.d'), json_extract(payload_json, '$.signal.di')) < 0 THEN 1 ELSE 0 END) as bears
-            FROM pulse_events
+                SUM(CASE WHEN direction > 0 THEN 1 ELSE 0 END) as bulls,
+                SUM(CASE WHEN direction < 0 THEN 1 ELSE 0 END) as bears
+            FROM unified_alerts
             WHERE timestamp > ? AND timestamp <= ?
         `).get(cutoff, anchorStr);
 
@@ -913,25 +881,41 @@ app.post('/api/webhook/smart-levels', (req, res) => {
         // To fix this discrepancy, we force the timestamp to the exact Server Receive Time for all live webhooks.
         const parsedTimestamp = new Date().toISOString();
         
-        const direction = payload.momentum?.direction !== undefined ? parseInt(payload.momentum.direction, 10) : 0;
-        const roc_pct = payload.momentum?.roc_pct !== undefined ? parseFloat(payload.momentum.roc_pct) : 0.0;
-        
-        db.prepare(`
-            INSERT INTO smart_level_events (ticker, timestamp, price, direction, roc_pct, raw_data)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(
-            ticker,
-            parsedTimestamp,
-            price,
-            direction,
-            roc_pct,
-            JSON.stringify(payload)
-        );
-        
-        console.log(`[STREAM-C] 🧠 Smart Levels Webhook Received: ${ticker} | Dir: ${direction} | ROC: ${roc_pct}%`);
-        
-        // Emit for dashboard reactivity (Optional future use)
-        io.emit('smart-level-update', { ticker, direction, timestamp: parsedTimestamp });
+        // Phase 9: Ingestion Routing Switch
+        if (typeof payload.bar_move_pct !== 'undefined') {
+            // Path A: Institutional Interest Payload
+            const direction = payload.direction !== undefined ? parseInt(payload.direction, 10) : 0;
+            const bar_move_pct = parseFloat(payload.bar_move_pct);
+            const today_change_pct = parseFloat(payload.today_change_pct || 0);
+            const today_volume = parseFloat(payload.today_volume || 0);
+
+            db.prepare(`
+                INSERT INTO institutional_interest_events (ticker, timestamp, price, direction, bar_move_pct, today_change_pct, today_volume, raw_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(ticker, parsedTimestamp, price, direction, bar_move_pct, today_change_pct, today_volume, JSON.stringify(payload));
+            
+            console.log(`[INST-INTEREST] 🏦 Institutional Webhook: ${ticker} | Dir: ${direction} | BarMove: ${bar_move_pct.toFixed(2)}%`);
+            io.emit('institutional-interest-update', { ticker, direction, timestamp: parsedTimestamp });
+        } else {
+            // Path B: Legacy Smart Levels (default fallback)
+            const direction = payload.momentum?.direction !== undefined ? parseInt(payload.momentum.direction, 10) : (payload.direction || 0);
+            const roc_pct = payload.momentum?.roc_pct !== undefined ? parseFloat(payload.momentum.roc_pct) : 0.0;
+            
+            db.prepare(`
+                INSERT INTO smart_level_events (ticker, timestamp, price, direction, roc_pct, raw_data)
+                VALUES (?, ?, ?, ?, ?, ?)
+            `).run(
+                ticker,
+                parsedTimestamp,
+                price,
+                direction,
+                roc_pct,
+                JSON.stringify(payload)
+            );
+            
+            console.log(`[STREAM-C] 🧠 Smart Levels Webhook: ${ticker} | Dir: ${direction} | ROC: ${roc_pct}%`);
+            io.emit('smart-level-update', { ticker, direction, timestamp: parsedTimestamp });
+        }
         
         res.json({ success: true, ticker });
     } catch (e) {
@@ -982,11 +966,11 @@ app.get('/api/fusion/dashboard', (req, res) => {
         const scoutDataMap = {};
         streamB_Rows.forEach(r => scoutDataMap[r.ticker] = r.maxVolChange);
 
-        // 3.5 Get Burst History (Last 24 Hours of Stream C alerts for these tickers)
+        // 3.5 Get Burst History (Last 24 Hours of Stream C and Inst. Webhooks for these tickers)
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
         const burstRows = db.prepare(`
-            SELECT ticker, timestamp, direction, roc_pct 
-            FROM smart_level_events 
+            SELECT ticker, timestamp, direction, strength, origin 
+            FROM unified_alerts 
             WHERE timestamp > ?
             ORDER BY timestamp DESC
         `).all(twentyFourHoursAgo);

@@ -146,9 +146,21 @@ db.exec(`
         today_change_pct REAL,
         today_volume REAL,
         raw_data JSON NOT NULL
-    );
+// ============================================================================
+// 9. UNIFIED EVENT BUS (VIEW)
+// ============================================================================
+// A virtual table merging both Webhook streams to feed the Unified Alert Engine.
+db.exec(`
+    CREATE VIEW IF NOT EXISTS unified_alerts AS
+    SELECT 
+        id, ticker, timestamp, price, direction, roc_pct as strength, 'TECHNICAL' as origin, raw_data 
+    FROM smart_level_events
+    UNION ALL
+    SELECT 
+        id, ticker, timestamp, price, direction, bar_move_pct as strength, 'INSTITUTIONAL' as origin, raw_data 
+    FROM institutional_interest_events;
 `);
 
-console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events');
+console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view)');
 
 module.exports = db;

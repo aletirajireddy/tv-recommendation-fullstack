@@ -1467,8 +1467,8 @@
                 timestamp: historyEntry.timestamp,
                 results: Array.from(uniqueMap.values()),
                 aiPriority: aiPriority,
-                market_sentiment: market_sentiment,
-                institutional_pulse: institutionalPulse
+                market_sentiment: market_sentiment
+                // [Phase 10 - Deprecated] institutional_pulse: institutionalPulse
             };
 
             return payload;
@@ -1480,8 +1480,8 @@
                 trigger: scanType,
                 error: error.message,
                 results: [],
-                market_sentiment: {},
-                institutional_pulse: { alerts: [] }
+                market_sentiment: {}
+                // [Phase 10 - Deprecated] institutional_pulse: { }
             };
         }
     }

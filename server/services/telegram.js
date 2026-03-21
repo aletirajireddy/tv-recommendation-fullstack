@@ -94,8 +94,8 @@ class TelegramService {
 
     getCoinsInFocus(db, hours = 2) {
         try {
-            const cutoff = Date.now() - (hours * 60 * 60 * 1000);
-            const pulses = db.prepare(`SELECT ticker, COUNT(*) as count FROM pulse_events WHERE timestamp > ? GROUP BY ticker`).all(cutoff);
+            const cutoff = new Date(Date.now() - (hours * 60 * 60 * 1000)).toISOString();
+            const pulses = db.prepare(`SELECT ticker, COUNT(*) as count FROM unified_alerts WHERE timestamp > ? GROUP BY ticker`).all(cutoff);
             const scores = {};
             pulses.forEach(p => scores[p.ticker] = (scores[p.ticker] || 0) + (p.count * 1));
             return Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, s]) => `${t} (${s})`);
