@@ -21,7 +21,10 @@ export function GlobalHeader() {
         setViewMode,
         telegramEnabled,     // State
         toggleTelegram,      // Action
-        fetchTelegramStatus  // Action
+        fetchTelegramStatus, // Action
+        useSmartLevelsContext, // NEW
+        setSmartLevelsContext,  // NEW
+        fetchStreamsHealth     // NEW: Tri-Stream
     } = useTimeStore();
 
     // Initialize Data & Socket & Settings
@@ -29,6 +32,14 @@ export function GlobalHeader() {
         fetchTimeline();
         fetchTelegramStatus(); // Fetch Toggle State
         initializeSocket();
+
+        // Start Tri-Stream Polling
+        fetchStreamsHealth();
+        const healthPoll = setInterval(() => {
+            fetchStreamsHealth();
+        }, 10000);
+
+        return () => clearInterval(healthPoll);
     }, []);
 
     // ... existing playback effect ...
@@ -73,6 +84,15 @@ export function GlobalHeader() {
                 {/* VIEW MODE TOGGLE */}
                 <div className={styles.modeSwitch}>
                     <button
+                        className={useSmartLevelsContext ? styles.activeMode : styles.inactiveMode}
+                        onClick={() => setSmartLevelsContext(!useSmartLevelsContext)}
+                        title={useSmartLevelsContext ? "Smart Levels AI: ON" : "Smart Levels AI: OFF"}
+                        style={{ marginRight: '8px' }}
+                    >
+                        {useSmartLevelsContext ? <span style={{ color: '#60a5fa' }}>🧠 AI: ON</span> : <span style={{ opacity: 0.5 }}>🧠 AI: OFF</span>}
+                    </button>
+
+                    <button
                         className={telegramEnabled ? styles.activeMode : styles.inactiveMode}
                         onClick={toggleTelegram}
                         title={telegramEnabled ? "Telegram: ON" : "Telegram: OFF"}
@@ -81,27 +101,7 @@ export function GlobalHeader() {
                         {telegramEnabled ? <span style={{ color: '#4ade80' }}>🔔 ON</span> : <span style={{ opacity: 0.5 }}>🔕 OFF</span>}
                     </button>
 
-                    <button
-                        className={viewMode === 'analytics' ? styles.activeMode : styles.inactiveMode}
-                        onClick={() => setViewMode('analytics')}
-                        title="Timeline View"
-                    >
-                        <LayoutDashboard size={14} /> TLINE
-                    </button>
-                    <button
-                        className={viewMode === 'research' ? styles.activeMode : styles.inactiveMode}
-                        onClick={() => setViewMode('research')}
-                        title="Research Dashboard"
-                    >
-                        <LineChart size={14} /> JET
-                    </button>
-                    <button
-                        className={viewMode === 'fusion' ? styles.activeMode : styles.inactiveMode}
-                        onClick={() => setViewMode('fusion')}
-                        title="Fusion Command Center"
-                    >
-                        <Target size={14} /> FUSION
-                    </button>
+
                 </div>
             </div>
         </header>

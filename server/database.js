@@ -1,8 +1,8 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-// V3 Database: Explicitly named to differentiate from legacy versions
-const dbPath = path.resolve(__dirname, 'dashboard_v3.db');
+// V3 Database: Moved to project root to avoid node --watch infinite restart loop
+const dbPath = path.resolve(__dirname, '..', 'dashboard_v3.db');
 const db = new Database(dbPath);
 
 console.log(`🔌 Connected to V3 Database: ${dbPath}`);
@@ -146,6 +146,8 @@ db.exec(`
         today_change_pct REAL,
         today_volume REAL,
         raw_data JSON NOT NULL
+    );
+`);
 // ============================================================================
 // 9. UNIFIED EVENT BUS (VIEW)
 // ============================================================================

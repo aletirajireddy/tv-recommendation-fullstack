@@ -20,10 +20,13 @@ export const useTimeStore = create((set, get) => ({
     researchData: null, // New Research Data
     fusionData: null, // New Fusion Dashboard Data
     participationPulse: [], // Phase 8: Inflow/Outflow Participation Data
+    alphaSquad: [], // Phase 14: Time-Series Delta Alpha Quadrant
     viewMode: 'analytics', // 'monitor' | 'analytics' | 'research' | 'fusion'
     telegramEnabled: true, // Method to Toggle Global Notifications
+    useSmartLevelsContext: true, // Enable AI Smart Levels Context
     lookbackHours: 720, // Default 30 days to capture all data
     isMonitorModalOpen: false, // New Modal State
+    streamsHealth: null, // NEW: Tri-Stream Health
 
     // NEW: Genie Smart State
     marketMood: { score: 0, label: 'LOADING', stats: { bullish: 0, bearish: 0, total: 0 } },
@@ -37,6 +40,14 @@ export const useTimeStore = create((set, get) => ({
 
     // 2. ACTIONS
     setTelegramEnabled: (enabled) => set({ telegramEnabled: enabled }),
+    setSmartLevelsContext: (enabled) => {
+        set({ useSmartLevelsContext: enabled });
+        // Re-evaluate current scan to immediately apply changes
+        const { activeScan, currentIndex, timeline, loadScan } = get();
+        if (activeScan && timeline[currentIndex]) {
+            loadScan(timeline[currentIndex].id);
+        }
+    },
 
     fetchAiHistory: async () => {
         try {
@@ -86,6 +97,20 @@ export const useTimeStore = create((set, get) => ({
         }
     },
 
+    fetchStreamsHealth: async () => {
+        try {
+            const res = await fetch(`${API_BASE}/system/health`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.success) {
+                    set({ streamsHealth: data });
+                }
+            }
+        } catch (err) {
+            console.error('Streams health fetch failed:', err);
+        }
+    },
+
     initializeSocket: () => {
         // Use Singleton Service
         const socket = SocketService.connect();
@@ -113,6 +138,7 @@ export const useTimeStore = create((set, get) => ({
             if (fetchResearch) fetchResearch();
             if (fetchNotifications) fetchNotifications();
             if (get().fetchStrategyLogs) get().fetchStrategyLogs(); // Refresh TLogs
+            if (get().fetchAlphaSquad) get().fetchAlphaSquad(); // Refresh Alpha Squad
         });
 
         // Handle Ledger Updates (The Picker)
@@ -204,6 +230,7 @@ export const useTimeStore = create((set, get) => ({
         await get().fetchTimeline();
         await get().fetchAnalytics();
         await get().fetchResearch();
+        await get().fetchAlphaSquad();
         const { timeline, currentIndex } = get();
         if (timeline[currentIndex]) {
             await get().loadScan(timeline[currentIndex].id);
@@ -281,6 +308,7 @@ export const useTimeStore = create((set, get) => ({
             // This ensures widgets can access property directly (e.g. item.close) without checking item.data.close
             // 🛠️ DATA NORMALIZATION: Flatten the V3 'data' nesting for Frontend consumption
             // This ensures widgets can access property directly (e.g. item.close) without checking item.data.close
+            const useSmartLevels = get().useSmartLevelsContext;
             const normalizedResults = (data.results || []).map(item => {
                 // 1. Flatten Data
                 // If 'data' exists, merge it up. If not, assume it's already flat.
@@ -288,7 +316,7 @@ export const useTimeStore = create((set, get) => ({
 
                 // 2. Genie Smart Override (Rule #1: Client-Side Scoring Truth)
                 // We overwrite the static 'score', 'label', 'insights' with fresh logical values
-                const smart = GenieSmart.calculateScore(flatItem);
+                const smart = GenieSmart.calculateScore(flatItem, useSmartLevels);
 
                 return {
                     ...flatItem,
@@ -422,6 +450,18 @@ export const useTimeStore = create((set, get) => ({
         } catch (err) {
             console.error('Failed to fetch Participation Pulse data:', err);
             set({ participationPulse: [] });
+        }
+    },
+
+    fetchAlphaSquad: async () => {
+        try {
+            const res = await fetch(`${API_BASE}/analytics/alpha-squad?hours=${get().lookbackHours}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            set({ alphaSquad: Array.isArray(data) ? data : [] });
+        } catch (err) {
+            console.error('Failed to fetch Alpha Squad data:', err);
+            set({ alphaSquad: [] });
         }
     },
 }));

@@ -18,47 +18,50 @@ export function ConfluenceGrid() {
                 <table className={styles.macroTable}>
                     <thead>
                         <tr>
-                            <th>#</th>
-                            <th>Date Time</th>
-                            <th>Alerts</th>
+                            <th>Time Window</th>
+                            <th>Duration</th>
+                            <th>Total Alerts</th>
+                            <th>Intensity Breakdown</th>
                             <th>Coins</th>
-                            <th>Spread</th>
                             <th>Density</th>
-                            <th>Cluster</th>
                             <th>Bias</th>
-                            <th>Avg Score</th>
                             <th>Mom%</th>
-                            <th>Wave Type</th>
                             <th>Ticker Timeline</th>
                         </tr>
                     </thead>
                     <tbody>
                         {[...analyticsData.time_spread]
                             .sort((a, b) => new Date(b.time) - new Date(a.time))
-                            .map((row, i) => (
+                            .map((row, i) => {
+                                const startDate = new Date(row.start_time);
+                                const endDate = new Date(row.time);
+                                
+                                const isToday = startDate.toDateString() === new Date().toDateString();
+                                const isYesterday = !isToday && startDate.getTime() > (Date.now() - 48 * 60 * 60 * 1000);
+                                
+                                const dateStr = isToday ? 'Today' : (isYesterday ? 'Yesterday' : startDate.toLocaleDateString([], { month: 'short', day: 'numeric' }));
+                                const startStr = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                                const endStr = endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                                
+                                const timeWindow = startStr === endStr ? `${dateStr} ${startStr}` : `${dateStr} ${startStr} - ${endStr}`;
+                                return (
                                 <tr key={i} className={row.count > 5 ? styles.highlightRow : ''}>
-                                    <td className={styles.dim}>{i + 1}</td>
-                                    <td className={styles.timeCell}>{new Date(row.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</td>
+                                    <td className={styles.timeCell}>{timeWindow}</td>
+                                    <td><span className={styles.durationBadge}>{row.duration}m</span></td>
                                     <td className={styles.metricCell}>{row.count}</td>
-                                    <td className={styles.metricCell}>{row.unique_coins}</td>
-                                    <td className={styles.dim}>{row.spread}</td>
-                                    <td>{row.density}<span className={styles.unit}>/min</span></td>
-                                    <td className={styles.clusterCell}>
-                                        {getClusterIcon(row.cluster)}
-                                        <span>{row.cluster}</span>
+                                    <td className={styles.intensityCell}>
+                                        {row.inst_count > 0 && <span className={styles.instBadge}>🏦 {row.inst_count} Inst</span>}
+                                        {row.tech_count > 0 && <span className={styles.techBadge}>📐 {row.tech_count} Tech</span>}
                                     </td>
-                                    <td className={row.bias === 'BULL' ? styles.bull : styles.bear}>
+                                    <td className={styles.metricCell}>{row.unique_coins}</td>
+                                    <td>{row.density}<span className={styles.unit}>/min</span></td>
+                                    <td className={row.bias.includes('BULL') ? styles.bull : styles.bear}>
                                         {row.bias}
                                     </td>
-                                    <td className={styles.dim}>{row.si}</td>
-                                    <td className={parseFloat(row.mon_pct) > 0 ? styles.bull : styles.bear}>{row.mon_pct}</td>
-                                    <td className={styles.waveType}>
-                                        {getWaveIcon(row.wave_type)}
-                                        {row.wave_type}
-                                    </td>
+                                    <td className={parseFloat(row.mom_pct) > 0 ? styles.bull : styles.bear}>{row.mom_pct}%</td>
                                     <td className={styles.timelineCell} title={row.full_timeline || row.timeline}>{row.timeline}</td>
                                 </tr>
-                            ))}
+                            )})}
                     </tbody>
                 </table>
             </div>

@@ -25,8 +25,9 @@ const GenieSmart = {
      * 0. Calculate Quality Score (Client-Side Derivative)
      * Replaces the need for the scanner script to send a pre-calculated score.
      * @param {Object} d - The raw coin data object (flattened)
+     * @param {boolean} useSmartLevels - Flag to factor in Smart Levels
      */
-    calculateScore: (d) => {
+    calculateScore: (d, useSmartLevels = false) => {
         let score = 0;
         const insights = [];
 
@@ -71,6 +72,31 @@ const GenieSmart = {
         if (d.breakout === 1) {
             score += 10;
             insights.push('🚀 Breakout');
+        }
+
+        // 6.5 SMART LEVELS ENRICHMENT
+        if (useSmartLevels && Array.isArray(d.smartLevels)) {
+            let isNearSupport = false;
+            let isNearResist = false;
+            let confluenceCount = 0;
+            
+            d.smartLevels.forEach(sl => {
+                const distPct = Math.abs((d.close - sl.price) / d.close) * 100;
+                if (distPct < 0.5) { // Within 0.5% proximity
+                    confluenceCount++;
+                    if (sl.type && sl.type.includes('Support')) isNearSupport = true;
+                    if (sl.type && (sl.type.includes('Resistance') || sl.type.includes('Resist'))) isNearResist = true;
+                }
+            });
+
+            if (confluenceCount > 0) {
+                // Large score boost for resting heavily on a known institutional line
+                score += (confluenceCount * 10); 
+                
+                if (isNearSupport && d.momScore > 0) insights.push('🎯 Smart Support');
+                else if (isNearResist && d.momScore < 0) insights.push('🎯 Smart Resist');
+                else insights.push(`🎯 Near Level (${confluenceCount})`);
+            }
         }
 
         // 7. Warning Signs (Penalties/Insights)
@@ -173,7 +199,7 @@ const GenieSmart = {
      * 3. Derive "Smart Strategies"
      * Identifies high-quality setups based on multiple columns.
      */
-    deriveStrategies: (tickerData) => {
+    deriveStrategies: (tickerData, useSmartLevels = false) => {
         const d = tickerData.data || tickerData;
         const strategies = [];
 
@@ -200,6 +226,28 @@ const GenieSmart = {
         // Strategy E: "Freeze Mode" (Explicit Column 15 - Low Volatility/Compression)
         if (d.freeze) {
             strategies.push({ name: 'FREEZE_MODE', confidence: 'NEUTRAL', label: '🧊 FREEZE' });
+        }
+
+        // Strategy F: "Smart Level Action" (Dynamic Context)
+        if (useSmartLevels && Array.isArray(d.smartLevels)) {
+            let restingOnLevel = false;
+            let levelType = '';
+            
+            d.smartLevels.forEach(sl => {
+                const distPct = Math.abs((d.close - sl.price) / d.close) * 100;
+                if (distPct < 0.5) {
+                    restingOnLevel = true;
+                    levelType = sl.type || 'Institutional Level';
+                }
+            });
+
+            if (restingOnLevel) {
+                if (d.momScore > 0 && d.positionCode >= 300) {
+                    strategies.push({ name: 'SMART_LEVEL_BOUNCE', confidence: 'HIGH', label: '🎯 SMART BOUNCE' });
+                } else if (d.momScore < 0 && d.positionCode < 200) {
+                    strategies.push({ name: 'SMART_LEVEL_REJECT', confidence: 'HIGH', label: '☠️ SMART REJECT' });
+                }
+            }
         }
 
         return strategies;

@@ -3,40 +3,12 @@ import { useTimeStore } from '../store/useTimeStore';
 import { TrendingUp, TrendingDown, Minus, Activity, Wifi } from 'lucide-react';
 import GenieSmart from '../services/GenieSmart';
 import TimeService from '../services/TimeService';
+import HeaderSparkline from './AnalyticsWidgets/HeaderSparkline';
 import styles from './HeaderStatsDeck.module.css';
 
 export function HeaderStatsDeck() {
     // 1. CONSUME GENIE SMART STATE
     const { activeScan, setMonitorModalOpen, marketMood } = useTimeStore();
-
-    // Memoize Derived Lists for Performance
-    const { opportunities, watchlist, movers } = useMemo(() => {
-        if (!activeScan || !activeScan.results) return { opportunities: [], watchlist: [], movers: [] };
-
-        const results = activeScan.results;
-
-        // A. Opportunities (Strategies Detected)
-        const opps = [];
-        const watches = [];
-
-        results.forEach(r => {
-            const strategies = GenieSmart.deriveStrategies(r);
-            if (strategies.length > 0) {
-                opps.push({ ...r, matchedStrategies: strategies.map(s => s.label || s.name) });
-            } else if (r.bias && r.bias !== 'NEUTRAL') {
-                // B. Watchlist (Direction but no explicit strategy)
-                watches.push(r);
-            }
-        });
-
-        // C. Top Movers (Abs Strength)
-        const topMovers = [...results]
-            .sort((a, b) => Math.abs(b.strength || b.netTrend || 0) - Math.abs(a.strength || a.netTrend || 0))
-            .slice(0, 3);
-
-        return { opportunities: opps, watchlist: watches, movers: topMovers };
-
-    }, [activeScan]);
 
     if (!activeScan) return <div className={styles.deckLoading}>Initialize scan...</div>;
 
@@ -48,25 +20,6 @@ export function HeaderStatsDeck() {
     if (moodLabel === 'BULLISH' || moodLabel === 'EUPHORIC') moodColor = 'var(--success)';
     else if (moodLabel === 'BEARISH' || moodLabel === 'PANIC') moodColor = 'var(--error)';
     else if (moodLabel === 'NEUTRAL') moodColor = 'var(--warning)';
-
-    // Dynamic List Selection
-    let listLabel = 'TOP MOVERS';
-    let listData = [];
-    let listType = 'movers';
-
-    if (opportunities.length > 0) {
-        listLabel = `GENIE OPPS (${opportunities.length})`;
-        listData = opportunities;
-        listType = 'opportunities';
-    } else if (watchlist.length > 0) {
-        listLabel = `WATCHLIST (${watchlist.length})`;
-        listData = watchlist.slice(0, 4);
-        listType = 'watchlist';
-    } else {
-        listLabel = 'TOP MOVERS';
-        listData = movers;
-        listType = 'movers';
-    }
 
     return (
         <div className={styles.deckContainer}>
@@ -103,26 +56,60 @@ export function HeaderStatsDeck() {
 
                 <div className={styles.divider} />
 
-                {/* 3. DYNAMIC LIST */}
-                <div className={`${styles.card} ${styles.sectionMovers}`}>
-                    <div className={styles.cardLabel} style={{ color: listType === 'opportunities' ? 'var(--success)' : 'var(--text-secondary)' }}>
-                        {listLabel}
-                    </div>
-                    <div className={styles.moversList}>
-                        {listData.map((m, i) => (
-                            <div key={i} className={styles.moverItem}>
-                                <span style={{ fontWeight: 800, minWidth: '60px' }}>{m.ticker}</span>
-                                {listType === 'opportunities' && (
-                                    <span className={styles.strategyTag}>{m.matchedStrategies[0]}</span>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                </div>
+                {/* 3. MACRO SPARKLINE (Replaces Bloated Dynamic List) */}
+                <HeaderSparkline />
             </div>
 
             <div className={styles.divider} />
+            <TriStreamHealthCard />
+            <div className={styles.divider} />
             <SystemTimeCard />
+        </div>
+    );
+}
+
+function TriStreamHealthCard() {
+    const { streamsHealth } = useTimeStore();
+
+    // Status Engine (<30m Green, 30-120m Yellow, >120m Red)
+    const getStatusParams = (isoString) => {
+        if (!isoString) return { label: '--', color: 'var(--text-tertiary)', dot: '⚪' };
+        
+        const mins = (Date.now() - new Date(isoString).getTime()) / 60000;
+        let diffStr = TimeService.timeAgo(isoString);
+        
+        // Strip out "AGO" for space conservation in the tight header block
+        diffStr = diffStr.replace(/ AGO/i, '');
+
+        if (mins < 30) return { label: diffStr, color: '#10B981', dot: '🟢' };
+        if (mins <= 120) return { label: diffStr, color: '#FACC15', dot: '🟡' }; 
+        return { label: diffStr, color: '#EF4444', dot: '🔴' }; 
+    };
+
+    const sA = getStatusParams(streamsHealth?.streamA);
+    const sB = getStatusParams(streamsHealth?.streamB);
+    const sC = getStatusParams(streamsHealth?.streamC);
+
+    return (
+        <div className={`${styles.card} ${styles.sectionSystem}`} style={{ minWidth: '200px', paddingRight: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', fontSize: '10px', fontFamily: 'monospace', fontWeight: 700 }}>
+                
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '3px' }}>
+                    <span style={{ color: 'var(--text-tertiary)' }}>A: MACRO SCAN</span>
+                    <span style={{ color: sA.color }}>{sA.dot} {sA.label}</span>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '3px' }}>
+                    <span style={{ color: 'var(--text-tertiary)' }}>B: SCOUT VELO</span>
+                    <span style={{ color: sB.color }}>{sB.dot} {sB.label}</span>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: 'var(--text-tertiary)' }}>C: INST ALERTS</span>
+                    <span style={{ color: sC.color }}>{sC.dot} {sC.label}</span>
+                </div>
+
+            </div>
         </div>
     );
 }

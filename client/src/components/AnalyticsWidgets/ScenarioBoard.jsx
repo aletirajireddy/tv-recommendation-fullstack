@@ -5,7 +5,7 @@ import styles from './ScenarioBoard.module.css';
 
 const ScenarioBoard = () => {
     // Decoupled from lookbackHours - We want strict "Tactical" logic (Last 1h)
-    const { activeScan, marketMood } = useTimeStore();
+    const { activeScan, marketMood, useSmartLevelsContext } = useTimeStore();
     const [scenarios, setScenarios] = useState({ planA: [], planB: [], marketCheck: null });
     const [loading, setLoading] = useState(true);
 
@@ -13,7 +13,7 @@ const ScenarioBoard = () => {
 
     const fetchScenarios = async () => {
         try {
-            const res = await fetch(`http://${window.location.hostname}:3000/api/analytics/scenarios?hours=${TACTICAL_WINDOW_HOURS}`);
+            const res = await fetch(`/api/analytics/scenarios?hours=${TACTICAL_WINDOW_HOURS}&smartLevels=${useSmartLevelsContext}`);
             const data = await res.json();
             if (data && !data.error) {
                 setScenarios(data);
@@ -27,8 +27,8 @@ const ScenarioBoard = () => {
 
     useEffect(() => {
         fetchScenarios();
-        // Re-fetch only when a new scan arrives (fresh data)
-    }, [activeScan]);
+        // Re-fetch only when a new scan arrives (fresh data) or toggle changes
+    }, [activeScan, useSmartLevelsContext]);
 
     const ScenarioColumn = ({ title, type, items, color }) => (
         <div className={styles.column} style={{ borderColor: color }}>

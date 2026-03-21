@@ -132,7 +132,7 @@ const processHistory = (historyItems, activeCards = []) => {
 };
 
 export default function RecommendationsFeed() {
-    const { activeScan, aiHistory, fetchAiHistory, strategyLogs, fetchStrategyLogs } = useTimeStore();
+    const { activeScan, aiHistory, fetchAiHistory, strategyLogs, fetchStrategyLogs, useSmartLevelsContext } = useTimeStore();
     const [activeTab, setActiveTab] = React.useState('strategies');
 
     // GENIE SMART: Derive Recommendations on the Client Side
@@ -142,7 +142,7 @@ export default function RecommendationsFeed() {
         const strategyMap = {}; // { 'STRATEGY_NAME': { title, tickers: [], ... } }
 
         activeScan.results.forEach(tickerData => {
-            const strategies = GenieSmart.deriveStrategies(tickerData);
+            const strategies = GenieSmart.deriveStrategies(tickerData, useSmartLevelsContext);
 
             strategies.forEach(strat => {
                 if (!strategyMap[strat.name]) {

@@ -3,6 +3,7 @@ import { useTimeStore } from '../../store/useTimeStore';
 import { formatDistanceToNow, format } from 'date-fns';
 import { SpeedBreakerRuler } from './SpeedBreakerRuler';
 import { ParticipationPulseWidget } from './ParticipationPulseWidget';
+import { SmartLevelBreaker } from './SmartLevelBreaker';
 
 const SignalLight = ({ active, color, label }) => (
   <div className="flex flex-col items-center justify-center mx-1" title={label}>
@@ -47,7 +48,7 @@ export default function FusionDashboard() {
   };
 
   return (
-    <div className="flex flex-col w-full h-full p-4 rounded-lg shadow-sm overflow-hidden" style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+    <div className="flex flex-col w-full p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
       
       <div className="flex items-center justify-between mb-4 pb-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <div>
@@ -65,9 +66,16 @@ export default function FusionDashboard() {
         </button>
       </div>
 
-      <ParticipationPulseWidget />
+      <div className="flex flex-col xl:flex-row gap-4 mb-4">
+        <div className="w-full xl:w-2/3">
+            <SmartLevelBreaker />
+        </div>
+        <div className="w-full xl:w-1/3">
+            <ParticipationPulseWidget />
+        </div>
+      </div>
 
-      <div className="overflow-auto flex-1">
+      <div className="w-full max-h-[500px] overflow-y-auto" style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px' }}>
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="text-xs uppercase tracking-wider sticky top-0 z-20" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-tertiary)' }}>

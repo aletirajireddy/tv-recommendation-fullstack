@@ -30,6 +30,25 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', version: 'v3-fresh-start', timestamp: new Date() });
 });
 
+// 1.5 TRI-STREAM HEALTH MONITORING
+app.get('/api/system/health', (req, res) => {
+    try {
+        const streamA = db.prepare(`SELECT timestamp FROM scans ORDER BY timestamp DESC LIMIT 1`).get();
+        const streamB = db.prepare(`SELECT timestamp FROM market_context_logs ORDER BY timestamp DESC LIMIT 1`).get();
+        const streamC = db.prepare(`SELECT timestamp FROM unified_alerts ORDER BY timestamp DESC LIMIT 1`).get();
+
+        res.json({
+            success: true,
+            streamA: streamA ? streamA.timestamp : null,
+            streamB: streamB ? streamB.timestamp : null,
+            streamC: streamC ? streamC.timestamp : null
+        });
+    } catch (e) {
+        console.error("Health Endpoint Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // 2. SCAN REPORT (Stream A - Macro)
 app.post('/scan-report', (req, res) => {
     const payload = req.body;
@@ -42,7 +61,7 @@ app.post('/scan-report', (req, res) => {
         const trigger = payload.trigger || 'manual';
 
         // A. Insert Scan Record
-        db.prepare('INSERT INTO scans (id, timestamp, trigger) VALUES (?, ?, ?)')
+        db.prepare('INSERT OR IGNORE INTO scans (id, timestamp, trigger) VALUES (?, ?, ?)')
             .run(scanId, timestamp, trigger);
 
         // [AUDIT]: Preserve Raw Browser Sentiment (Before Overwrite)
@@ -341,6 +360,90 @@ app.get('/api/scan/:id', (req, res) => {
         if (!row) return res.status(404).json({ error: 'Scan not found' });
 
         const payload = JSON.parse(row.raw_data);
+        
+        // --- ENRICHMENT: Inject Active Smart Levels ---
+        const scanTime = payload.timestamp ? new Date(payload.timestamp) : new Date();
+        const cutoff = new Date(scanTime.getTime() - (24 * 60 * 60 * 1000)).toISOString();
+        
+        // 1. Get the latest webhook alert for each ticker in the last 24h
+        const activeSmartLevels = db.prepare(`
+            SELECT ticker, raw_data, timestamp
+            FROM smart_level_events
+            WHERE timestamp > ? AND timestamp <= ?
+            GROUP BY ticker
+            HAVING MAX(timestamp)
+        `).all(cutoff, scanTime.toISOString());
+        
+        const levelMap = {};
+        
+        // Helper to extract levels from the complex JSON
+        const extractLevels = (slObj) => {
+            const list = [];
+            if (!slObj) return list;
+            
+            // Daily Logic
+            if (slObj.daily_logic) {
+                if (slObj.daily_logic.base_supp?.p) list.push({ type: 'Daily Support', price: parseFloat(slObj.daily_logic.base_supp.p) });
+                if (slObj.daily_logic.base_res?.p) list.push({ type: 'Daily Resistance', price: parseFloat(slObj.daily_logic.base_res.p) });
+                if (slObj.daily_logic.neck_supp?.p) list.push({ type: 'Daily Neck Support', price: parseFloat(slObj.daily_logic.neck_supp.p) });
+                if (slObj.daily_logic.neck_res?.p) list.push({ type: 'Daily Neck Resistance', price: parseFloat(slObj.daily_logic.neck_res.p) });
+            }
+            // Hourly Logic
+            if (slObj.hourly_logic) {
+                if (slObj.hourly_logic.base_supp?.p) list.push({ type: 'Hourly Support', price: parseFloat(slObj.hourly_logic.base_supp.p) });
+                if (slObj.hourly_logic.base_res?.p) list.push({ type: 'Hourly Resistance', price: parseFloat(slObj.hourly_logic.base_res.p) });
+            }
+            // Mega Spot
+            if (slObj.mega_spot?.p) list.push({ type: 'Mega Spot Support', price: parseFloat(slObj.mega_spot.p) });
+            
+            return list;
+        };
+
+        activeSmartLevels.forEach(row => {
+            try {
+                const raw = JSON.parse(row.raw_data);
+                if (raw.smart_levels) {
+                    levelMap[row.ticker] = extractLevels(raw.smart_levels);
+                }
+            } catch(e) {}
+        });
+        
+        // 2. Extract Volume Data from unified Webhooks
+        const activeVolumes = db.prepare(`
+            SELECT ticker, raw_data
+            FROM unified_alerts
+            WHERE timestamp > ? AND timestamp <= ?
+            GROUP BY ticker
+            HAVING MAX(timestamp)
+        `).all(cutoff, scanTime.toISOString());
+        
+        const volumeMap = {};
+        activeVolumes.forEach(row => {
+            try {
+                const raw = JSON.parse(row.raw_data);
+                if (raw.today_volume !== undefined) {
+                    volumeMap[row.ticker] = raw.today_volume;
+                } else if (raw.volume && raw.volume.day_vol !== undefined && raw.volume.day_vol !== null) {
+                    volumeMap[row.ticker] = raw.volume.day_vol;
+                }
+            } catch(e) {}
+        });
+        
+        if (payload.results && Array.isArray(payload.results)) {
+            payload.results.forEach(r => {
+                const t = r.data ? r.data.ticker : r.ticker;
+                if (levelMap[t]) {
+                    if (r.data) r.data.smartLevels = levelMap[t];
+                    else r.smartLevels = levelMap[t];
+                }
+                if (volumeMap[t]) {
+                    if (r.data) r.data.volumeProxy = volumeMap[t];
+                    else r.volumeProxy = volumeMap[t];
+                }
+            });
+        }
+        // --- END ENRICHMENT ---
+
         res.json(payload);
     } catch (e) {
         console.error("Read Error:", e);
@@ -355,12 +458,18 @@ app.get('/api/ai/history', (req, res) => {
         const hours = parseInt(req.query.hours) || 24;
         const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-        // Optimized for slider (Lightweight)
+        // Optimized for slider (Lightweight) and Sparklines
         const rows = db.prepare(`
-            SELECT id, timestamp, trigger 
-            FROM scans 
-            WHERE timestamp > ? 
-            ORDER BY timestamp ASC
+            SELECT 
+                s.id, 
+                s.timestamp, 
+                s.trigger,
+                json_extract(r.raw_data, '$.market_sentiment.moodScore') as mood,
+                json_array_length(json_extract(r.raw_data, '$.results')) as count
+            FROM scans s
+            LEFT JOIN scan_results r ON s.id = r.scan_id
+            WHERE s.timestamp > ? 
+            ORDER BY s.timestamp ASC
         `).all(cutoff);
 
         res.json(rows);
@@ -391,11 +500,14 @@ app.get('/api/analytics/pulse', (req, res) => {
         const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
         // A. Multi-Widget Aggregation (One Pass)
-        // Group by Time Bucket (Minute) to simulate Bursts since webhooks have no scan_id
-        const spreadRows = db.prepare(`
+        // 1. Fetch all minute-buckets in the window chronologically
+        const minuteBuckets = db.prepare(`
             SELECT 
                 MAX(timestamp) as batch_time,
+                MIN(timestamp) as min_time,
                 count(*) as count,
+                SUM(CASE WHEN origin = 'INSTITUTIONAL' THEN 1 ELSE 0 END) as inst_count,
+                SUM(CASE WHEN origin = 'TECHNICAL' THEN 1 ELSE 0 END) as tech_count,
                 AVG(direction) as avg_bias,
                 AVG(strength) as avg_mom,
                 AVG(strength) as avg_score,
@@ -404,17 +516,59 @@ app.get('/api/analytics/pulse', (req, res) => {
                 group_concat(DISTINCT ticker) as tickers
             FROM unified_alerts 
             WHERE timestamp > ? 
-            GROUP BY strftime('%Y-%m-%d %H:%M', timestamp)
-            ORDER BY batch_time DESC
-            LIMIT 20
+            GROUP BY (CASE 
+                WHEN timestamp LIKE '%-%' THEN strftime('%Y-%m-%d %H:%M', timestamp)
+                ELSE strftime('%Y-%m-%d %H:%M', datetime(CAST(timestamp AS INTEGER)/1000, 'unixepoch'))
+            END)
+            ORDER BY min_time ASC
         `).all(cutoff);
 
-        // 1. Time Spread & Flow Chart Data
-        const time_spread = spreadRows.map(r => {
-            const count = r.count;
-            const tickers = r.tickers ? r.tickers.split(',') : [];
-            const avgBias = r.avg_bias || 0;
+        // 2. Node.js Time-Clustering Algorithm (Throttle events <= 3 mins apart)
+        const clusters = [];
+        let currentCluster = null;
 
+        minuteBuckets.forEach(bucket => {
+            const bucketTime = new Date(bucket.batch_time).getTime();
+            
+            if (!currentCluster) {
+                currentCluster = { ...bucket, tickers: new Set(bucket.tickers ? bucket.tickers.split(',') : []) };
+            } else {
+                const prevTime = new Date(currentCluster.batch_time).getTime();
+                const diffMinutes = (bucketTime - prevTime) / 1000 / 60;
+                
+                if (diffMinutes <= 3) {
+                    // Merge into current cluster
+                    currentCluster.batch_time = bucket.batch_time; // shift end time
+                    currentCluster.count += (bucket.count || 0);
+                    currentCluster.inst_count += (bucket.inst_count || 0);
+                    currentCluster.tech_count += (bucket.tech_count || 0);
+                    currentCluster.bull_count += (bucket.bull_count || 0);
+                    currentCluster.bear_count += (bucket.bear_count || 0);
+                    
+                    // Simple rolling average for bias/mom
+                    currentCluster.avg_bias = ((currentCluster.avg_bias || 0) + (bucket.avg_bias || 0)) / 2;
+                    currentCluster.avg_mom = ((currentCluster.avg_mom || 0) + (bucket.avg_mom || 0)) / 2;
+                    
+                    if (bucket.tickers) {
+                        bucket.tickers.split(',').forEach(t => currentCluster.tickers.add(t));
+                    }
+                } else {
+                    // Push finalized cluster and start new one
+                    clusters.push(currentCluster);
+                    currentCluster = { ...bucket, tickers: new Set(bucket.tickers ? bucket.tickers.split(',') : []) };
+                }
+            }
+        });
+        if (currentCluster) clusters.push(currentCluster);
+
+        // Sort clusters DESC (newest first) and map for UI
+        clusters.sort((a, b) => new Date(b.batch_time) - new Date(a.batch_time));
+
+        const time_spread = clusters.slice(0, 20).map(r => {
+            const count = r.count;
+            const uniqueCoins = Array.from(r.tickers);
+            const avgBias = r.avg_bias || 0;
+            
             let biasLabel = 'NEUTRAL';
             if (avgBias >= 0.5) biasLabel = 'BULLISH';
             else if (avgBias <= -1.0) biasLabel = 'BEARISH';
@@ -423,32 +577,43 @@ app.get('/api/analytics/pulse', (req, res) => {
                 else if (avgBias < -0.2) biasLabel = 'STRONG BEAR';
             }
 
+            const startTimeStr = (!r.min_time || /^ *\d+ *$/.test(r.min_time.toString())) 
+                ? parseInt(r.min_time || Date.now(), 10) 
+                : (r.min_time.endsWith('Z') ? r.min_time : r.min_time + 'Z');
+
+            const endTimeStr = (!r.batch_time || /^ *\d+ *$/.test(r.batch_time.toString())) 
+                ? parseInt(r.batch_time || Date.now(), 10) 
+                : (r.batch_time.endsWith('Z') ? r.batch_time : r.batch_time + 'Z');
+
+            const startTime = new Date(startTimeStr);
+            const endTime = new Date(endTimeStr);
+            const durationMins = Math.max(1, Math.ceil((endTime - startTime) / 1000 / 60));
+
             return {
-                time: r.batch_time,
+                time: endTime.toISOString(),
+                start_time: startTime.toISOString(),
+                duration: durationMins,
                 count: count,
-                unique_coins: tickers.length,
-                spread: count > 3 ? "Wide" : "Narrow",
-                density: (count / 5).toFixed(2),
+                inst_count: r.inst_count,
+                tech_count: r.tech_count,
+                unique_coins: uniqueCoins.length,
+                density: (count / durationMins).toFixed(1),
                 cluster: count > 5 ? 'BURST' : 'STEADY',
                 bias: biasLabel,
-                si: (r.avg_score || 0).toFixed(0), // Now 'Avg Score' instead of static S/I
-                mon_pct: (r.avg_mom || 0).toFixed(1),
-                wave_type: count > 7 ? 'Burst Cluster' : 'Broad Flow',
-                timeline: tickers.slice(0, 3).join(', ') + (tickers.length > 3 ? '...' : ''),
-                full_timeline: tickers.join(', '),
-
-                // For Flow Chart
+                mom_pct: (r.avg_mom || 0).toFixed(1),
+                timeline: uniqueCoins.slice(0, 3).join(', ') + (uniqueCoins.length > 3 ? '...' : ''),
+                full_timeline: uniqueCoins.join(', '),
                 bullish: r.bull_count,
                 bearish: r.bear_count,
                 mood_score: Math.round(avgBias * 100)
             };
         });
 
-        // 2. Volume Intent (Aggregated from rows)
-        const total_alerts = spreadRows.reduce((acc, r) => acc + r.count, 0);
+        // 2. Volume Intent (Aggregated from clustered rows)
+        const total_alerts = clusters.reduce((acc, r) => acc + r.count, 0);
         const volume_intent = {
-            bullish: spreadRows.reduce((acc, r) => acc + r.bull_count, 0),
-            bearish: spreadRows.reduce((acc, r) => acc + r.bear_count, 0)
+            bullish: clusters.reduce((acc, r) => acc + r.bull_count, 0),
+            bearish: clusters.reduce((acc, r) => acc + r.bear_count, 0)
         };
 
         // 3. Market Structure (Live Snapshot from Latest Scan)
@@ -533,6 +698,7 @@ app.get('/api/analytics/pulse', (req, res) => {
 app.get('/api/analytics/scenarios', (req, res) => {
     try {
         const hours = parseFloat(req.query.hours) || 1;
+        const useSmartLevels = req.query.smartLevels === 'true'; // Toggle
 
         // 1. Get Latest Scan
         const latestScan = db.prepare('SELECT id, timestamp FROM scans ORDER BY timestamp DESC LIMIT 1').get();
@@ -546,6 +712,44 @@ app.get('/api/analytics/scenarios', (req, res) => {
         const results = payload.results || [];
         const marketMood = payload.market_sentiment || { moodScore: 0, mood: 'NEUTRAL' };
 
+        // --- Fetch Active Smart Levels for the last 24h ---
+        const levelMap = {};
+        if (useSmartLevels) {
+            const cutoff24 = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
+            const activeSmartLevels = db.prepare(`
+                SELECT ticker, raw_data
+                FROM smart_level_events
+                WHERE timestamp > ?
+                GROUP BY ticker
+                HAVING MAX(timestamp)
+            `).all(cutoff24);
+            
+            // Helper to extract
+            const extractLevels = (slObj) => {
+                const list = [];
+                if (!slObj) return list;
+                if (slObj.daily_logic) {
+                    if (slObj.daily_logic.base_supp?.p) list.push({ type: 'Support', price: parseFloat(slObj.daily_logic.base_supp.p) });
+                    if (slObj.daily_logic.base_res?.p) list.push({ type: 'Resistance', price: parseFloat(slObj.daily_logic.base_res.p) });
+                }
+                if (slObj.hourly_logic) {
+                    if (slObj.hourly_logic.base_supp?.p) list.push({ type: 'Support', price: parseFloat(slObj.hourly_logic.base_supp.p) });
+                    if (slObj.hourly_logic.base_res?.p) list.push({ type: 'Resistance', price: parseFloat(slObj.hourly_logic.base_res.p) });
+                }
+                if (slObj.mega_spot?.p) list.push({ type: 'Support', price: parseFloat(slObj.mega_spot.p) });
+                return list;
+            };
+
+            activeSmartLevels.forEach(row => {
+                try {
+                    const raw = JSON.parse(row.raw_data);
+                    if (raw.smart_levels) {
+                        levelMap[row.ticker] = extractLevels(raw.smart_levels);
+                    }
+                } catch(e){}
+            });
+        }
+
         const planA = [];
         const planB = [];
 
@@ -554,24 +758,42 @@ app.get('/api/analytics/scenarios', (req, res) => {
             const d = r.data || r; // Normalize
             const code = d.positionCode || 0;
             const mom = d.momScore || 0;
+            const netTrend = parseFloat(d.netTrend || 0);
             const vol = d.volSpike || 0;
             const ticker = d.ticker;
+            
+            let isSmartSupport = false;
+            let isSmartResist = false;
+            
+            // Check Smart Levels proximity if enabled
+            if (useSmartLevels && levelMap[ticker]) {
+                const currentPrice = d.close;
+                levelMap[ticker].forEach(sl => {
+                    const distPct = Math.abs((currentPrice - sl.price) / currentPrice) * 100;
+                    if (distPct < 0.5) { // Within 0.5%
+                        if (sl.type.includes('Support')) isSmartSupport = true;
+                        if (sl.type.includes('Resistance') || sl.type.includes('Resist')) isSmartResist = true;
+                    }
+                });
+            }
 
             // PLAN A: Bullish Scenarios
-            // Criteria: Mega Spot (5xx), Bullish Trend (3xx), or Strong Momentum Breakout
-            if (code >= 500) {
+            if (isSmartSupport && netTrend > 0) {
+                planA.push({ ticker, price: d.close, trigger: 'Smart Level Bounce', scope: 'Institutional', heat: 3, vol: vol });
+            } else if (code >= 500) {
                 planA.push({ ticker, price: d.close, trigger: 'Mega Spot Support', scope: 'Institutional', heat: 3, vol: vol });
-            } else if (code >= 300 && code < 400 && mom > 20) {
+            } else if (code >= 300 && code < 400 && netTrend > 20) {
                 planA.push({ ticker, price: d.close, trigger: 'Trend Continuation', scope: 'Mid-Term', heat: 1, vol: vol });
             } else if (d.breakout) {
                 planA.push({ ticker, price: d.close, trigger: 'Volatility Breakout', scope: 'Scalp', heat: 2, vol: 1 });
             }
 
             // PLAN B: Bearish Scenarios
-            // Criteria: Bearish Trend (1xx) with Momentum, or Failed Support (Testing 4xx with low Mom)
-            if (code >= 100 && code < 200 && mom < -10) {
+            if (isSmartResist && netTrend < 0) {
+                planB.push({ ticker, price: d.close, trigger: 'Smart Level Rejection', scope: 'Institutional', heat: 3, vol: vol });
+            } else if (code >= 100 && code < 200 && netTrend < -10) {
                 planB.push({ ticker, price: d.close, trigger: 'Trend Breakdown', scope: 'Mid-Term', heat: 1, vol: vol });
-            } else if (code >= 400 && code < 500 && mom < -20) {
+            } else if (code >= 400 && code < 500 && netTrend < -20) {
                 planB.push({ ticker, price: d.close, trigger: 'Support Failure', scope: 'Reversal', heat: 2, vol: vol });
             }
         });
@@ -799,58 +1021,31 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
         `).all(cutoff);
 
         const timeline = [];
-        let previousSet = new Map(); // ticker -> rowData
-
         rows.forEach(row => {
             const data = JSON.parse(row.payload_json);
             const currentSnap = data.screener_visible_snapshot || [];
             
-            const currentSet = new Map();
-            currentSnap.forEach(coin => {
-                currentSet.set(coin.full, coin);
+            let bullishHeat = 0;
+            let bearishHeat = 0;
+
+            currentSnap.forEach(coinData => {
+                const mom = parseFloat(coinData['Mom Score'] || coinData['ROC %'] || coinData['Mom'] || 0);
+                const trend = parseFloat(coinData['Net Trend Signal'] || coinData['Net Trend'] || 0);
+                
+                // Synthesize Heat Score from pure momentum
+                const heat = (mom * 5) + (trend * 0.5); 
+                
+                if (heat > 0) bullishHeat += heat;
+                else if (heat < 0) bearishHeat += Math.abs(heat);
             });
 
-            // Calculate Inflow & Outflow if we have a previous set (skip first row as baseline)
-            if (previousSet.size > 0 && currentSet.size > 0) {
-                let inflowCount = 0;
-                let inflowHeat = 0;
-                let outflowCount = 0;
-                let outflowHeat = 0;
-
-                // Check Inflows
-                currentSet.forEach((coinData, ticker) => {
-                    if (!previousSet.has(ticker)) {
-                        inflowCount++;
-                        // Extract DOM indicators
-                        const mom = parseFloat(coinData['Mom Score'] || coinData['ROC %'] || coinData['Mom'] || 0);
-                        const trend = parseFloat(coinData['Net Trend Signal'] || coinData['Net Trend'] || 0);
-                        // Synthesize Heat Score: Mom is typically -3 to +3, Trend is -100 to +100
-                        inflowHeat += (mom * 5) + (trend * 0.5); 
-                    }
-                });
-
-                // Check Outflows
-                previousSet.forEach((coinData, ticker) => {
-                    if (!currentSet.has(ticker)) {
-                        outflowCount++;
-                        const mom = parseFloat(coinData['Mom Score'] || coinData['ROC %'] || coinData['Mom'] || 0);
-                        const trend = parseFloat(coinData['Net Trend Signal'] || coinData['Net Trend'] || 0);
-                        outflowHeat += (mom * 5) + (trend * 0.5);
-                    }
-                });
-
-                timeline.push({
-                    time: row.timestamp,
-                    inflow: inflowCount,
-                    inflow_heat: Math.round(inflowHeat),
-                    outflow: outflowCount,
-                    outflow_heat: Math.round(outflowHeat),
-                    net: inflowCount - outflowCount,
-                    total_visible: currentSet.size
-                });
-            }
-
-            previousSet = currentSet;
+            timeline.push({
+                time: row.timestamp,
+                active_count: currentSnap.length,
+                bullish_heat: Math.round(bullishHeat),
+                bearish_heat: Math.round(bearishHeat),
+                net_heat: Math.round(bullishHeat - bearishHeat)
+            });
         });
 
         // Optimization: return only the last 50 points to save bandwidth on dashboard
@@ -858,6 +1053,73 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
 
     } catch (e) {
         console.error("Pulse Analytics Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 9c. ALPHA SQUAD (Time-Series Volume & Momentum Deltas)
+app.get('/api/analytics/alpha-squad', (req, res) => {
+    try {
+        const hours = parseFloat(req.query.hours) || 24;
+        const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+        const rows = db.prepare(`
+            SELECT ticker, timestamp, raw_data, strength, direction, origin
+            FROM unified_alerts
+            WHERE timestamp >= ?
+            ORDER BY timestamp ASC
+        `).all(cutoff);
+
+        const tickerMap = {};
+        rows.forEach(row => {
+            if (!tickerMap[row.ticker]) {
+                tickerMap[row.ticker] = { events: [] };
+            }
+            try {
+                const raw = JSON.parse(row.raw_data);
+                const vol = parseFloat(raw.today_volume || raw.volume || 0);
+                if (vol > 0) {
+                    tickerMap[row.ticker].events.push({
+                        time: new Date(row.timestamp).getTime(),
+                        vol: vol,
+                        mom: parseFloat(row.strength || 0),
+                        bias: row.direction > 0 ? 'BULL' : (row.direction < 0 ? 'BEAR' : 'NEUTRAL')
+                    });
+                }
+            } catch(e) {}
+        });
+
+        const alphaSquad = [];
+        for (const [ticker, ObjectData] of Object.entries(tickerMap)) {
+            const events = ObjectData.events;
+            if (events.length >= 2) {
+                const first = events[0];
+                const last = events[events.length - 1];
+                
+                let volDelta = last.vol - first.vol;
+                if (volDelta < 0) volDelta = last.vol; // Midnight reset handler
+                
+                const momDelta = last.mom - first.mom;
+                const hoursElapsed = (last.time - first.time) / (1000 * 60 * 60);
+                
+                // Base Condition: Increasing Volume AND Increasing Momentum
+                if (volDelta > 0 && Math.abs(momDelta) >= 1.0) {
+                   alphaSquad.push({
+                       ticker,
+                       volDelta,
+                       momDelta,
+                       bias: last.bias,
+                       hoursElapsed: hoursElapsed > 0 ? hoursElapsed.toFixed(2) : 0.1,
+                       eventCount: events.length
+                   });
+                }
+            }
+        }
+
+        alphaSquad.sort((a, b) => b.volDelta - a.volDelta);
+        res.json(alphaSquad);
+    } catch(e) {
+        console.error("Alpha Squad Error:", e);
         res.status(500).json({ error: e.message });
     }
 });
@@ -890,7 +1152,7 @@ app.post('/api/webhook/smart-levels', (req, res) => {
             const today_volume = parseFloat(payload.today_volume || 0);
 
             db.prepare(`
-                INSERT INTO institutional_interest_events (ticker, timestamp, price, direction, bar_move_pct, today_change_pct, today_volume, raw_data)
+                INSERT OR IGNORE INTO institutional_interest_events (ticker, timestamp, price, direction, bar_move_pct, today_change_pct, today_volume, raw_data)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `).run(ticker, parsedTimestamp, price, direction, bar_move_pct, today_change_pct, today_volume, JSON.stringify(payload));
             
@@ -902,7 +1164,7 @@ app.post('/api/webhook/smart-levels', (req, res) => {
             const roc_pct = payload.momentum?.roc_pct !== undefined ? parseFloat(payload.momentum.roc_pct) : 0.0;
             
             db.prepare(`
-                INSERT INTO smart_level_events (ticker, timestamp, price, direction, roc_pct, raw_data)
+                INSERT OR IGNORE INTO smart_level_events (ticker, timestamp, price, direction, roc_pct, raw_data)
                 VALUES (?, ?, ?, ?, ?, ?)
             `).run(
                 ticker,
@@ -913,7 +1175,7 @@ app.post('/api/webhook/smart-levels', (req, res) => {
                 JSON.stringify(payload)
             );
             
-            console.log(`[STREAM-C] 🧠 Smart Levels Webhook: ${ticker} | Dir: ${direction} | ROC: ${roc_pct}%`);
+            console.log(`[SMART-LEVELS] 🧠 Alert Received @ ${parsedTimestamp} | Ticker: ${ticker} | Payload Time: ${payload.timestamp || 'N/A'}`);
             io.emit('smart-level-update', { ticker, direction, timestamp: parsedTimestamp });
         }
         
@@ -1132,8 +1394,8 @@ app.get('/api/fusion/dashboard', (req, res) => {
 });
 
 const PORT = 3000;
-server.listen(PORT, () => {
-    console.log(`🚀 V3 Server running on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 V3 Server running on port ${PORT} (All Interfaces)`);
 });
 
 /**

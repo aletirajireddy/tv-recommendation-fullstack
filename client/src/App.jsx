@@ -30,57 +30,39 @@ function App() {
 
       <main className={styles.mainGridDefault}>
 
-        {viewMode === 'research' ? (
-          /* JET RESEARCH VIEW (Full Page) */
-          <div className={styles.colAnalytics} style={{ padding: '0 24px' }}>
-            <AnalyticsDashboard />
+        {/* UNIFIED TIMELINE VIEW */}
+        <div className={styles.colAnalytics} style={{ padding: 0 }}>
+        
+            {/* ROW 0: FUSION DASHBOARD (Command Center injected at the top) */}
+            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
+                <FusionDashboard />
+            </div>
 
-            {/* Floating controls still useful in research mode? Maybe. Leaving out for focus as per previous "Jet Mode" designs, or adding back if requested.
-                    Actually, let's keep MonitorDetailModal available just in case.
-                */}
-          </div>
-        ) : viewMode === 'fusion' ? (
-          /* NEW FUSION MODE (Stream C + A + B) */
-          <div className={styles.colAnalytics} style={{ padding: '0 24px' }}>
-            <FusionDashboard />
-          </div>
-        ) : (
-          /* DEFAULT TIMELINE VIEW */
-          <div className={styles.colAnalytics} style={{ padding: 0 }}>
-
-            {/* ALWAYS RENDER TIMELINE COMPONENTS */}
-            <>
-              {/* ROW 1: ENHANCED MACRO SUMMARY (Full Width) */}
-              <div className={styles.analyticsFullRow}>
+            {/* ROW 1: ENHANCED MACRO SUMMARY (Full Width) */}
+            <div className={styles.analyticsFullRow}>
                 <MarketStructureWidget />
                 <ConfluenceGrid />
-              </div>
+            </div>
 
-              {/* ROW 1.5: SCENARIO PLANNING (Plan A vs Plan B) */}
-              <div className={styles.analyticsFullRow} style={{ marginBottom: '16px' }}>
+            {/* ROW 1.5: SCENARIO PLANNING (Plan A vs Plan B) */}
+            <div className={styles.analyticsFullRow} style={{ marginBottom: '16px' }}>
                 <ScenarioBoard />
-              </div>
+            </div>
 
-
-
-              {/* ROW 2: ALERTS & RECOMMENDATIONS */}
-              <div className={styles.analyticsSplitRow}>
+            {/* ROW 2: ALERTS & RECOMMENDATIONS */}
+            <div className={styles.analyticsSplitRow}>
                 <AlertsAnalyzer />
                 <div style={{ height: '100%', minHeight: '300px' }}>
-                  <RecommendationsFeed />
+                    <RecommendationsFeed />
                 </div>
-              </div>
+            </div>
 
-              {/* ROW 3: MOOD & ALPHA */}
-              <div className={styles.analyticsSplitRow}>
+            {/* ROW 3: MOOD & ALPHA */}
+            <div className={styles.analyticsSplitRow}>
                 <TrendFlowChart />
                 <AlphaScatter />
-              </div>
-
-
-            </>
-          </div>
-        )}
+            </div>
+        </div>
 
         {/* FLOATING CONTROLS (Always Visible in BOTH Modes) */}
         <FloatingTimeController />

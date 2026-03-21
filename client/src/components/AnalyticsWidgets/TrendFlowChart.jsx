@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import { toMoodFlowData } from '../../utils/chartAdapters';
 import styles from './TrendFlowChart.module.css';
@@ -9,6 +9,15 @@ import {
 
 export function TrendFlowChart() {
     const { analyticsData, refreshAll } = useTimeStore();
+    const [isMobile, setIsMobile] = useState(false);
+
+    useEffect(() => {
+        const mql = window.matchMedia('(pointer: coarse)');
+        setIsMobile(mql.matches);
+        const handler = (e) => setIsMobile(e.matches);
+        mql.addEventListener('change', handler);
+        return () => mql.removeEventListener('change', handler);
+    }, []);
 
     const data = useMemo(() =>
         toMoodFlowData(analyticsData?.time_spread),
@@ -68,6 +77,8 @@ export function TrendFlowChart() {
                         <Tooltip
                             contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
                             cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                            trigger={isMobile ? 'click' : 'hover'}
+                            isAnimationActive={false}
                         />
                         <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
 

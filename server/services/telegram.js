@@ -108,157 +108,103 @@ class TelegramService {
      */
     // Unified Strategy Sync (Direct from Engine)
     async syncStrategies(currentStrategies, marketSentiment, scenarios = null) {
-        // NOTE: We do NOT return early here based on isEnabled.
-        // We proceed to process logic so we can LOG the events.
-        // The gate is inside sendAlert().
-
-        // State Initialization
-        if (!this.lastActiveStrategies) this.lastActiveStrategies = [];
-        if (!this.cooldownMap) this.cooldownMap = new Map(); // Key: StrategyID, Value: Timestamp
-
-        const oldStrategies = this.lastActiveStrategies;
-        this.lastActiveStrategies = currentStrategies;
-
-        const newIds = new Set(currentStrategies.map(s => s.id));
-        const oldMap = new Map(oldStrategies.map(s => [s.id, s]));
-
-        // 1. Detect COMPLETIONS (Removed Strategies)
-        for (const oldStrat of oldStrategies) {
-            if (!newIds.has(oldStrat.id)) {
-                // Ignore boring "Info" exits
-                if (oldStrat.type !== 'info') {
-                    // console.log(`[Telegram] Strategy Exit: ${oldStrat.title}`);
-                    // Optional: Send exit alert? For now, silence is golden.
-                }
-            }
-        }
-
-        // 2. Detect NEW ACTIVATIONS & UPDATES
+        // Track global last sent for the anti-spam throttle
+        if (!this.lastGlobalAlertTime) this.lastGlobalAlertTime = 0;
+        if (!this.knownTickers) this.knownTickers = new Set();
+        
+        const now = Date.now();
+        const COOLDOWN_MS = 15 * 60 * 1000; // 15 Minutes minimum between pulses
+        
+        // 1. Extract all CURRENT active tickers across all meaningful strategies
+        const currentTickers = new Set();
+        const eyeCatchers = []; // Keep rich metadata for the alert
+        
         for (const strat of currentStrategies) {
-            // FILTER: Suppress Low-Value "Info" strategies (Chop Warnings)
-            if (strat.type === 'info') continue;
-
-            const isNew = !oldMap.has(strat.id);
-            const oldStrat = oldMap.get(strat.id);
-
-            // Check for Significant Change (Ticker Count Changed)
-            let isUpdate = false;
-            let tickerHash = strat.tickers ? strat.tickers.map(t => t.ticker).sort().join(',') : '';
-            if (!isNew && oldStrat) {
-                let oldHash = oldStrat.tickers ? oldStrat.tickers.map(t => t.ticker).sort().join(',') : '';
-                if (tickerHash !== oldHash) isUpdate = true;
-            }
-
-            // THROTTLING LOGIC (10 Minute Cooldown)
-            const now = Date.now();
-            const lastSent = this.cooldownMap.get(strat.id) || 0;
-            const COOLDOWN_MS = 10 * 60 * 1000; // 10 Minutes
-
-            // Strict Anti-Spam: Unless it's a brand new strategy, enforce the cooldown.
-            // Small updates to the ticker list will be ignored until the cooldown expires.
-            if (!isNew && (now - lastSent < COOLDOWN_MS)) {
-                // console.log(`[Telegram] Throttled: ${strat.title} (Cooldown active)`);
-                continue;
-            }
-
-            if (isNew || isUpdate) {
-                // If it's an update, but the cooldown has expired, we process it and reset the timer.
-                this.cooldownMap.set(strat.id, now);
-
-                let icon = 'ℹ️';
-                if (strat.type === 'trend') icon = '🌊';
-                if (strat.type === 'opportunity') icon = '🚀';
-                if (strat.type === 'risk') icon = '⚠️';
-
-                let titlePrefix = isNew ? "NEW OPPORTUNITY" : "UPDATE";
-
-                // --- BUILD HEADER (Mood & Splits) ---
-                let header = '';
-                if (marketSentiment) {
-                    const { moodScore, mood, bullish, bearish, neutral } = marketSentiment;
-                    const moodIcon = moodScore >= 20 ? '🟢' : (moodScore <= -20 ? '🔴' : '🟡');
-                    const moodLabel = mood || (moodScore >= 20 ? 'BULLISH' : (moodScore <= -20 ? 'BEARISH' : 'NEUTRAL'));
-
-                    header = `\n━━━━━━━━━━━━━━\n` +
-                        `🔮 **GENIE MOOD**: ${moodIcon} ${moodLabel} (${moodScore})\n`;
-
-                    // Add Plan Context if available
-                    if (scenarios && scenarios.marketCheck) {
-                        header += `🎯 **GAME PLAN**: ${moodScore > 0 ? 'Plan A (Longs)' : 'Plan B (Shorts)'}\n`;
-                    }
-
-                    // [VISUAL UPGRADE] ASCII Gauge
-                    // Range: -100 to +100. Map to 10 bars.
-                    // Bearish (-100 to 0) | Bullish (0 to 100)
-                    const totalBars = 12;
-                    const normalized = Math.min(Math.max(moodScore, -100), 100); // Clamp
-                    const percent = (normalized + 100) / 200; // 0 to 1
-                    const filled = Math.round(percent * totalBars);
-
-                    const bar = '▓'.repeat(filled) + '░'.repeat(totalBars - filled);
-                    header += `\`[${bar}]\`\n`;
-
-                    header += `━━━━━━━━━━━━━━\n`;
-                }
-
-                // Compose Message
-                const msg = `${icon} **${titlePrefix}**: ${strat.title}\n${header}\n${strat.description}`;
-
-                // --- FULL TICKER LIST (Splitting if too long) ---
-                let tickerTxt = '';
-                const MAX_MSG_LENGTH = 3800; // Leave buffer for header
-
-                if (strat.tickers && strat.tickers.length > 0) {
-                    const tList = strat.tickers.map(t => {
-                        const bias = t.bias || (t.desc ? t.desc : '');
-                        return `• **${t.ticker}** ${bias ? 'via ' + bias : ''}`;
+            if (strat.type === 'info') continue; // Skip boring stuff
+            if (!strat.tickers) continue;
+            
+            for (const t of strat.tickers) {
+                currentTickers.add(t.ticker);
+                
+                // If it's a completely new ticker we haven't seen before, it's a Catalyst!
+                if (!this.knownTickers.has(t.ticker)) {
+                    eyeCatchers.push({
+                        ticker: t.ticker,
+                        strategy: strat.title,
+                        type: strat.type,
+                        bias: t.bias || ''
                     });
-
-                    // Check if we need to split
-                    // Crude check: Avg line 40 chars. 
-                    let currentChunk = [];
-                    let currentLen = 0;
-
-                    // Send Header + First Chunk
-                    // If list is massive, we iterate
-
-                    // Strategy:
-                    // 1. Build Header Message
-                    // 2. Append as many tickers as fit
-                    // 3. Send.
-                    // 4. If tickers remain, send "Continued..." messages.
-
-                    const fullListString = tList.join('\n');
-                    const totalLen = msg.length + fullListString.length;
-
-                    if (totalLen < MAX_MSG_LENGTH) {
-                        // Fits in one
-                        tickerTxt = `\n\n**Candidates (${strat.tickers.length})**:\n${fullListString}`;
-                        await this.sendAlert(msg + tickerTxt, isNew ? 'ALERT' : 'UPDATE', { type: isNew ? 'NEW' : 'UPDATE', strategy: strat });
-                    } else {
-                        // Needs splitting
-                        // Send Header First with summary
-                        await this.sendAlert(`${msg}\n\n**Candidates (${strat.tickers.length})**:\n(List too long, splitting...)`, isNew ? 'ALERT' : 'UPDATE');
-
-                        // Chunk the list
-                        let chunk = '';
-                        for (const line of tList) {
-                            if (chunk.length + line.length > MAX_MSG_LENGTH) {
-                                await this.sendAlert(chunk, 'INFO'); // Continuation
-                                chunk = '';
-                            }
-                            chunk += line + '\n';
-                        }
-                        if (chunk.length > 0) {
-                            await this.sendAlert(chunk, 'INFO');
-                        }
-                    }
-                } else {
-                    // No tickers, just message
-                    await this.sendAlert(msg, isNew ? 'ALERT' : 'UPDATE', { type: isNew ? 'NEW' : 'UPDATE', strategy: strat });
                 }
             }
         }
+        
+        // 2. Update Known Tickers Memory (Self-Healing memory)
+        // We replace it entirely so if a coin drops out, it can re-trigger later
+        this.knownTickers = currentTickers;
+        
+        // 3. EVENT GATE: Are there any new Eye-Catchers?
+        if (eyeCatchers.length === 0) {
+            return; // No new catalysts, stay totally silent
+        }
+        
+        // 4. SPAM GATE: Has the 15-minute global cooldown elapsed?
+        if (now - this.lastGlobalAlertTime < COOLDOWN_MS) {
+            // Suppressing Pulse because Cooldown is Active. 
+            // The memory already absorbed the coins, so we don't spam them when the gate opens later.
+            return; 
+        }
+        
+        // --- WE HAVE PASSED ALL GATES. COMPOSE THE MASTER AI PAYLOAD ---
+        this.lastGlobalAlertTime = now;
+        
+        // A. Header: Market Score & Mood
+        let header = `🚀 **GENIE AI MARKET PULSE**\n━━━━━━━━━━━━━━\n`;
+        if (marketSentiment) {
+            const { moodScore, mood, bullish, bearish, neutral } = marketSentiment;
+            const moodIcon = moodScore >= 20 ? '🟢' : (moodScore <= -20 ? '🔴' : '🟡');
+            const moodLabel = mood || (moodScore >= 20 ? 'BULLISH' : (moodScore <= -20 ? 'BEARISH' : 'NEUTRAL'));
+
+            header += `🔮 **MOOD**: ${moodIcon} ${moodLabel} (${moodScore})\n`;
+            header += `⚖️ **BREADTH**: 📈 ${bullish} | 📉 ${bearish} | ➖ ${neutral}\n`;
+            
+            const totalBars = 12;
+            const normalized = Math.min(Math.max(moodScore, -100), 100); 
+            const percent = (normalized + 100) / 200; 
+            const filled = Math.round(percent * totalBars);
+            const bar = '▓'.repeat(filled) + '░'.repeat(totalBars - filled);
+            header += `\`[${bar}]\`\n`;
+            header += `━━━━━━━━━━━━━━\n\n`;
+        }
+
+        // B. Catalysts: Eye Catching Coins
+        let msg = header + `🎯 **NEW EYE-CATCHERS (${eyeCatchers.length})**:\n`;
+        
+        // De-duplicate the display list in case multiple strats hit the same coin simultaneously
+        const displayed = new Set();
+        for (const c of eyeCatchers) {
+            if (displayed.has(c.ticker)) continue;
+            displayed.add(c.ticker);
+            const icon = c.type === 'opportunity' ? '⚡' : (c.type === 'risk' ? '⚠️' : '🌊');
+            msg += `• ${icon} **${c.ticker}** _(${c.strategy})_ ${c.bias}\n`;
+        }
+        
+        // C. Scenarios: Current Game Plan
+        if (scenarios) {
+            msg += `\n📝 **MARKET GAME PLAN**\n`;
+            if (scenarios.planA && scenarios.planA.length > 0) {
+                const planATickers = scenarios.planA.map(p => p.ticker).join(', ');
+                msg += `🟢 **Plan A (Longs)**: ${planATickers}\n`;
+            }
+            if (scenarios.planB && scenarios.planB.length > 0) {
+                const planBTickers = scenarios.planB.map(p => p.ticker).join(', ');
+                msg += `🔴 **Plan B (Shorts)**: ${planBTickers}\n`;
+            }
+        }
+        
+        msg += `\n_Throttled Broadcast: 15min cooldown engaged._`;
+
+        // D. Dispatch the single Pulse
+        await this.sendAlert(msg, 'AI_PULSE', { eyeCatcherCount: eyeCatchers.length });
     }
 }
 
