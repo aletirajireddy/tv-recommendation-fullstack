@@ -48,21 +48,22 @@ export default function FusionDashboard() {
   };
 
   return (
-    <div className="flex flex-col w-full p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+    <div className="flex flex-col w-full p-2 px-3 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
       
-      <div className="flex items-center justify-between mb-4 pb-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-            <span className="text-[#3B82F6]">⚡</span> Fusion Command Center
+      <div className="flex items-center justify-between mb-2 py-1" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-baseline gap-3">
+          <h2 className="text-sm font-bold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+            <span className="text-[#3B82F6] text-xs">⚡</span> FUSION COMMAND CENTER
           </h2>
-          <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>Consolidated Stream A, B & C Data</p>
+          <p className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Stream Aggregate Stream A, B & C</p>
         </div>
         <button 
           onClick={fetchFusionData}
-          className="px-4 py-2 rounded-md text-sm transition-colors cursor-pointer"
-          style={{ backgroundColor: 'var(--gray-100)', color: 'var(--accent-primary)', border: '1px solid var(--border-subtle)' }}
+          className="p-1.5 rounded-md hover:bg-[var(--gray-200)] transition-colors cursor-pointer flex items-center justify-center"
+          style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
+          title="Refresh Fusion Data"
         >
-          Refresh Data
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
         </button>
       </div>
 
