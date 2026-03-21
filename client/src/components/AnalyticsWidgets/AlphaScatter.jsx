@@ -18,6 +18,17 @@ export function AlphaScatter() {
         return () => mql.removeEventListener('change', handler);
     }, []);
 
+    const [isPulsing, setIsPulsing] = useState(false);
+    useEffect(() => {
+        if (alphaSquad && alphaSquad.length > 0) {
+            setIsPulsing(false);
+            const trigger = setTimeout(() => setIsPulsing(true), 10);
+            const timer = setTimeout(() => setIsPulsing(false), 1300);
+            return () => { clearTimeout(trigger); clearTimeout(timer); };
+        }
+    }, [alphaSquad]);
+
+
     // The Cross-Reference Filter (Stream A x Stream C)
     const data = useMemo(() => {
         if (!activeScan || !activeScan.results) return [];
@@ -89,7 +100,7 @@ export function AlphaScatter() {
     };
 
     return (
-        <div className={styles.container}>
+        <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             <div className={styles.header}>
                 <div className={styles.title}>
                     <Target size={18} />

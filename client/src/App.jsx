@@ -11,6 +11,7 @@ import { AlphaScatter } from './components/AnalyticsWidgets/AlphaScatter';
 import { TrendFlowChart } from './components/AnalyticsWidgets/TrendFlowChart';
 import RecommendationsFeed from './components/AnalyticsWidgets/RecommendationsFeed';
 import ScenarioBoard from './components/AnalyticsWidgets/ScenarioBoard';
+import { ParticipationPulseWidget } from './components/AnalyticsWidgets/ParticipationPulseWidget';
 import FusionDashboard from './components/AnalyticsWidgets/FusionDashboard';
 
 import { FloatingTimeController } from './components/FloatingTimeController';
@@ -44,10 +45,7 @@ function App() {
                 <ConfluenceGrid />
             </div>
 
-            {/* ROW 1.5: SCENARIO PLANNING (Plan A vs Plan B) */}
-            <div className={styles.analyticsFullRow} style={{ marginBottom: '16px' }}>
-                <ScenarioBoard />
-            </div>
+
 
             {/* ROW 2: ALERTS & RECOMMENDATIONS */}
             <div className={styles.analyticsSplitRow}>
@@ -61,6 +59,11 @@ function App() {
             <div className={styles.analyticsSplitRow}>
                 <TrendFlowChart />
                 <AlphaScatter />
+            </div>
+
+            {/* ROW 4: SCOUT SCREENER (Participation Pulse moved to bottom) */}
+            <div className={styles.analyticsFullRow} style={{ marginTop: '24px' }}>
+                <ParticipationPulseWidget />
             </div>
         </div>
 

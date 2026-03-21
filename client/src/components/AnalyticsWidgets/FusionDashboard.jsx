@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import { formatDistanceToNow, format } from 'date-fns';
 import { SpeedBreakerRuler } from './SpeedBreakerRuler';
-import { ParticipationPulseWidget } from './ParticipationPulseWidget';
+import ScenarioBoard from './ScenarioBoard';
 import { SmartLevelBreaker } from './SmartLevelBreaker';
 
 const SignalLight = ({ active, color, label }) => (
@@ -67,11 +67,11 @@ export default function FusionDashboard() {
       </div>
 
       <div className="flex flex-col xl:flex-row gap-4 mb-4">
-        <div className="w-full xl:w-2/3">
+        <div className="w-full xl:w-1/2">
             <SmartLevelBreaker />
         </div>
-        <div className="w-full xl:w-1/3">
-            <ParticipationPulseWidget />
+        <div className="w-full xl:w-1/2">
+            <ScenarioBoard />
         </div>
       </div>
 

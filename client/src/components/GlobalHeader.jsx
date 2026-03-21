@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
 import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart, Target } from 'lucide-react';
 import styles from './GlobalHeader.module.css';
@@ -38,9 +38,19 @@ export function GlobalHeader() {
         const healthPoll = setInterval(() => {
             fetchStreamsHealth();
         }, 10000);
-
         return () => clearInterval(healthPoll);
     }, []);
+
+    // Animation Pulse Trigger for Header
+    const [isPulsing, setIsPulsing] = useState(false);
+    useEffect(() => {
+        if (activeScan) {
+            setIsPulsing(false);
+            const trigger = setTimeout(() => setIsPulsing(true), 10);
+            const timer = setTimeout(() => setIsPulsing(false), 1300);
+            return () => { clearTimeout(trigger); clearTimeout(timer); };
+        }
+    }, [activeScan?.id]);
 
     // ... existing playback effect ...
     useEffect(() => {
@@ -75,7 +85,7 @@ export function GlobalHeader() {
     // ... existing rendering logic ...
 
     return (
-        <header className={styles.header}>
+        <header className={`${styles.header} ${isPulsing ? 'animate-header-flow' : ''}`}>
             <div className={styles.deckSection}>
                 <HeaderStatsDeck />
             </div>

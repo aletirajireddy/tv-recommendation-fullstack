@@ -87,6 +87,16 @@ export default function RecommendationsFeed() {
     const { activeScan, strategyLogs, fetchStrategyLogs, useSmartLevelsContext } = useTimeStore();
     const [activeTab, setActiveTab] = React.useState('strategies');
 
+    const [isPulsing, setIsPulsing] = useState(false);
+    useEffect(() => {
+        if (activeScan) {
+            setIsPulsing(false);
+            const trigger = setTimeout(() => setIsPulsing(true), 10);
+            const timer = setTimeout(() => setIsPulsing(false), 1300);
+            return () => { clearTimeout(trigger); clearTimeout(timer); };
+        }
+    }, [activeScan?.id]);
+
     // GENIE SMART: Derive Recommendations on the Client Side
     const recommendations = useMemo(() => {
         if (!activeScan || !activeScan.results) return [];
@@ -134,7 +144,7 @@ export default function RecommendationsFeed() {
     }, [activeTab]);
 
     return (
-        <div className={styles.container}>
+        <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             {/* ... header ... */}
             <div className={styles.header}>
                 <div className={styles.titleGroup}>

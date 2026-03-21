@@ -24,6 +24,16 @@ export function ParticipationPulseWidget() {
         fetchParticipationPulse();
     }, []);
 
+    const [isPulsing, setIsPulsing] = useState(false);
+    useEffect(() => {
+        if (participationPulse && participationPulse.length > 0) {
+            setIsPulsing(false);
+            const trigger = setTimeout(() => setIsPulsing(true), 10);
+            const timer = setTimeout(() => setIsPulsing(false), 1300);
+            return () => { clearTimeout(trigger); clearTimeout(timer); };
+        }
+    }, [participationPulse]);
+
     const chartData = React.useMemo(() => {
         if (!participationPulse || participationPulse.length === 0) return [];
         return participationPulse.map(p => {
@@ -84,7 +94,7 @@ export function ParticipationPulseWidget() {
     };
 
     return (
-        <div className="flex flex-col w-full p-4 h-full rounded-lg shadow-sm" style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+        <div className={`flex flex-col w-full p-4 h-full rounded-lg shadow-sm ${isPulsing ? 'animate-widget-glow' : ''}`} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
             
             <div className="flex items-center justify-between mb-2 pb-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <div className="flex items-center gap-2">

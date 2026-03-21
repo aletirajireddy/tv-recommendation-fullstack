@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import { ArrowDown, Minus, ArrowUp, Anvil, Zap } from 'lucide-react';
 import styles from './MarketStructureWidget.module.css';
@@ -16,6 +16,16 @@ import styles from './MarketStructureWidget.module.css';
  */
 export const MarketStructureWidget = () => {
     const { activeScan, useSmartLevelsContext } = useTimeStore();
+
+    const [isPulsing, setIsPulsing] = useState(false);
+    useEffect(() => {
+        if (activeScan) {
+            setIsPulsing(false);
+            const trigger = setTimeout(() => setIsPulsing(true), 10);
+            const timer = setTimeout(() => setIsPulsing(false), 1300);
+            return () => { clearTimeout(trigger); clearTimeout(timer); };
+        }
+    }, [activeScan?.id]);
 
     const buckets = useMemo(() => {
         const groups = {
@@ -73,7 +83,7 @@ export const MarketStructureWidget = () => {
     if (!activeScan) return <div className={styles.loading}>Waiting for Scan Data...</div>;
 
     return (
-        <div className={styles.container}>
+        <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             {/* Header for Consistence */}
             <div className={styles.headerTitle}>
                 <h3>MARKET STRUCTURE DISTRIBUTION</h3>

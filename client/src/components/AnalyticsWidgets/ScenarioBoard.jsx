@@ -30,6 +30,16 @@ const ScenarioBoard = () => {
         // Re-fetch only when a new scan arrives (fresh data) or toggle changes
     }, [activeScan, useSmartLevelsContext]);
 
+    const [isPulsing, setIsPulsing] = useState(false);
+    useEffect(() => {
+        if (activeScan) {
+            setIsPulsing(false);
+            const trigger = setTimeout(() => setIsPulsing(true), 10);
+            const timer = setTimeout(() => setIsPulsing(false), 1300);
+            return () => { clearTimeout(trigger); clearTimeout(timer); };
+        }
+    }, [activeScan?.id]);
+
     const ScenarioColumn = ({ title, type, items, color }) => (
         <div className={styles.column} style={{ borderColor: color }}>
             <div className={styles.columnHeader} style={{ backgroundColor: color }}>
@@ -71,7 +81,7 @@ const ScenarioBoard = () => {
     );
 
     return (
-        <div className={styles.container}>
+        <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             <div className={styles.boardHeader}>
                 <div className={styles.headerLeft}>
                     <span className={styles.headerIcon}>⚔️</span>

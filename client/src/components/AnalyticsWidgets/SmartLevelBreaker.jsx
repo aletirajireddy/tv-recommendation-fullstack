@@ -18,6 +18,16 @@ export const SmartLevelBreaker = () => {
         return () => mql.removeEventListener('change', handler);
     }, []);
 
+    const [isPulsing, setIsPulsing] = useState(false);
+    useEffect(() => {
+        if (activeScan) {
+            setIsPulsing(false);
+            const trigger = setTimeout(() => setIsPulsing(true), 10);
+            const timer = setTimeout(() => setIsPulsing(false), 1300);
+            return () => { clearTimeout(trigger); clearTimeout(timer); };
+        }
+    }, [activeScan?.id]);
+
     const data = useMemo(() => {
         if (!activeScan || !activeScan.results) return [];
 
@@ -152,7 +162,7 @@ export const SmartLevelBreaker = () => {
     };
 
     return (
-        <div className={styles.container}>
+        <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             <div className={styles.header}>
                 <div className={styles.title}>
                     <Navigation size={18} style={{ color: 'var(--accent-primary)' }} />

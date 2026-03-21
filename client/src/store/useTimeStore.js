@@ -289,7 +289,6 @@ export const useTimeStore = create((set, get) => ({
         const controller = new AbortController();
         set({
             isLoading: true,
-            activeScan: null,
             abortControllers: { ...abortControllers, loadScan: controller }
         });
 

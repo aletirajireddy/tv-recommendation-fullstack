@@ -23,6 +23,16 @@ export function TrendFlowChart() {
         toMoodFlowData(analyticsData?.time_spread),
         [analyticsData]);
 
+    const [isPulsing, setIsPulsing] = useState(false);
+    useEffect(() => {
+        if (analyticsData) {
+            setIsPulsing(false);
+            const trigger = setTimeout(() => setIsPulsing(true), 10);
+            const timer = setTimeout(() => setIsPulsing(false), 1300);
+            return () => { clearTimeout(trigger); clearTimeout(timer); };
+        }
+    }, [analyticsData]);
+
     const handleRefresh = (e) => {
         e.stopPropagation();
         refreshAll();
@@ -31,7 +41,7 @@ export function TrendFlowChart() {
     if (!data || data.length === 0) return null;
 
     return (
-        <div className={styles.container}>
+        <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             <div className={styles.header}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <BarChart2 size={18} />
