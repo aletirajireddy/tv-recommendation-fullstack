@@ -1048,8 +1048,8 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
             });
         });
 
-        // Optimization: return only the last 50 points to save bandwidth on dashboard
-        res.json({ success: true, timeline: timeline.slice(-60) });
+        // Optimization: return a larger set (500 points) to support 2H+ lookbacks on the wide dashboard
+        res.json({ success: true, timeline: timeline.slice(-500) });
 
     } catch (e) {
         console.error("Pulse Analytics Error:", e);

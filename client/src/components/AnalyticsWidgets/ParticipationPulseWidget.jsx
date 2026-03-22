@@ -11,6 +11,7 @@ export function ParticipationPulseWidget() {
         participationPulse, fetchParticipationPulse, lookbackHours, setLookbackHours, pulseLoading
     } = useTimeStore();
     const [isMobile, setIsMobile] = useState(false);
+    const [rangeMinutes, setRangeMinutes] = useState(45); // Default 45m zoom for wide layout
 
     useEffect(() => {
         const mql = window.matchMedia('(pointer: coarse)');
@@ -36,13 +37,29 @@ export function ParticipationPulseWidget() {
 
     const chartData = React.useMemo(() => {
         if (!participationPulse || participationPulse.length === 0) return [];
-        return participationPulse.map(p => {
+        
+        // Filter by selected range RELATIVE to the last data point's time (prevents clock drift issues)
+        const lastPoint = participationPulse[participationPulse.length - 1];
+        const lastTime = new Date(lastPoint.time).getTime();
+        const cutoff = lastTime - (rangeMinutes * 60 * 1000);
+        
+        const filtered = participationPulse.filter(p => new Date(p.time).getTime() >= cutoff);
+        
+        // If range is extremely small (0-3 points), show at least 15 points to keep graph stability
+        let dataToProcess = filtered.length > 3 ? filtered : participationPulse.slice(-15);
+
+        // FATAL FIX: Recharts needs at least 2 points to draw anything. 
+        // If we only have 1 point (scout just started), clone it with a 1ms offset to force a render.
+        if (dataToProcess.length === 1) {
+            const clone = { ...dataToProcess[0], time: new Date(new Date(dataToProcess[0].time).getTime() + 1000).toISOString() };
+            dataToProcess = [dataToProcess[0], clone];
+        }
+
+        return dataToProcess.map(p => {
             const base = p.active_count || 0;
             const rawBull = p.bullish_heat || 0;
             const rawBear = p.bearish_heat || 0;
             
-            // Dynamic scaling to prevent the oscillator from blowing out the chart if heat > 300
-            // We want the peak visual mountain to be around 25-30 units max visually
             const scaler = 10; 
             const scaledBull = Math.min(rawBull / scaler, 40);
             const scaledBear = Math.min(rawBear / scaler, 40);
@@ -50,13 +67,14 @@ export function ParticipationPulseWidget() {
             return {
                 ...p,
                 timeLabel: format(new Date(p.time), 'HH:mm'),
-                bull_range: [base, base + scaledBull],     // Sits ON TOP of the Pink Line
-                bear_range: [base - scaledBear, base],     // Hangs BELOW the Pink Line
-                scaled_bull: scaledBull,
-                scaled_bear: scaledBear
+                bull_range: [base, base + scaledBull],     
+                bear_range: [base - scaledBear, base],     
+                // Flattened props for YAxis domain calculation safety
+                y_max: base + scaledBull + 5,
+                y_min: base - scaledBear - 5
             };
         });
-    }, [participationPulse]);
+    }, [participationPulse, rangeMinutes]);
 
     if(chartData.length === 0) return null;
 
@@ -102,7 +120,19 @@ export function ParticipationPulseWidget() {
                     <h3 className="text-sm font-bold uppercase" style={{ color: 'var(--text-secondary)' }}>Scout Screener Engine</h3>
                 </div>
                 
-                <div className="flex gap-4">
+                <div className="flex gap-4 items-center">
+                    <div className="flex items-center bg-[var(--bg-app)] rounded-md p-0.5 border border-[var(--border-subtle)] mr-2">
+                        {[15, 30, 45, 60, 120].map(m => (
+                            <button
+                                key={m}
+                                onClick={() => setRangeMinutes(m)}
+                                className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${rangeMinutes === m ? 'bg-[#FF2E93] text-white' : 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]'}`}
+                            >
+                                {m >= 60 ? `${m/60}H` : `${m}M`}
+                            </button>
+                        ))}
+                    </div>
+
                     <div className="flex flex-col items-end">
                         <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Active Scanned</span>
                         <span className="text-lg font-bold font-mono text-[#FF2E93]">{latest.active_count || 0}</span>
@@ -143,37 +173,41 @@ export function ParticipationPulseWidget() {
                             tick={{ fontSize: 9, fill: 'var(--text-tertiary)' }}
                             minTickGap={30}
                         />
-                        {/* Hide YAxis but let it calculate boundaries correctly so mountains don't crop off top of container */}
-                        <YAxis hide={true} domain={['auto', 'auto']} />
+                        {/* Show YAxis slightly padded so mountains don't crop */}
+                        <YAxis hide={true} domain={['dataMin', 'dataMax']} />
                         
                         <Tooltip 
                             content={<CustomTooltip />} 
-                            cursor={{ strokeDasharray: '3 3', stroke: 'rgba(255,255,255,0.1)' }}
+                            cursor={{ strokeDasharray: '3 3', stroke: 'rgba(255,46,147,0.3)' }}
                             isAnimationActive={false}
                             trigger={isMobile ? 'click' : 'hover'}
+                            shared={true}
                         />
                         
-                        {/* 1. Bearish Valley (Hangs identically below pink line) */}
+                        {/* 1. Bearish Valley */}
                         <Area 
-                            type="monotone" 
+                            type="linear" 
                             dataKey="bear_range" 
                             stroke="none" 
                             fill="url(#colorBear)" 
                             isAnimationActive={false}
                         />
 
-                        {/* 2. Bullish Mountain (Sits identically on top of pink line) */}
+                        {/* 2. Bullish Mountain */}
                         <Area 
-                            type="monotone" 
+                            type="linear" 
                             dataKey="bull_range" 
                             stroke="none" 
                             fill="url(#colorBull)" 
                             isAnimationActive={false}
                         />
 
-                        {/* 3. The Baseline Active Count (Pink Line seamlessly separating the mountains/valleys) */}
+                        {/* 3. The Baseline Active Count (Hidden lines to help YAxis domain) */}
+                        <Line dataKey="y_max" hide stroke="none" />
+                        <Line dataKey="y_min" hide stroke="none" />
+
                         <Line 
-                            type="monotone" 
+                            type="linear" 
                             dataKey="active_count" 
                             stroke="#FF2E93" 
                             strokeWidth={3} 
