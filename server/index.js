@@ -278,6 +278,185 @@ function analyzeProactiveStrategies(payload) {
     );
 }
 
+/**
+ * 🦅 Phase 39: Intelligent Watchlist & Prune Engine (The "5+2" Rule)
+ */
+function generateScannerFeedback(clientWatchlistCount = -1) {
+    let activeList = [];
+    let pruneList = [];
+    let newGraduates = [];
+
+    const now = Date.now();
+    const oneHourAgo = new Date(now - 60 * 60 * 1000).toISOString();
+    const eightHoursAgo = new Date(now - 8 * 60 * 60 * 1000).toISOString();
+
+    // --- 1. THE 8-HOUR STABILITY GUARD ---
+    const stabilityCheck = db.prepare(`
+        SELECT COUNT(*) as count, MIN(timestamp) as oldest 
+        FROM scans 
+        WHERE timestamp > ?
+    `).get(eightHoursAgo);
+    const isStable = stabilityCheck && stabilityCheck.count > 100;
+
+    // --- 2. ZERO-STATE REHYDRATION ---
+    if (clientWatchlistCount === 0) {
+        console.warn(`[WATCHLIST-ENGINE] 🚨 Catastrophic 0-Count Detected. Initiating Rehydration...`);
+        const lastGoodLog = db.prepare(`
+            SELECT payload_json 
+            FROM market_context_logs 
+            WHERE watchlist_count > 0 
+            ORDER BY timestamp DESC LIMIT 1
+        `).get();
+
+        if (lastGoodLog) {
+            try {
+                const payload = JSON.parse(lastGoodLog.payload_json);
+                if (payload.watchlist_active_snapshot && Array.isArray(payload.watchlist_active_snapshot)) {
+                    const recoveredTargets = payload.watchlist_active_snapshot.map(w => w.full).filter(Boolean);
+                    console.log(`[WATCHLIST-ENGINE] 💧 Rehydrated ${recoveredTargets.length} coins from history.`);
+                    return {
+                        ai_suggestion: "REHYDRATION",
+                        active_list: recoveredTargets,
+                        prune_list: [],
+                        new_graduates: [],
+                        master_targets: recoveredTargets
+                    };
+                }
+            } catch (e) {
+                console.error("[WATCHLIST-ENGINE] Rehydration parsing failed", e);
+            }
+        }
+    }
+
+    // --- 3. GET HISTORICAL PICKS (Last 60m) ---
+    const historicalPicks = db.prepare(`
+        SELECT DISTINCT exchange, ticker 
+        FROM area1_scout_logs 
+        WHERE type = 'STABLE' AND timestamp > ?
+    `).all(oneHourAgo);
+    const historicalTargetSet = new Set(historicalPicks.map(p => `${p.exchange}:${p.ticker}`));
+
+    // --- 4. RELATIVE VOLUME CALCULATION ---
+    const cutoff24h = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    const activeVolumes = db.prepare(`
+        SELECT ticker, raw_data
+        FROM unified_alerts
+        WHERE timestamp > ?
+        GROUP BY ticker
+        HAVING MAX(timestamp)
+    `).all(cutoff24h);
+
+    const volumeMap = {};
+    let totalVol = 0;
+    let volCount = 0;
+
+    activeVolumes.forEach(row => {
+        try {
+            const raw = JSON.parse(row.raw_data);
+            let v = null;
+            if (raw.today_volume !== undefined) v = parseFloat(raw.today_volume);
+            else if (raw.volume && raw.volume.day_vol !== undefined && raw.volume.day_vol !== null) v = parseFloat(raw.volume.day_vol);
+
+            if (v && !isNaN(v)) {
+                volumeMap[row.ticker] = v;
+                totalVol += v;
+                volCount++;
+            }
+        } catch (e) { }
+    });
+
+    const avgVolume = volCount > 0 ? (totalVol / volCount) : 0;
+    const ghostThreshold = avgVolume * 0.15; // Ghost = trades < 15% of cohort average
+
+    // --- 5. EXTRACT MACRO SCAN ---
+    const latestScan = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
+    let scanResults = [];
+    if (latestScan) {
+        const scanData = JSON.parse(latestScan.raw_data);
+        if (scanData.results) scanResults = scanData.results;
+    }
+
+    // Rank by Genie Score DESC
+    scanResults.sort((a, b) => {
+        const scoreA = (a.data || a).score || 0;
+        const scoreB = (b.data || b).score || 0;
+        return scoreB - scoreA;
+    });
+
+    const PERMANENT_MAJORS = ['BINANCE:BTCUSDT.P', 'BINANCE:ETHUSDT.P'];
+    const protectedAltcoins = new Set();
+
+    // Identify Top 5 Altcoins to protect
+    let altCount = 0;
+    for (const r of scanResults) {
+        const fullTicker = r.datakey || `BINANCE:${r.ticker}`;
+        if (!PERMANENT_MAJORS.includes(fullTicker)) {
+            protectedAltcoins.add(fullTicker);
+            altCount++;
+        }
+        if (altCount >= 5) break;
+    }
+
+    const ghostList = [];
+
+    // Process Candidates
+    scanResults.forEach(item => {
+        const d = item.data || item;
+        const cleanTicker = item.ticker;
+        const fullTicker = item.datakey || `BINANCE:${cleanTicker}`;
+
+        activeList.push(fullTicker);
+
+        const isProtected = PERMANENT_MAJORS.includes(fullTicker) || protectedAltcoins.has(fullTicker);
+
+        let shouldPrune = false;
+        let pruneReason = "";
+        if (!isProtected) {
+            // Core logic
+            if (d.score <= 30) {
+                shouldPrune = true;
+                pruneReason = "Low Score";
+            } else if (d.freeze === 1) {
+                shouldPrune = true;
+                pruneReason = "Frozen";
+            }
+
+            // Intelligent Volume Pruning
+            if (isStable && !shouldPrune) {
+                const coinVol = volumeMap[cleanTicker];
+                if (coinVol !== undefined && coinVol < ghostThreshold) {
+                    shouldPrune = true;
+                    pruneReason = "Ghost Volume";
+                }
+            }
+        }
+
+        if (shouldPrune) {
+            pruneList.push(fullTicker);
+            ghostList.push({ ticker: cleanTicker, reason: pruneReason });
+        }
+    });
+
+    newGraduates = Array.from(historicalTargetSet).filter(t => !activeList.includes(t));
+    const finalSet = new Set([...activeList, ...newGraduates, ...PERMANENT_MAJORS]);
+
+    // Exclude prunes
+    pruneList.forEach(p => finalSet.delete(p));
+    // Super-protect
+    PERMANENT_MAJORS.forEach(p => finalSet.add(p));
+    protectedAltcoins.forEach(p => finalSet.add(p));
+
+    return {
+        ai_suggestion: "TRACKING_5+2",
+        active_list: activeList,
+        prune_list: [...new Set(pruneList)],
+        ghost_list: ghostList,
+        new_graduates: newGraduates,
+        master_targets: Array.from(finalSet)
+    };
+}
+
+
 // 3. QUALIFIED PICK (Stream B - Micro / Test Log)
 // Writes to 'area1_scout_logs' for testing and shortlisting without colliding Stream A
 app.post('/qualified-pick', (req, res) => {
@@ -299,49 +478,19 @@ app.post('/qualified-pick', (req, res) => {
         io.emit('ledger-update', { ticker, price, signal: type });
 
         // 2. GENERATE FEEDBACK LOOP FOR COIN SCANNER (Stateful & Cumulative)
-        let activeList = [];
-        let pruneList = [];
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-
-        // A. Get Historical Stable Picks (Last 60 Minutes)
-        const historicalPicks = db.prepare(`
-            SELECT DISTINCT exchange, ticker 
-            FROM area1_scout_logs 
-            WHERE type = 'STABLE' AND timestamp > ?
-        `).all(oneHourAgo);
-        const historicalTargetSet = new Set(historicalPicks.map(p => `${p.exchange}:${p.ticker}`));
-
-        // B. Cross-reference with Stream A (Macro Scans)
-        const latestScan = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
-        if (latestScan) {
-            const scanData = JSON.parse(latestScan.raw_data);
-            if (scanData.results && scanData.results.length > 0) {
-                scanData.results.forEach(item => {
-                    const d = item.data || item;
-                    const cleanTicker = item.ticker;
-                    const fullTicker = item.datakey || `BINANCE:${cleanTicker}`;
-
-                    activeList.push(fullTicker);
-
-                    if (d.score <= 30 || d.freeze === 1) {
-                        pruneList.push(fullTicker);
-                    }
-                });
-            }
-        }
-
-        // C. Construct Cumulative Graduate List
-        const currentFullTicker = `${exchange}:${ticker}`;
-        historicalTargetSet.add(currentFullTicker);
-        const newGraduates = Array.from(historicalTargetSet).filter(t => !activeList.includes(t));
+        // [PHASE 39]: 5+2 Engine
+        const feedback = generateScannerFeedback(total_market_count);
 
         res.json({
             message: "Saved to Log",
-            ai_suggestion: "TRACKING",
-            active_list: activeList,
-            prune_list: [...new Set(pruneList)],
-            new_graduates: newGraduates,
-            master_targets: [...new Set([...activeList, ...newGraduates])]
+            success: true,
+            status: 'success',
+            ai_suggestion: feedback.ai_suggestion,
+            active_list: feedback.active_list,
+            prune_list: feedback.prune_list,
+            ghost_list: feedback.ghost_list,
+            new_graduates: feedback.new_graduates,
+            master_targets: feedback.master_targets
         });
 
     } catch (e) {
@@ -360,11 +509,11 @@ app.get('/api/scan/:id', (req, res) => {
         if (!row) return res.status(404).json({ error: 'Scan not found' });
 
         const payload = JSON.parse(row.raw_data);
-        
+
         // --- ENRICHMENT: Inject Active Smart Levels ---
         const scanTime = payload.timestamp ? new Date(payload.timestamp) : new Date();
         const cutoff = new Date(scanTime.getTime() - (24 * 60 * 60 * 1000)).toISOString();
-        
+
         // 1. Get the latest webhook alert for each ticker in the last 24h
         const activeSmartLevels = db.prepare(`
             SELECT ticker, raw_data, timestamp
@@ -373,14 +522,14 @@ app.get('/api/scan/:id', (req, res) => {
             GROUP BY ticker
             HAVING MAX(timestamp)
         `).all(cutoff, scanTime.toISOString());
-        
+
         const levelMap = {};
-        
+
         // Helper to extract levels from the complex JSON
         const extractLevels = (slObj) => {
             const list = [];
             if (!slObj) return list;
-            
+
             // Daily Logic
             if (slObj.daily_logic) {
                 if (slObj.daily_logic.base_supp?.p) list.push({ type: 'Daily Support', price: parseFloat(slObj.daily_logic.base_supp.p) });
@@ -395,7 +544,7 @@ app.get('/api/scan/:id', (req, res) => {
             }
             // Mega Spot
             if (slObj.mega_spot?.p) list.push({ type: 'Mega Spot Support', price: parseFloat(slObj.mega_spot.p) });
-            
+
             return list;
         };
 
@@ -405,9 +554,9 @@ app.get('/api/scan/:id', (req, res) => {
                 if (raw.smart_levels) {
                     levelMap[row.ticker] = extractLevels(raw.smart_levels);
                 }
-            } catch(e) {}
+            } catch (e) { }
         });
-        
+
         // 2. Extract Volume Data from unified Webhooks
         const activeVolumes = db.prepare(`
             SELECT ticker, raw_data
@@ -416,7 +565,7 @@ app.get('/api/scan/:id', (req, res) => {
             GROUP BY ticker
             HAVING MAX(timestamp)
         `).all(cutoff, scanTime.toISOString());
-        
+
         const volumeMap = {};
         activeVolumes.forEach(row => {
             try {
@@ -426,9 +575,9 @@ app.get('/api/scan/:id', (req, res) => {
                 } else if (raw.volume && raw.volume.day_vol !== undefined && raw.volume.day_vol !== null) {
                     volumeMap[row.ticker] = raw.volume.day_vol;
                 }
-            } catch(e) {}
+            } catch (e) { }
         });
-        
+
         if (payload.results && Array.isArray(payload.results)) {
             payload.results.forEach(r => {
                 const t = r.data ? r.data.ticker : r.ticker;
@@ -529,13 +678,13 @@ app.get('/api/analytics/pulse', (req, res) => {
 
         minuteBuckets.forEach(bucket => {
             const bucketTime = new Date(bucket.batch_time).getTime();
-            
+
             if (!currentCluster) {
                 currentCluster = { ...bucket, tickers: new Set(bucket.tickers ? bucket.tickers.split(',') : []) };
             } else {
                 const prevTime = new Date(currentCluster.batch_time).getTime();
                 const diffMinutes = (bucketTime - prevTime) / 1000 / 60;
-                
+
                 if (diffMinutes <= 3) {
                     // Merge into current cluster
                     currentCluster.batch_time = bucket.batch_time; // shift end time
@@ -544,11 +693,11 @@ app.get('/api/analytics/pulse', (req, res) => {
                     currentCluster.tech_count += (bucket.tech_count || 0);
                     currentCluster.bull_count += (bucket.bull_count || 0);
                     currentCluster.bear_count += (bucket.bear_count || 0);
-                    
+
                     // Simple rolling average for bias/mom
                     currentCluster.avg_bias = ((currentCluster.avg_bias || 0) + (bucket.avg_bias || 0)) / 2;
                     currentCluster.avg_mom = ((currentCluster.avg_mom || 0) + (bucket.avg_mom || 0)) / 2;
-                    
+
                     if (bucket.tickers) {
                         bucket.tickers.split(',').forEach(t => currentCluster.tickers.add(t));
                     }
@@ -568,7 +717,7 @@ app.get('/api/analytics/pulse', (req, res) => {
             const count = r.count;
             const uniqueCoins = Array.from(r.tickers);
             const avgBias = r.avg_bias || 0;
-            
+
             let biasLabel = 'NEUTRAL';
             if (avgBias >= 0.5) biasLabel = 'BULLISH';
             else if (avgBias <= -1.0) biasLabel = 'BEARISH';
@@ -577,12 +726,12 @@ app.get('/api/analytics/pulse', (req, res) => {
                 else if (avgBias < -0.2) biasLabel = 'STRONG BEAR';
             }
 
-            const startTimeStr = (!r.min_time || /^ *\d+ *$/.test(r.min_time.toString())) 
-                ? parseInt(r.min_time || Date.now(), 10) 
+            const startTimeStr = (!r.min_time || /^ *\d+ *$/.test(r.min_time.toString()))
+                ? parseInt(r.min_time || Date.now(), 10)
                 : (r.min_time.endsWith('Z') ? r.min_time : r.min_time + 'Z');
 
-            const endTimeStr = (!r.batch_time || /^ *\d+ *$/.test(r.batch_time.toString())) 
-                ? parseInt(r.batch_time || Date.now(), 10) 
+            const endTimeStr = (!r.batch_time || /^ *\d+ *$/.test(r.batch_time.toString()))
+                ? parseInt(r.batch_time || Date.now(), 10)
                 : (r.batch_time.endsWith('Z') ? r.batch_time : r.batch_time + 'Z');
 
             const startTime = new Date(startTimeStr);
@@ -723,7 +872,7 @@ app.get('/api/analytics/scenarios', (req, res) => {
                 GROUP BY ticker
                 HAVING MAX(timestamp)
             `).all(cutoff24);
-            
+
             // Helper to extract
             const extractLevels = (slObj) => {
                 const list = [];
@@ -746,7 +895,7 @@ app.get('/api/analytics/scenarios', (req, res) => {
                     if (raw.smart_levels) {
                         levelMap[row.ticker] = extractLevels(raw.smart_levels);
                     }
-                } catch(e){}
+                } catch (e) { }
             });
         }
 
@@ -761,10 +910,10 @@ app.get('/api/analytics/scenarios', (req, res) => {
             const netTrend = parseFloat(d.netTrend || 0);
             const vol = d.volSpike || 0;
             const ticker = d.ticker;
-            
+
             let isSmartSupport = false;
             let isSmartResist = false;
-            
+
             // Check Smart Levels proximity if enabled
             if (useSmartLevels && levelMap[ticker]) {
                 const currentPrice = d.close;
@@ -933,47 +1082,25 @@ app.post('/api/market-context', (req, res) => {
         );
 
         // --- STATEFUL SYNC FEEDBACK LOOP (Resilience) ---
-        let activeList = [];
-        let pruneList = [];
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-
-        // 1. Get Graduates from last 60m
-        const historicalPicks = db.prepare(`
-            SELECT DISTINCT exchange, ticker 
-            FROM area1_scout_logs 
-            WHERE type = 'STABLE' AND timestamp > ?
-        `).all(oneHourAgo);
-        const historicalTargetSet = new Set(historicalPicks.map(p => `${p.exchange}:${p.ticker}`));
-
-        // 2. Get Macro Watchlist
-        const latestScan = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
-        if (latestScan) {
-            const scanData = JSON.parse(latestScan.raw_data);
-            if (scanData.results) {
-                scanData.results.forEach(item => {
-                    const d = item.data || item;
-                    const fullTicker = item.datakey || `BINANCE:${item.ticker}`;
-                    activeList.push(fullTicker);
-                    if (d.score <= 30 || d.freeze === 1) pruneList.push(fullTicker);
-                });
-            }
-        }
-
-        const newGraduates = Array.from(historicalTargetSet).filter(t => !activeList.includes(t));
+        // [PHASE 39]: 5+2 Engine
+        const feedback = generateScannerFeedback(payload.watchlist_count || 0);
 
         // Optionally emit to frontend for live dashboard updates
         io.emit('market-context-update', payload);
 
         console.log(`[TELEMETRY] 📡 Received Context @ ${now} | Screener: ${payload.screener_total_count} | Watchlist: ${payload.watchlist_count}`);
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: "Market context telemetry saved.",
-            active_list: activeList,
-            prune_list: [...new Set(pruneList)],
-            new_graduates: newGraduates,
-            master_targets: [...new Set([...activeList, ...newGraduates])]
+            ai_suggestion: feedback.ai_suggestion,
+            active_list: feedback.active_list,
+            prune_list: feedback.prune_list,
+            ghost_list: feedback.ghost_list,
+            new_graduates: feedback.new_graduates,
+            master_targets: feedback.master_targets
         });
+
 
     } catch (e) {
         console.error("Market Context Error:", e);
@@ -1024,17 +1151,17 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
         rows.forEach(row => {
             const data = JSON.parse(row.payload_json);
             const currentSnap = data.screener_visible_snapshot || [];
-            
+
             let bullishHeat = 0;
             let bearishHeat = 0;
 
             currentSnap.forEach(coinData => {
                 const mom = parseFloat(coinData['Mom Score'] || coinData['ROC %'] || coinData['Mom'] || 0);
                 const trend = parseFloat(coinData['Net Trend Signal'] || coinData['Net Trend'] || 0);
-                
+
                 // Synthesize Heat Score from pure momentum
-                const heat = (mom * 5) + (trend * 0.5); 
-                
+                const heat = (mom * 5) + (trend * 0.5);
+
                 if (heat > 0) bullishHeat += heat;
                 else if (heat < 0) bearishHeat += Math.abs(heat);
             });
@@ -1086,7 +1213,7 @@ app.get('/api/analytics/alpha-squad', (req, res) => {
                         bias: row.direction > 0 ? 'BULL' : (row.direction < 0 ? 'BEAR' : 'NEUTRAL')
                     });
                 }
-            } catch(e) {}
+            } catch (e) { }
         });
 
         const alphaSquad = [];
@@ -1095,30 +1222,30 @@ app.get('/api/analytics/alpha-squad', (req, res) => {
             if (events.length >= 2) {
                 const first = events[0];
                 const last = events[events.length - 1];
-                
+
                 let volDelta = last.vol - first.vol;
                 if (volDelta < 0) volDelta = last.vol; // Midnight reset handler
-                
+
                 const momDelta = last.mom - first.mom;
                 const hoursElapsed = (last.time - first.time) / (1000 * 60 * 60);
-                
+
                 // Base Condition: Increasing Volume AND Increasing Momentum
                 if (volDelta > 0 && Math.abs(momDelta) >= 1.0) {
-                   alphaSquad.push({
-                       ticker,
-                       volDelta,
-                       momDelta,
-                       bias: last.bias,
-                       hoursElapsed: hoursElapsed > 0 ? hoursElapsed.toFixed(2) : 0.1,
-                       eventCount: events.length
-                   });
+                    alphaSquad.push({
+                        ticker,
+                        volDelta,
+                        momDelta,
+                        bias: last.bias,
+                        hoursElapsed: hoursElapsed > 0 ? hoursElapsed.toFixed(2) : 0.1,
+                        eventCount: events.length
+                    });
                 }
             }
         }
 
         alphaSquad.sort((a, b) => b.volDelta - a.volDelta);
         res.json(alphaSquad);
-    } catch(e) {
+    } catch (e) {
         console.error("Alpha Squad Error:", e);
         res.status(500).json({ error: e.message });
     }
@@ -1130,19 +1257,19 @@ app.get('/api/analytics/alpha-squad', (req, res) => {
 app.post('/api/webhook/smart-levels', (req, res) => {
     try {
         const payload = req.body;
-        
+
         if (!payload || !payload.ticker) {
             return res.status(400).json({ error: "Invalid payload missing ticker" });
         }
-        
+
         const ticker = payload.ticker;
         const price = parseFloat(payload.price || 0);
-        
+
         // TradingView's {{time}} placeholder outputs the BAR OPEN time (e.g. 09:35 for a 5m bar).
         // If the alert triggers at 09:38, the UI sees it as "3 minutes ago" instantly. 
         // To fix this discrepancy, we force the timestamp to the exact Server Receive Time for all live webhooks.
         const parsedTimestamp = new Date().toISOString();
-        
+
         // Phase 9: Ingestion Routing Switch
         if (typeof payload.bar_move_pct !== 'undefined') {
             // Path A: Institutional Interest Payload
@@ -1155,14 +1282,14 @@ app.post('/api/webhook/smart-levels', (req, res) => {
                 INSERT OR IGNORE INTO institutional_interest_events (ticker, timestamp, price, direction, bar_move_pct, today_change_pct, today_volume, raw_data)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `).run(ticker, parsedTimestamp, price, direction, bar_move_pct, today_change_pct, today_volume, JSON.stringify(payload));
-            
+
             console.log(`[INST-INTEREST] 🏦 Institutional Webhook: ${ticker} | Dir: ${direction} | BarMove: ${bar_move_pct.toFixed(2)}%`);
             io.emit('institutional-interest-update', { ticker, direction, timestamp: parsedTimestamp });
         } else {
             // Path B: Legacy Smart Levels (default fallback)
             const direction = payload.momentum?.direction !== undefined ? parseInt(payload.momentum.direction, 10) : (payload.direction || 0);
             const roc_pct = payload.momentum?.roc_pct !== undefined ? parseFloat(payload.momentum.roc_pct) : 0.0;
-            
+
             db.prepare(`
                 INSERT OR IGNORE INTO smart_level_events (ticker, timestamp, price, direction, roc_pct, raw_data)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -1174,11 +1301,11 @@ app.post('/api/webhook/smart-levels', (req, res) => {
                 roc_pct,
                 JSON.stringify(payload)
             );
-            
+
             console.log(`[SMART-LEVELS] 🧠 Alert Received @ ${parsedTimestamp} | Ticker: ${ticker} | Payload Time: ${payload.timestamp || 'N/A'}`);
             io.emit('smart-level-update', { ticker, direction, timestamp: parsedTimestamp });
         }
-        
+
         res.json({ success: true, ticker });
     } catch (e) {
         console.error("Stream C Webhook Error:", e);
@@ -1236,7 +1363,7 @@ app.get('/api/fusion/dashboard', (req, res) => {
             WHERE timestamp > ?
             ORDER BY timestamp DESC
         `).all(twentyFourHoursAgo);
-        
+
         const burstHistoryMap = {};
         burstRows.forEach(r => {
             if (!burstHistoryMap[r.ticker]) {
@@ -1253,7 +1380,7 @@ app.get('/api/fusion/dashboard', (req, res) => {
         const dashboardData = streamC_Rows.map(row => {
             const raw = JSON.parse(row.raw_data);
             const currentPrice = row.price;
-            
+
             // Calculate Day Change directly from Stream C payload
             let dayChangePct = null;
             if (raw.today_change_pct !== undefined) {
@@ -1270,7 +1397,7 @@ app.get('/api/fusion/dashboard', (req, res) => {
             // Extract all price levels from smart_levels object
             const levels = [];
             const sl = raw.smart_levels || {};
-            
+
             // Helper to extract nested 'p' (price) and 's' (stars) and attach a name
             const extractLevel = (obj, name) => {
                 if (obj && obj.p) {
@@ -1387,7 +1514,7 @@ app.get('/api/fusion/dashboard', (req, res) => {
             records: dashboardData
         });
 
-    } catch(e) {
+    } catch (e) {
         console.error("Fusion Dashboard Error:", e);
         res.status(500).json({ error: e.message });
     }
