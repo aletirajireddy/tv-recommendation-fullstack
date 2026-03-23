@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Institutional Conviction Engine - Bidirectional v20.1 (Dynamic Orphan Check)
+// @name         Institutional Conviction Engine - Bidirectional v20.2 (Strict Watchlist Diff)
 // @namespace    http://tampermonkey.net/
-// @version      20.1
-// @description  Cyclic monitor with Precision Audit, deferred sync, and Dynamic Orphan Detection.
+// @version      20.2
+// @description  Cyclic monitor with Precision Audit, deferred sync, Dynamic Orphan Detection, and Strict Watchlist Scoping.
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
@@ -163,22 +163,33 @@
         if (serverInfo.master_targets && Array.isArray(serverInfo.master_targets)) {
             serverInfo.master_targets.forEach(key => serverTargetSet.add(key));
 
-            const targetList = [...serverInfo.master_targets];
-            const currentList = Array.from(area2WatchlistSet);
-            const additions = targetList.filter(x => !area2WatchlistSet.has(x));
-            const removals = currentList.filter(x => !new Set(targetList).has(x));
+            // =========================================================================
+            // ✅ STRICT DIFF CALCULATION WITH TICKER NORMALIZATION
+            // =========================================================================
+            // Strip out exchange prefixes (e.g. "BINANCE:") to prevent format-mismatch bugs
+            const extractTicker = (fullString) => fullString.includes(':') ? fullString.split(':')[1] : fullString;
+
+            const normalizedTargets = serverInfo.master_targets.map(extractTicker);
+            const normalizedCurrent = Array.from(area2WatchlistSet).map(extractTicker);
+
+            const targetSetCheck = new Set(normalizedTargets);
+            const currentSetCheck = new Set(normalizedCurrent);
+
+            const additions = normalizedTargets.filter(x => !currentSetCheck.has(x));
+            const removals = normalizedCurrent.filter(x => !targetSetCheck.has(x));
             const diffCount = additions.length + removals.length;
 
             if (diffCount > 0) {
                 auditLog("DIFF_DETECTED", null, `+ Adding: [${additions.join(', ')}] | - Removing: [${removals.join(', ')}]`, "BUFFER");
 
-                const clipboardString = targetList.join(',');
+                // We join the ORIGINAL master targets for the clipboard so TradingView gets the exact format it needs
+                const clipboardString = [...serverInfo.master_targets].join(',');
                 const now = Date.now();
                 const COOLDOWN_MS = CONFIG.AUTOMA_COOLDOWN_MINUTES * 60 * 1000;
 
                 if (!window.lastAutomaTriggerMs || (now - window.lastAutomaTriggerMs > COOLDOWN_MS)) {
                     GM_setClipboard(clipboardString);
-                    auditLog("AUTOMA_TRIGGERED", null, `Copied ${targetList.length} coins. Firing new tab. Next available in ${CONFIG.AUTOMA_COOLDOWN_MINUTES}m.`, "SYNC");
+                    auditLog("AUTOMA_TRIGGERED", null, `Copied ${serverInfo.master_targets.length} coins. Firing new tab. Next available in ${CONFIG.AUTOMA_COOLDOWN_MINUTES}m.`, "SYNC");
                     GM_openInTab("https://www.tradingview.com/cex-screener/lEINSjG1/", { active: false, insert: true, setParent: true });
 
                     window.lastAutomaTriggerMs = now;
@@ -189,7 +200,7 @@
                     auditLog("COOLDOWN_BUFFER", null, `Changes pending but locked. Waiting ${minLeft}m before triggering Automa.`, "BUFFER");
                 }
             } else {
-                auditLog("SYNC_CLEAN", null, "No differences between Server and UI Watchlist.", "SYSTEM");
+                auditLog("SYNC_CLEAN", null, "Watchlist perfectly matches Backend. No clipboard copy needed.", "SYSTEM");
             }
         }
     }
@@ -208,7 +219,18 @@
         area2WatchlistSet.clear();
         watchlistSnapshot = [];
 
-        document.querySelectorAll('div[data-symbol-full]').forEach(row => {
+        // =========================================================================
+        // ✅ STRICT DOM SCOPING (Prevents reading the Screener accidentally)
+        // =========================================================================
+        const watchlistContainer = document.querySelector('div[data-name="symbol-list-wrap"]');
+
+        if (!watchlistContainer) {
+            console.warn("[System] Watchlist container not found, skipping UI parse.");
+            return;
+        }
+
+        // Only query the rows INSIDE the specific Watchlist container
+        watchlistContainer.querySelectorAll('div[data-symbol-full]').forEach(row => {
             const full = row.getAttribute('data-symbol-full');
             const short = row.getAttribute('data-symbol-short');
 
@@ -315,7 +337,7 @@
         updateArea2Watchlist();
 
         // =========================================================================
-        // 🔍 DYNAMIC ORPHAN COIN DETECTION 
+        // 🔍 DYNAMIC ORPHAN COIN DETECTION
         // =========================================================================
         const now = Date.now();
 
@@ -328,18 +350,15 @@
                     let isOrphan = false;
                     let culprit = "UNKNOWN";
 
-                    // DYNAMIC CHECK 1: The Fast Fail. 
-                    // Did Automa fire *after* this coin graduated?
+                    // DYNAMIC CHECK 1: The Fast Fail.
                     if (window.lastAutomaTriggerMs && window.lastAutomaTriggerMs >= gradData.ts) {
                         const timeSinceAutomaFired = now - window.lastAutomaTriggerMs;
-                        // Give the UI 3 minutes to update after Automa triggers
                         if (timeSinceAutomaFired > 3 * 60 * 1000) {
                             isOrphan = true;
                             culprit = serverTargetSet.has(rowKey) ? "AUTOMA_SYNC_FAILED" : "BACKEND_REJECTED";
                         }
                     }
                     // DYNAMIC CHECK 2: The Cooldown Buffer Fallback.
-                    // If the script is trapped in cooldown, we must wait the full duration (15m + 3m safety buffer).
                     else {
                         const timeSinceGraduation = now - gradData.ts;
                         if (timeSinceGraduation > (CONFIG.AUTOMA_COOLDOWN_MINUTES + 3) * 60 * 1000) {
