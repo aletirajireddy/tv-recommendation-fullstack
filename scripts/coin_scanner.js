@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Institutional Conviction Engine - Bidirectional v20 (Audit + Telemetry Fixed)
+// @name         Institutional Conviction Engine - Bidirectional v20.1 (Dynamic Orphan Check)
 // @namespace    http://tampermonkey.net/
-// @version      20
-// @description  Cyclic monitor with Precision Audit Logging, deferred clipboard sync, and full Telemetry.
+// @version      20.1
+// @description  Cyclic monitor with Precision Audit, deferred sync, and Dynamic Orphan Detection.
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
@@ -31,7 +31,7 @@
     };
 
     const TELEMETRY = {
-        POLL_MS: 300000, // 5 Minutes
+        POLL_MS: 300000,
         URL: "http://localhost:3000/api/market-context"
     };
 
@@ -47,12 +47,13 @@
     // 🗂️ PRECISION AUDIT LOGGER
     // =========================================================================
     const LOG_STYLES = {
-        PIPELINE: "color: #ff9800; font-weight: bold;", // Orange
-        QUALIFIED: "background: #27ae60; color: white; padding: 2px 5px; font-weight: bold;", // Green Pill
-        SYNC: "background: #673ab7; color: white; padding: 2px 5px; font-weight: bold; border-left: 4px solid #fff;", // Purple Pill
-        PRUNE: "color: #f44336; font-weight: bold;", // Red
-        BUFFER: "color: #00bcd4; font-weight: bold; font-style: italic;", // Cyan
-        SYSTEM: "color: #9e9e9e;" // Grey
+        PIPELINE: "color: #ff9800; font-weight: bold;",
+        QUALIFIED: "background: #27ae60; color: white; padding: 2px 5px; font-weight: bold;",
+        SYNC: "background: #673ab7; color: white; padding: 2px 5px; font-weight: bold; border-left: 4px solid #fff;",
+        PRUNE: "color: #f44336; font-weight: bold;",
+        BUFFER: "color: #00bcd4; font-weight: bold; font-style: italic;",
+        ORPHAN: "background: #ff5722; color: white; padding: 2px 5px; font-weight: bold; border-radius: 3px;",
+        SYSTEM: "color: #9e9e9e;"
     };
 
     function auditLog(category, ticker, message, styleKey) {
@@ -95,8 +96,11 @@
             if (state.lastAutomaTriggerMs) window.lastAutomaTriggerMs = state.lastAutomaTriggerMs;
 
             if (state.graduates) {
-                state.graduates.forEach(([key, ts]) => {
-                    if (now - ts < (CONFIG.GRADUATION_LOCK_MINUTES * 60 * 1000)) graduatedSet.set(key, ts);
+                state.graduates.forEach(([key, data]) => {
+                    const gradObj = typeof data === 'number' ? { ts: data, verified: true, ticker: key.split(':')[1] || 'UNKNOWN', exchange: '' } : data;
+                    if (now - gradObj.ts < (CONFIG.GRADUATION_LOCK_MINUTES * 60 * 1000)) {
+                        graduatedSet.set(key, gradObj);
+                    }
                 });
             }
 
@@ -141,7 +145,6 @@
 
         if (serverInfo.prune_list && Array.isArray(serverInfo.prune_list)) {
             const liveScreenerKeys = new Set(getMarketSnapshot());
-            let prunedCount = 0;
 
             serverInfo.prune_list.forEach(tickerKey => {
                 if (activeMasterSet.has(tickerKey)) {
@@ -150,7 +153,6 @@
                     } else {
                         activeMasterSet.delete(tickerKey);
                         pipelineRegistry.delete(tickerKey);
-                        prunedCount++;
                         auditLog("PRUNED", tickerKey, "Removed from tracking (Backend order).", "PRUNE");
                     }
                 }
@@ -228,9 +230,6 @@
         });
     }
 
-    // =========================================================================
-    // FULLY RESTORED TELEMETRY ENGINE
-    // =========================================================================
     async function sendTelemetry() {
         auditLog("TELEMETRY", null, "Capturing Market Context Snapshot...", "SYSTEM");
 
@@ -264,10 +263,7 @@
             if (full) {
                 const parts = full.split(':');
                 const cells = row.querySelectorAll('td');
-                const rowData = {
-                    full,
-                    short: parts.length > 1 ? parts[1] : full
-                };
+                const rowData = { full, short: parts.length > 1 ? parts[1] : full };
 
                 cells.forEach((cell, idx) => {
                     if (idx < telemetryHeaders.length) {
@@ -282,7 +278,6 @@
                         }
                     }
                 });
-
                 screenerSnap.push(rowData);
             }
         });
@@ -303,10 +298,7 @@
                 if (response.status === 200) {
                     const serverInfo = JSON.parse(response.responseText);
                     auditLog("TELEMETRY_SUCCESS", null, "Snapshot Synced to Backend.", "SYNC");
-
-                    if (serverInfo.master_targets) {
-                        processSyncPayload(serverInfo, "HEARTBEAT");
-                    }
+                    if (serverInfo.master_targets) processSyncPayload(serverInfo, "HEARTBEAT");
                 } else {
                     auditLog("TELEMETRY_ERROR", null, `HTTP ${response.status}: ${response.responseText}`, "PRUNE");
                 }
@@ -322,6 +314,59 @@
         mapHeaders();
         updateArea2Watchlist();
 
+        // =========================================================================
+        // 🔍 DYNAMIC ORPHAN COIN DETECTION 
+        // =========================================================================
+        const now = Date.now();
+
+        graduatedSet.forEach((gradData, rowKey) => {
+            if (!gradData.verified) {
+                if (area2WatchlistSet.has(rowKey)) {
+                    gradData.verified = true;
+                    auditLog("VERIFIED", gradData.ticker, "Coin successfully appeared in UI Watchlist.", "QUALIFIED");
+                } else {
+                    let isOrphan = false;
+                    let culprit = "UNKNOWN";
+
+                    // DYNAMIC CHECK 1: The Fast Fail. 
+                    // Did Automa fire *after* this coin graduated?
+                    if (window.lastAutomaTriggerMs && window.lastAutomaTriggerMs >= gradData.ts) {
+                        const timeSinceAutomaFired = now - window.lastAutomaTriggerMs;
+                        // Give the UI 3 minutes to update after Automa triggers
+                        if (timeSinceAutomaFired > 3 * 60 * 1000) {
+                            isOrphan = true;
+                            culprit = serverTargetSet.has(rowKey) ? "AUTOMA_SYNC_FAILED" : "BACKEND_REJECTED";
+                        }
+                    }
+                    // DYNAMIC CHECK 2: The Cooldown Buffer Fallback.
+                    // If the script is trapped in cooldown, we must wait the full duration (15m + 3m safety buffer).
+                    else {
+                        const timeSinceGraduation = now - gradData.ts;
+                        if (timeSinceGraduation > (CONFIG.AUTOMA_COOLDOWN_MINUTES + 3) * 60 * 1000) {
+                            isOrphan = true;
+                            culprit = "BACKEND_REJECTED (Timeout Exceeded)";
+                        }
+                    }
+
+                    if (isOrphan) {
+                        auditLog("ORPHANED_STABLE", gradData.ticker, `Missed Watchlist! Culprit: ${culprit}`, "ORPHAN");
+
+                        pushToBackend({
+                            ticker: gradData.ticker,
+                            exchange: gradData.exchange,
+                            type: "ORPHANED_STABLE",
+                            reason: culprit,
+                            move: 0, direction: "UNKNOWN", price: 0
+                        });
+
+                        graduatedSet.delete(rowKey);
+                        auditLog("LOCK_LIFTED", gradData.ticker, "Lock removed early to allow re-evaluation.", "SYSTEM");
+                    }
+                }
+            }
+        });
+        // =========================================================================
+
         const rows = document.querySelectorAll('tbody tr[data-rowkey]');
         const seenInThisScan = new Set();
 
@@ -332,9 +377,9 @@
             if (!cells[colMap.SYMBOL]) return;
             seenInThisScan.add(rowKey);
 
-            const gradTime = graduatedSet.get(rowKey);
-            if (gradTime) {
-                if (Date.now() - gradTime > (CONFIG.GRADUATION_LOCK_MINUTES * 60 * 1000)) {
+            const gradData = graduatedSet.get(rowKey);
+            if (gradData) {
+                if (Date.now() - gradData.ts > (CONFIG.GRADUATION_LOCK_MINUTES * 60 * 1000)) {
                     graduatedSet.delete(rowKey);
                     auditLog("LOCK_EXPIRED", ticker, `Graduation lock lifted after ${CONFIG.GRADUATION_LOCK_MINUTES}m. Eligible for re-entry.`, "SYSTEM");
                 } else {
@@ -370,7 +415,8 @@
 
                     activeMasterSet.delete(rowKey);
                     pipelineRegistry.delete(rowKey);
-                    graduatedSet.set(rowKey, Date.now());
+
+                    graduatedSet.set(rowKey, { ts: Date.now(), verified: false, ticker: ticker, exchange: exchange });
                     serverTargetSet.delete(rowKey);
                 }
                 return;
@@ -382,7 +428,6 @@
             auditLog("BIRTH", ticker, `Spotted on screener. Starting cycle.`, "PIPELINE");
         });
 
-        const now = Date.now();
         pipelineRegistry.forEach((node, key) => {
             if (!seenInThisScan.has(key)) {
                 if (!node.pausedAt) {
@@ -405,11 +450,6 @@
         saveState();
     }
 
-    // =========================================================================
-    // EXECUTION TIMERS (RESTORED)
-    // =========================================================================
-
-    // 1. Start the main scanner monitor
     setTimeout(() => {
         auditLog("INIT", null, "Scanner Engine Started", "SYNC");
         loadState();
@@ -418,9 +458,8 @@
 
     setInterval(monitor, CONFIG.SCAN_MS);
 
-    // 2. Start the Telemetry loop (Wait 30s to allow UI to fully paint)
     setTimeout(() => {
-        sendTelemetry(); // Initial send
+        sendTelemetry();
         setInterval(sendTelemetry, TELEMETRY.POLL_MS);
     }, 30000);
 

@@ -368,6 +368,27 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const avgVolume = volCount > 0 ? (totalVol / volCount) : 0;
     const ghostThreshold = avgVolume * 0.15; // Ghost = trades < 15% of cohort average
 
+    // --- 4.5 HISTORICAL SUSTAINABILITY CHECK (The 4-Hour Guard) ---
+    // Fetch last 240 active scans (approx 4 hours of strict runtime data)
+    const historicalScans = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 240').all();
+    const historicalMaxScore = {};
+    
+    historicalScans.forEach(row => {
+        try {
+            const scanData = JSON.parse(row.raw_data);
+            if (scanData.results) {
+                scanData.results.forEach(item => {
+                    const d = item.data || item;
+                    const cleanTicker = item.ticker;
+                    const score = d.score || 0;
+                    if (historicalMaxScore[cleanTicker] === undefined || score > historicalMaxScore[cleanTicker]) {
+                        historicalMaxScore[cleanTicker] = score;
+                    }
+                });
+            }
+        } catch(e) {}
+    });
+
     // --- 5. EXTRACT MACRO SCAN ---
     const latestScan = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
     let scanResults = [];
@@ -412,13 +433,20 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
         let shouldPrune = false;
         let pruneReason = "";
         if (!isProtected) {
+            const maxHistoricalScore = historicalMaxScore[cleanTicker];
+
             // Core logic
-            if (d.score <= 30) {
-                shouldPrune = true;
-                pruneReason = "Low Score";
-            } else if (d.freeze === 1) {
+            if (d.freeze === 1) {
                 shouldPrune = true;
                 pruneReason = "Frozen";
+            } else if (d.score <= 30) {
+                if (maxHistoricalScore !== undefined && maxHistoricalScore > 30) {
+                    // PARDON: Coin had a good score within the last 4 active hours.
+                    // It is just experiencing a temporary dip; do not execute prune.
+                } else {
+                    shouldPrune = true;
+                    pruneReason = "Sustained Low Score (<4h)";
+                }
             }
 
             // Intelligent Volume Pruning
