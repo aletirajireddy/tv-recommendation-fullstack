@@ -332,7 +332,7 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const historicalPicks = db.prepare(`
         SELECT DISTINCT exchange, ticker 
         FROM area1_scout_logs 
-        WHERE type = 'STABLE' AND timestamp > ?
+        WHERE type IN ('STABLE', 'ORPHANED_STABLE_RETRY') AND timestamp > ?
     `).all(oneHourAgo);
     const historicalTargetSet = new Set(historicalPicks.map(p => `${p.exchange}:${p.ticker}`));
 
@@ -406,6 +406,12 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
 
     const PERMANENT_MAJORS = ['BINANCE:BTCUSDT.P', 'BINANCE:ETHUSDT.P'];
     const protectedAltcoins = new Set();
+    
+    // [PHASE 41] Protect Orphaned Automa Retries
+    const orphanedRetries = historicalPicks.filter(p => p.type === 'ORPHANED_STABLE_RETRY');
+    orphanedRetries.forEach(p => {
+        protectedAltcoins.add(`${p.exchange}:${p.ticker}`);
+    });
 
     // Identify Top 5 Altcoins to protect
     let altCount = 0;
@@ -488,10 +494,23 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
 // 3. QUALIFIED PICK (Stream B - Micro / Test Log)
 // Writes to 'area1_scout_logs' for testing and shortlisting without colliding Stream A
 app.post('/qualified-pick', (req, res) => {
-    const { ticker, price, type, move, direction, total_market_count, market_snapshot } = req.body;
+    const { ticker, price, type, move, direction, total_market_count, market_snapshot, reason } = req.body;
     const exchange = req.body.exchange || 'BINANCE';
     const volChange = req.body.volChange || 0;
-    console.log(`[PICKER] 🎯 V3 Pick (Log): ${exchange}:${ticker} (${type})`);
+    
+    // [PHASE 41] Closed-Loop Verification Intercept
+    let saveType = type;
+    if (type === 'ORPHANED_STABLE') {
+        if (reason === 'AUTOMA_SYNC_FAILED') {
+            console.warn(`[WATCHLIST-ENGINE] 🔄 Explicit Retry Ordered for ${exchange}:${ticker} (Automa Failed)`);
+            saveType = 'ORPHANED_STABLE_RETRY';
+        } else if (reason === 'BACKEND_REJECTED') {
+            console.log(`[WATCHLIST-ENGINE] 👁️ Anomaly Logged: Front-end detected backend rejection for ${exchange}:${ticker}`);
+            // Save as normal ORPHANED_STABLE for auditing, no explicit retry ordered.
+        }
+    } else {
+        console.log(`[PICKER] 🎯 V3 Pick (Log): ${exchange}:${ticker} (${type})`);
+    }
 
     try {
         const now = new Date().toISOString();
@@ -500,7 +519,7 @@ app.post('/qualified-pick', (req, res) => {
         db.prepare(`
             INSERT INTO area1_scout_logs (ticker, exchange, price, type, timestamp, vol_change, raw_data)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(ticker, exchange, price, type, now, volChange, JSON.stringify(req.body));
+        `).run(ticker, exchange, price, saveType, now, volChange, JSON.stringify(req.body));
 
         // Let the UI know a pick came in
         io.emit('ledger-update', { ticker, price, signal: type });
