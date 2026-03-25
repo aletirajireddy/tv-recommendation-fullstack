@@ -19,9 +19,12 @@ export function TrendFlowChart() {
         return () => mql.removeEventListener('change', handler);
     }, []);
 
-    const data = useMemo(() =>
-        toMoodFlowData(analyticsData?.time_spread),
-        [analyticsData]);
+    const data = useMemo(() => {
+        if (!analyticsData?.time_spread) return [];
+        // Slice the first 60 items since the backend sorts the newest first
+        const recentSpread = analyticsData.time_spread.slice(0, 60);
+        return toMoodFlowData(recentSpread);
+    }, [analyticsData]);
 
     const [isPulsing, setIsPulsing] = useState(false);
     useEffect(() => {

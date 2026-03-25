@@ -287,7 +287,7 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     let newGraduates = [];
 
     const now = Date.now();
-    const oneHourAgo = new Date(now - 60 * 60 * 1000).toISOString();
+    const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString();
     const eightHoursAgo = new Date(now - 8 * 60 * 60 * 1000).toISOString();
 
     // --- 1. THE 8-HOUR STABILITY GUARD ---
@@ -328,12 +328,13 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
         }
     }
 
-    // --- 3. GET HISTORICAL PICKS (Last 60m) ---
+    // --- 3. GET HISTORICAL PICKS (Last 2 Hours) ---
+    // [PHASE 43] Extended to 2 hours to rigidly bridge Automa cooldown UI gaps.
     const historicalPicks = db.prepare(`
         SELECT DISTINCT exchange, ticker 
         FROM area1_scout_logs 
         WHERE type IN ('STABLE', 'ORPHANED_STABLE_RETRY') AND timestamp > ?
-    `).all(oneHourAgo);
+    `).all(twoHoursAgo);
     const historicalTargetSet = new Set(historicalPicks.map(p => `${p.exchange}:${p.ticker}`));
 
     // --- 4. RELATIVE VOLUME CALCULATION ---
@@ -373,18 +374,26 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const historicalScans = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 240').all();
     const historicalMaxScore = {};
     
+    // [PHASE 43] Offline Gap Flush: If the system was offline, do NOT use stale history 
+    // (> 12 hours old) to pardon current ghost coins.
+    const staleGapMs = Date.now() - 12 * 60 * 60 * 1000;
+
     historicalScans.forEach(row => {
         try {
             const scanData = JSON.parse(row.raw_data);
-            if (scanData.results) {
-                scanData.results.forEach(item => {
-                    const d = item.data || item;
-                    const cleanTicker = item.ticker;
-                    const score = d.score || 0;
-                    if (historicalMaxScore[cleanTicker] === undefined || score > historicalMaxScore[cleanTicker]) {
-                        historicalMaxScore[cleanTicker] = score;
-                    }
-                });
+            const scanMs = scanData.timestamp ? new Date(scanData.timestamp).getTime() : Date.now();
+            
+            if (scanMs > staleGapMs) {
+                if (scanData.results) {
+                    scanData.results.forEach(item => {
+                        const d = item.data || item;
+                        const cleanTicker = item.ticker;
+                        const score = d.score || 0;
+                        if (historicalMaxScore[cleanTicker] === undefined || score > historicalMaxScore[cleanTicker]) {
+                            historicalMaxScore[cleanTicker] = score;
+                        }
+                    });
+                }
             }
         } catch(e) {}
     });
@@ -407,9 +416,14 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const PERMANENT_MAJORS = ['BINANCE:BTCUSDT.P', 'BINANCE:ETHUSDT.P'];
     const protectedAltcoins = new Set();
     
-    // [PHASE 41] Protect Orphaned Automa Retries
-    const orphanedRetries = historicalPicks.filter(p => p.type === 'ORPHANED_STABLE_RETRY');
-    orphanedRetries.forEach(p => {
+    // [PHASE 42] The 8-Hour Graduate Grace Period (Includes Orphan Retries)
+    const gracePeriodPicks = db.prepare(`
+        SELECT DISTINCT exchange, ticker 
+        FROM area1_scout_logs 
+        WHERE type IN ('STABLE', 'ORPHANED_STABLE_RETRY') AND timestamp > ?
+    `).all(eightHoursAgo);
+    
+    gracePeriodPicks.forEach(p => {
         protectedAltcoins.add(`${p.exchange}:${p.ticker}`);
     });
 
@@ -542,6 +556,104 @@ app.post('/qualified-pick', (req, res) => {
 
     } catch (e) {
         console.error("Pick Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 3B. MARKET CONTEXT TELEMETRY (Stream B)
+app.post('/api/market-context', (req, res) => {
+    try {
+        const payload = req.body;
+        const now = new Date().toISOString();
+
+        db.prepare(`
+            INSERT INTO market_context_logs (timestamp, screener_total_count, watchlist_count, payload_json)
+            VALUES (?, ?, ?, ?)
+        `).run(
+            now,
+            payload.screener_total_count || 0,
+            payload.watchlist_count || 0,
+            JSON.stringify(payload)
+        );
+
+        // Generate Stateful Feedback for Coin Scanner
+        const feedback = generateScannerFeedback(payload.watchlist_count);
+
+        io.emit('market-context-update', { timestamp: now, counts: { screener: payload.screener_total_count, watchlist: payload.watchlist_count } });
+
+        res.json({
+            success: true,
+            message: "Market Context Telemetry Saved",
+            master_targets: feedback.master_targets,
+            prune_list: feedback.prune_list,
+            new_graduates: feedback.new_graduates
+        });
+    } catch (e) {
+        console.error("Market Context Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 3C. PARTICIPATION PULSE (Analytics for Scout Screener)
+app.get('/api/analytics/participation-pulse', (req, res) => {
+    try {
+        const hours = parseInt(req.query.hours) || 24;
+        const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+        // Query the market context logs
+        const rows = db.prepare(`
+            SELECT timestamp, payload_json
+            FROM market_context_logs
+            WHERE timestamp > ?
+            ORDER BY timestamp ASC
+        `).all(cutoff);
+
+        // Helper: Convert TV string rating to numeric score
+        const getRatingScore = (val) => {
+            if (typeof val !== 'string') return 0;
+            const text = val.toLowerCase();
+            if (text.includes('strong buy')) return 2;
+            if (text.includes('buy')) return 1;
+            if (text.includes('strong sell')) return -2;
+            if (text.includes('sell')) return -1;
+            return 0; // Neutral or uncategorized
+        };
+
+        const timeline = rows.map(row => {
+            const payload = JSON.parse(row.payload_json);
+            const activeSnaps = payload.screener_visible_snapshot || [];
+            
+            let bull_score = 0;
+            let bear_score = 0;
+
+            activeSnaps.forEach(item => {
+                let coinTotal = 0;
+                
+                // The user's widget screenshot shows: Symbol, Tech Rating, MA Rating, Os Rating.
+                // Because TradingView DOM attributes can vary, we will scan *all* string values in the JSON object
+                // belonging to this coin. If a string is a standard TV rating, we score it.
+                Object.values(item).forEach(val => {
+                    const score = getRatingScore(val);
+                    coinTotal += score;
+                });
+
+                if (coinTotal > 0) bull_score += coinTotal;
+                else if (coinTotal < 0) bear_score += Math.abs(coinTotal);
+            });
+
+            return {
+                time: row.timestamp,
+                screener_count: payload.screener_total_count || 0,
+                watchlist_count: payload.watchlist_count || 0,
+                bull_score: bull_score,
+                bear_score: bear_score,
+                net_score: bull_score - bear_score
+            };
+        });
+
+        res.json({ timeline });
+    } catch (e) {
+        console.error("Participation Pulse Error:", e);
         res.status(500).json({ error: e.message });
     }
 });
@@ -760,7 +872,7 @@ app.get('/api/analytics/pulse', (req, res) => {
         // Sort clusters DESC (newest first) and map for UI
         clusters.sort((a, b) => new Date(b.batch_time) - new Date(a.batch_time));
 
-        const time_spread = clusters.slice(0, 20).map(r => {
+        const time_spread = clusters.map(r => {
             const count = r.count;
             const uniqueCoins = Array.from(r.tickers);
             const avgBias = r.avg_bias || 0;

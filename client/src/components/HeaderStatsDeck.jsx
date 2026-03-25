@@ -3,14 +3,14 @@ import { useTimeStore } from '../store/useTimeStore';
 import { TrendingUp, TrendingDown, Minus, Activity, Wifi } from 'lucide-react';
 import GenieSmart from '../services/GenieSmart';
 import TimeService from '../services/TimeService';
-import HeaderSparkline from './AnalyticsWidgets/HeaderSparkline';
 import styles from './HeaderStatsDeck.module.css';
+import { MarketHeartbeatIndicator } from './AnalyticsWidgets/MarketHeartbeatIndicator';
 
 export function HeaderStatsDeck() {
     // 1. CONSUME GENIE SMART STATE
-    const { activeScan, setMonitorModalOpen, marketMood } = useTimeStore();
+    const { activeScan, marketMood } = useTimeStore();
 
-    if (!activeScan) return <div className={styles.deckLoading}>Initialize scan...</div>;
+    if (!activeScan) return <div className={styles.deckLoading}>Initialize...</div>;
 
     // USE GENIE MOOD (Single Source of Truth)
     const { moodScore, label: moodLabel, stats } = marketMood;
@@ -23,10 +23,7 @@ export function HeaderStatsDeck() {
 
     return (
         <div className={styles.deckContainer}>
-            {/* CLICKABLE ZONE */}
-            <div className={styles.interactiveZone} onClick={() => setMonitorModalOpen(true)}>
-
-                {/* 1. MOOD */}
+            {/* 1. MOOD */}
                 <div className={`${styles.card} ${styles.sectionMood}`}>
                     <div className={styles.cardLabel}>GENIE MOOD</div>
                     <div className={`${styles.moodDisplay} ${styles.animatedValue}`} style={{ color: moodColor }}>
@@ -56,11 +53,10 @@ export function HeaderStatsDeck() {
 
                 <div className={styles.divider} />
 
-                {/* 3. MACRO SPARKLINE (Replaces Bloated Dynamic List) */}
-                <HeaderSparkline />
-            </div>
-
-            <div className={styles.divider} />
+                {/* 3. MARKET HEARTBEAT */}
+                <div className={styles.card} style={{ flex: 1, minWidth: '350px', padding: '0', height: '64px', overflow: 'hidden' }}>
+                    <MarketHeartbeatIndicator />
+                </div>            <div className={styles.divider} />
             <TriStreamHealthCard />
             <div className={styles.divider} />
             <SystemTimeCard />

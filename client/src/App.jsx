@@ -11,6 +11,8 @@ import { AlphaScatter } from './components/AnalyticsWidgets/AlphaScatter';
 import { TrendFlowChart } from './components/AnalyticsWidgets/TrendFlowChart';
 import RecommendationsFeed from './components/AnalyticsWidgets/RecommendationsFeed';
 import ScenarioBoard from './components/AnalyticsWidgets/ScenarioBoard';
+import MarketSentimentTimeline from './components/AnalyticsWidgets/MarketSentimentTimeline';
+import AlertFrequencyTimeline from './components/AnalyticsWidgets/AlertFrequencyTimeline';
 import { ParticipationPulseWidget } from './components/AnalyticsWidgets/ParticipationPulseWidget';
 import FusionDashboard from './components/AnalyticsWidgets/FusionDashboard';
 
@@ -34,12 +36,18 @@ function App() {
         {/* UNIFIED TIMELINE VIEW */}
         <div className={styles.colAnalytics} style={{ padding: 0 }}>
         
-            {/* ROW 0: FUSION DASHBOARD (Command Center injected at the top) */}
+            {/* ROW 1: TIMELINE ANALYZERS (Moved to the very top!) */}
+            <div className={styles.analyticsSplitRow} style={{ marginBottom: '24px' }}>
+                <MarketSentimentTimeline />
+                <AlertFrequencyTimeline />
+            </div>
+
+            {/* ROW 2: FUSION DASHBOARD (Command Center) */}
             <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
                 <FusionDashboard />
             </div>
 
-            {/* ROW 1: ENHANCED MACRO SUMMARY (Full Width) */}
+            {/* ROW 2: ENHANCED MACRO SUMMARY (Full Width) */}
             <div className={styles.analyticsFullRow}>
                 <MarketStructureWidget />
                 <ConfluenceGrid />
