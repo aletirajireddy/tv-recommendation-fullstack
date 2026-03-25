@@ -74,7 +74,7 @@ export const useTimeStore = create((set, get) => ({
                 body: JSON.stringify({ enabled: !current })
             });
             const data = await res.json();
-            // Confirm from Server
+            // Configrm from Server
             if (data && typeof data.enabled !== 'undefined') {
                 set({ telegramEnabled: data.enabled });
             }
@@ -433,7 +433,10 @@ export const useTimeStore = create((set, get) => ({
             const res = await fetch(`${API_BASE}/fusion/dashboard`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            set({ fusionData: data.records || [] });
+            set({ 
+                fusionData: data.records || [],
+                rsiDistribution: data.rsi_distribution || null
+            });
         } catch (err) {
             console.error('Failed to fetch Fusion Dashboard data:', err);
             set({ fusionData: [] });

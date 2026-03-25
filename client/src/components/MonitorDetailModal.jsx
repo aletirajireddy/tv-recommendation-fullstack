@@ -5,7 +5,9 @@ import { X, Maximize2 } from 'lucide-react';
 import styles from './MonitorDetailModal.module.css';
 
 export function MonitorDetailModal() {
-    const { isMonitorModalOpen, setMonitorModalOpen, activeScan } = useTimeStore();
+    const isMonitorModalOpen = useTimeStore(s => s.isMonitorModalOpen);
+    const setMonitorModalOpen = useTimeStore(s => s.setMonitorModalOpen);
+    const activeScan = useTimeStore(s => s.activeScan);
 
     if (!isMonitorModalOpen) return null;
 

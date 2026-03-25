@@ -5,16 +5,14 @@ import styles from './FloatingMediaPlayer.module.css';
 import { format } from 'date-fns';
 
 export function FloatingMediaPlayer() {
-    const {
-        timeline,
-        currentIndex,
-        isPlaying,
-        stepForward,
-        stepBack,
-        skipToStart,
-        skipToEnd,
-        loadScan,
-    } = useTimeStore();
+    const timeline = useTimeStore(s => s.timeline);
+    const currentIndex = useTimeStore(s => s.currentIndex);
+    const isPlaying = useTimeStore(s => s.isPlaying);
+    const stepForward = useTimeStore(s => s.stepForward);
+    const stepBack = useTimeStore(s => s.stepBack);
+    const skipToStart = useTimeStore(s => s.skipToStart);
+    const skipToEnd = useTimeStore(s => s.skipToEnd);
+    const loadScan = useTimeStore(s => s.loadScan);
 
     // Local scrubber state for smooth dragging
     const [scrubVal, setScrubVal] = useState(currentIndex);

@@ -4,7 +4,8 @@ import styles from './AlertsAnalyzer.module.css';
 import { Activity, Zap, Layers, Target, TrendingUp } from 'lucide-react';
 
 export function AlertsAnalyzer() {
-    const { analyticsData, lookbackHours } = useTimeStore();
+    const analyticsData = useTimeStore(s => s.analyticsData);
+    const lookbackHours = useTimeStore(s => s.lookbackHours);
 
     if (!analyticsData || !analyticsData.time_spread || analyticsData.time_spread.length === 0) {
         return (

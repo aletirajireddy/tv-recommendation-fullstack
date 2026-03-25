@@ -4,7 +4,7 @@ import styles from './ConfluenceGrid.module.css';
 import { Layers, Activity, Zap, Wind } from 'lucide-react';
 
 export function ConfluenceGrid() {
-    const { analyticsData } = useTimeStore();
+    const analyticsData = useTimeStore(s => s.analyticsData);
 
     if (!analyticsData || !analyticsData.time_spread) return <div className={styles.loading}>Loading Macro Data...</div>;
 

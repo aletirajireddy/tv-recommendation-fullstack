@@ -15,7 +15,8 @@ import styles from './MarketStructureWidget.module.css';
  * 5. MEGA SPOT (5xx) - Institutional Confluence
  */
 export const MarketStructureWidget = () => {
-    const { activeScan, useSmartLevelsContext } = useTimeStore();
+    const activeScan = useTimeStore(s => s.activeScan);
+    const useSmartLevelsContext = useTimeStore(s => s.useSmartLevelsContext);
 
     const [isPulsing, setIsPulsing] = useState(false);
     useEffect(() => {

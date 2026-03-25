@@ -30,7 +30,8 @@ const formatPct = (val) => {
 };
 
 export default function FusionDashboard() {
-  const { fusionData, fetchFusionData } = useTimeStore();
+  const fusionData = useTimeStore(s => s.fusionData);
+  const fetchFusionData = useTimeStore(s => s.fetchFusionData);
   const [expandedRows, setExpandedRows] = useState({});
 
   useEffect(() => {

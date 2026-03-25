@@ -3,7 +3,7 @@ import { useTimeStore } from '../../store/useTimeStore';
 import { ComposedChart, Area, ResponsiveContainer } from 'recharts';
 
 export default function HeaderSparkline() {
-    const { timeline } = useTimeStore();
+    const timeline = useTimeStore(s => s.timeline);
 
     const chartData = useMemo(() => {
         if (!timeline || timeline.length === 0) return [];

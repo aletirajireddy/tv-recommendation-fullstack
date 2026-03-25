@@ -7,6 +7,7 @@ const db = require('./database'); // V3 Database Module
 // --- SERVICES ---
 // Telegram service kept for notifications (optional integration later)
 const TelegramService = require('./services/telegram');
+const RSIEngine = require('./services/RSIEngine');
 
 const app = express();
 const server = http.createServer(app);
@@ -1666,11 +1667,14 @@ app.get('/api/fusion/dashboard', (req, res) => {
                 burstCount: (burstHistoryMap[row.ticker] || []).length
             };
         });
+        // 5. RSI Distribution Processing
+        const rsi_distribution = RSIEngine.processRSIData(streamC_Rows);
 
         res.json({
             success: true,
             count: dashboardData.length,
-            records: dashboardData
+            records: dashboardData,
+            rsi_distribution: rsi_distribution
         });
 
     } catch (e) {

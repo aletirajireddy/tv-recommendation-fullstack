@@ -5,7 +5,7 @@ import { format } from 'date-fns';
 import { Activity } from 'lucide-react';
 
 export function PulseFeed() {
-    const { activeScan } = useTimeStore();
+    const activeScan = useTimeStore(s => s.activeScan);
 
     // Safe access to alerts
     const alerts = activeScan?.institutional_pulse?.alerts || [];

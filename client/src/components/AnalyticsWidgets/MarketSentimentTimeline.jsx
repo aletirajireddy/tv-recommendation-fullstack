@@ -6,22 +6,16 @@ import {
 import { format, startOfDay, addHours } from 'date-fns';
 
 export function MarketSentimentTimeline() {
-    const { timeline } = useTimeStore();
+    const timeline = useTimeStore(s => s.timeline);
 
     const [brushRange, setBrushRange] = useState(() => {
         try {
             const saved = localStorage.getItem('tv_marketSentimentBrush');
             if (saved) return JSON.parse(saved);
         } catch (e) {}
-        return null;
+        return { startIndex: undefined, endIndex: undefined, isLive: true, windowSize: 0 };
     });
 
-    const handleBrushChange = (newRange) => {
-        if (newRange && newRange.startIndex !== undefined) {
-            setBrushRange({ startIndex: newRange.startIndex, endIndex: newRange.endIndex });
-            localStorage.setItem('tv_marketSentimentBrush', JSON.stringify({ startIndex: newRange.startIndex, endIndex: newRange.endIndex }));
-        }
-    };
 
     const { chartData, timezones } = useMemo(() => {
         if (!timeline || timeline.length === 0) return { chartData: [], timezones: [] };
@@ -66,6 +60,34 @@ export function MarketSentimentTimeline() {
 
         return { chartData: data, timezones: markers };
     }, [timeline]);
+
+    const handleBrushChange = (newRange) => {
+        if (newRange && newRange.startIndex !== undefined) {
+            const isAtEnd = newRange.endIndex === chartData.length - 1;
+            const size = newRange.endIndex - newRange.startIndex;
+            const state = { startIndex: newRange.startIndex, endIndex: newRange.endIndex, isLive: isAtEnd, windowSize: size };
+            setBrushRange(state);
+            localStorage.setItem('tv_marketSentimentBrush', JSON.stringify(state));
+        }
+    };
+
+    // Auto-Follow Logic for Streaming Data
+    React.useEffect(() => {
+        if (chartData.length > 0 && brushRange.isLive) {
+            const lastIdx = chartData.length - 1;
+            if (brushRange.endIndex !== lastIdx) {
+                const newStart = brushRange.startIndex !== undefined 
+                    ? Math.max(0, lastIdx - brushRange.windowSize)
+                    : undefined;
+                
+                setBrushRange(prev => ({
+                    ...prev,
+                    startIndex: newStart,
+                    endIndex: lastIdx
+                }));
+            }
+        }
+    }, [chartData.length, brushRange.isLive, brushRange.windowSize, brushRange.startIndex, brushRange.endIndex]);
 
     if (chartData.length === 0) {
         return (

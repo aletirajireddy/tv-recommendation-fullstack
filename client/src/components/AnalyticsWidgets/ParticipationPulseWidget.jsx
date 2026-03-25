@@ -7,9 +7,9 @@ import {
 import { format } from 'date-fns';
 
 export function ParticipationPulseWidget() {
-    const {
-        participationPulse, fetchParticipationPulse, pulseLoading
-    } = useTimeStore();
+    const participationPulse = useTimeStore(s => s.participationPulse);
+    const fetchParticipationPulse = useTimeStore(s => s.fetchParticipationPulse);
+    const pulseLoading = useTimeStore(s => s.pulseLoading);
     const [isMobile, setIsMobile] = useState(false);
 
     useEffect(() => {

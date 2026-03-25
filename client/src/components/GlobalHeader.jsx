@@ -6,26 +6,24 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { HeaderStatsDeck } from './HeaderStatsDeck';
 
 export function GlobalHeader() {
-    const {
-        timeline,
-        currentIndex,
-        isPlaying,
-        activeScan,
-        lastSyncTime,
-        fetchTimeline,
-        initializeSocket,
-        stepForward,
-        stepBack,
-        loadScan,
-        viewMode,
-        setViewMode,
-        telegramEnabled,     // State
-        toggleTelegram,      // Action
-        fetchTelegramStatus, // Action
-        useSmartLevelsContext, // NEW
-        setSmartLevelsContext,  // NEW
-        fetchStreamsHealth     // NEW: Tri-Stream
-    } = useTimeStore();
+    const timeline = useTimeStore(s => s.timeline);
+    const currentIndex = useTimeStore(s => s.currentIndex);
+    const isPlaying = useTimeStore(s => s.isPlaying);
+    const activeScan = useTimeStore(s => s.activeScan);
+    const lastSyncTime = useTimeStore(s => s.lastSyncTime);
+    const fetchTimeline = useTimeStore(s => s.fetchTimeline);
+    const initializeSocket = useTimeStore(s => s.initializeSocket);
+    const stepForward = useTimeStore(s => s.stepForward);
+    const stepBack = useTimeStore(s => s.stepBack);
+    const loadScan = useTimeStore(s => s.loadScan);
+    const viewMode = useTimeStore(s => s.viewMode);
+    const setViewMode = useTimeStore(s => s.setViewMode);
+    const telegramEnabled = useTimeStore(s => s.telegramEnabled);
+    const toggleTelegram = useTimeStore(s => s.toggleTelegram);
+    const fetchTelegramStatus = useTimeStore(s => s.fetchTelegramStatus);
+    const useSmartLevelsContext = useTimeStore(s => s.useSmartLevelsContext);
+    const setSmartLevelsContext = useTimeStore(s => s.setSmartLevelsContext);
+    const fetchStreamsHealth = useTimeStore(s => s.fetchStreamsHealth);
 
     // Initialize Data & Socket & Settings
     useEffect(() => {

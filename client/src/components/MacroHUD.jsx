@@ -4,7 +4,7 @@ import styles from './MacroHUD.module.css';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 export function MacroHUD() {
-    const { activeScan } = useTimeStore();
+    const activeScan = useTimeStore(s => s.activeScan);
 
     if (!activeScan || !activeScan.market_sentiment) {
         return <div className="card" style={{ padding: '1rem', color: 'var(--text-tertiary)' }}>No Market Data</div>;

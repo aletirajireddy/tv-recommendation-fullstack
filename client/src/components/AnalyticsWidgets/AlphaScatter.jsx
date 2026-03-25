@@ -7,7 +7,9 @@ import {
 } from 'recharts';
 
 export function AlphaScatter() {
-    const { activeScan, refreshAll, alphaSquad } = useTimeStore();
+    const activeScan = useTimeStore(s => s.activeScan);
+    const refreshAll = useTimeStore(s => s.refreshAll);
+    const alphaSquad = useTimeStore(s => s.alphaSquad);
     const [isMobile, setIsMobile] = useState(false);
 
     useEffect(() => {

@@ -15,6 +15,7 @@ import MarketSentimentTimeline from './components/AnalyticsWidgets/MarketSentime
 import AlertFrequencyTimeline from './components/AnalyticsWidgets/AlertFrequencyTimeline';
 import { ParticipationPulseWidget } from './components/AnalyticsWidgets/ParticipationPulseWidget';
 import FusionDashboard from './components/AnalyticsWidgets/FusionDashboard';
+import RSIDistributionWidget from './components/AnalyticsWidgets/RSIDistributionWidget';
 
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
@@ -23,7 +24,7 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { useTimeStore } from './store/useTimeStore';
 
 function App() {
-  const { viewMode } = useTimeStore();
+  const viewMode = useTimeStore(s => s.viewMode);
 
   return (
     <div className={styles.appContainer}>
@@ -45,6 +46,11 @@ function App() {
             {/* ROW 2: FUSION DASHBOARD (Command Center) */}
             <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
                 <FusionDashboard />
+            </div>
+
+            {/* ROW 2.5: RSI DISTRIBUTION SETUPS */}
+            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
+                <RSIDistributionWidget />
             </div>
 
             {/* ROW 2: ENHANCED MACRO SUMMARY (Full Width) */}

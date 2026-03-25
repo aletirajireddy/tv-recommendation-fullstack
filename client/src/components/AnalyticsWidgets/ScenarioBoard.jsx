@@ -5,7 +5,9 @@ import styles from './ScenarioBoard.module.css';
 
 const ScenarioBoard = () => {
     // Decoupled from lookbackHours - We want strict "Tactical" logic (Last 1h)
-    const { activeScan, marketMood, useSmartLevelsContext } = useTimeStore();
+    const activeScan = useTimeStore(s => s.activeScan);
+    const marketMood = useTimeStore(s => s.marketMood);
+    const useSmartLevelsContext = useTimeStore(s => s.useSmartLevelsContext);
     const [scenarios, setScenarios] = useState({ planA: [], planB: [], marketCheck: null });
     const [loading, setLoading] = useState(true);
 

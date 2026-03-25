@@ -15,7 +15,7 @@ import styles from './FiveBucketWidget.module.css';
  * 5. MEGA SPOT (5xx)
  */
 export function FiveBucketWidget() {
-    const { activeScan } = useTimeStore();
+    const activeScan = useTimeStore(s => s.activeScan);
 
     const buckets = useMemo(() => {
         const groups = {

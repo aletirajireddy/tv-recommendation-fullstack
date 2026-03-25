@@ -11,7 +11,9 @@ import { SentimentGauge } from './ResearchWidgets/SentimentGauge';
 import { LatencyCard } from './ResearchWidgets/LatencyCard';
 
 export function AnalyticsDashboard() {
-    const { fetchResearch, researchData, marketMood } = useTimeStore();
+    const fetchResearch = useTimeStore(s => s.fetchResearch);
+    const researchData = useTimeStore(s => s.researchData);
+    const marketMood = useTimeStore(s => s.marketMood);
 
     // Data is pre-fetched by useTimeStore during app init and updates.
     // relying on 'researchData' subscription.

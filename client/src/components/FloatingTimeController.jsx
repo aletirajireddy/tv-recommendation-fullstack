@@ -4,7 +4,9 @@ import { Clock, MousePointer2 } from 'lucide-react';
 import styles from './FloatingTimeController.module.css';
 
 export function FloatingTimeController() {
-    const { lookbackHours, setLookbackHours, timeline } = useTimeStore();
+    const lookbackHours = useTimeStore(s => s.lookbackHours);
+    const setLookbackHours = useTimeStore(s => s.setLookbackHours);
+    const timeline = useTimeStore(s => s.timeline);
 
     // Calculate Max Range dynamically based on history
     const maxRange = React.useMemo(() => {

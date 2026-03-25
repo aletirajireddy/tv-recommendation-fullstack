@@ -8,7 +8,8 @@ import { MarketHeartbeatIndicator } from './AnalyticsWidgets/MarketHeartbeatIndi
 
 export function HeaderStatsDeck() {
     // 1. CONSUME GENIE SMART STATE
-    const { activeScan, marketMood } = useTimeStore();
+    const activeScan = useTimeStore(s => s.activeScan);
+    const marketMood = useTimeStore(s => s.marketMood);
 
     if (!activeScan) return <div className={styles.deckLoading}>Initialize...</div>;
 
@@ -65,7 +66,7 @@ export function HeaderStatsDeck() {
 }
 
 function TriStreamHealthCard() {
-    const { streamsHealth } = useTimeStore();
+    const streamsHealth = useTimeStore(s => s.streamsHealth);
 
     // Status Engine (<30m Green, 30-120m Yellow, >120m Red)
     const getStatusParams = (isoString) => {
@@ -111,7 +112,8 @@ function TriStreamHealthCard() {
 }
 
 function SystemTimeCard() {
-    const { timeline, currentIndex } = useTimeStore();
+    const timeline = useTimeStore(s => s.timeline);
+    const currentIndex = useTimeStore(s => s.currentIndex);
     const currentScan = timeline[currentIndex];
 
     // System Status (latest received data) vs View Status (current scan)

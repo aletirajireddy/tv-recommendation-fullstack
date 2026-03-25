@@ -84,7 +84,10 @@ const LogItem = ({ note }) => {
 // Removed HistoryItem and processHistory as per user request
 
 export default function RecommendationsFeed() {
-    const { activeScan, strategyLogs, fetchStrategyLogs, useSmartLevelsContext } = useTimeStore();
+    const activeScan = useTimeStore(s => s.activeScan);
+    const strategyLogs = useTimeStore(s => s.strategyLogs);
+    const fetchStrategyLogs = useTimeStore(s => s.fetchStrategyLogs);
+    const useSmartLevelsContext = useTimeStore(s => s.useSmartLevelsContext);
     const [activeTab, setActiveTab] = React.useState('strategies');
 
     const [isPulsing, setIsPulsing] = useState(false);
