@@ -623,11 +623,22 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
         const timeline = rows.map(row => {
             const payload = JSON.parse(row.payload_json);
             const activeSnaps = payload.screener_visible_snapshot || [];
+            const watchlistSnaps = payload.watchlist_active_snapshot || [];
             
+            // Track actively watched coins
+            const watchlistTickers = new Set(watchlistSnaps.map(w => w.full));
+
             let bull_score = 0;
             let bear_score = 0;
+            let net_screener_count = 0;
 
             activeSnaps.forEach(item => {
+                // Rule: If it's already in the watchlist, do not count it as "New" momentum in the Screener
+                if (item.full && watchlistTickers.has(item.full)) {
+                    return;
+                }
+
+                net_screener_count++;
                 let coinTotal = 0;
                 
                 // The user's widget screenshot shows: Symbol, Tech Rating, MA Rating, Os Rating.
@@ -644,8 +655,8 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
 
             return {
                 time: row.timestamp,
-                screener_count: payload.screener_total_count || 0,
-                watchlist_count: payload.watchlist_count || 0,
+                screener_count: net_screener_count,
+                watchlist_count: payload.watchlist_count || watchlistSnaps.length || 0,
                 bull_score: bull_score,
                 bear_score: bear_score,
                 net_score: bull_score - bear_score
@@ -1224,125 +1235,7 @@ app.get('/api/analytics/research', (req, res) => {
     }
 });
 
-// 9. MARKET CONTEXT TELEMETRY (Phase 3)
-// Passive telemetry from frontend scraper (Watchlist breadth, total screener counts)
-app.post('/api/market-context', (req, res) => {
-    try {
-        const payload = req.body;
-        const now = new Date().toISOString();
 
-        db.prepare(`
-            INSERT INTO market_context_logs (timestamp, screener_total_count, watchlist_count, payload_json)
-            VALUES (?, ?, ?, ?)
-        `).run(
-            now,
-            payload.screener_total_count || 0,
-            payload.watchlist_count || 0,
-            JSON.stringify(payload)
-        );
-
-        // --- STATEFUL SYNC FEEDBACK LOOP (Resilience) ---
-        // [PHASE 39]: 5+2 Engine
-        const feedback = generateScannerFeedback(payload.watchlist_count || 0);
-
-        // Optionally emit to frontend for live dashboard updates
-        io.emit('market-context-update', payload);
-
-        console.log(`[TELEMETRY] 📡 Received Context @ ${now} | Screener: ${payload.screener_total_count} | Watchlist: ${payload.watchlist_count}`);
-
-        res.json({
-            success: true,
-            message: "Market context telemetry saved.",
-            ai_suggestion: feedback.ai_suggestion,
-            active_list: feedback.active_list,
-            prune_list: feedback.prune_list,
-            ghost_list: feedback.ghost_list,
-            new_graduates: feedback.new_graduates,
-            master_targets: feedback.master_targets
-        });
-
-
-    } catch (e) {
-        console.error("Market Context Error:", e);
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// GET: Latest Market Context for Dashboard Widgets
-app.get('/api/market-context/latest', (req, res) => {
-    try {
-        const row = db.prepare(`
-            SELECT timestamp, screener_total_count, watchlist_count, payload_json 
-            FROM market_context_logs 
-            ORDER BY rowid DESC 
-            LIMIT 1
-        `).get();
-
-        if (!row) {
-            return res.json({ status: "No data available", timestamp: null });
-        }
-
-        const data = JSON.parse(row.payload_json);
-        // Inject the exact server timestamp back into the response for time-sync displays
-        data.server_timestamp = row.timestamp;
-
-        res.json(data);
-    } catch (e) {
-        console.error("Error fetching market context:", e);
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// 9b. MARKET PARTICIPATION PULSE (Inflow/Outflow + Directional Heat)
-app.get('/api/analytics/participation-pulse', (req, res) => {
-    try {
-        const hours = parseInt(req.query.hours) || 24;
-        const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-
-        // Get chronological logs
-        const rows = db.prepare(`
-            SELECT timestamp, payload_json 
-            FROM market_context_logs 
-            WHERE timestamp > ?
-            ORDER BY timestamp ASC
-        `).all(cutoff);
-
-        const timeline = [];
-        rows.forEach(row => {
-            const data = JSON.parse(row.payload_json);
-            const currentSnap = data.screener_visible_snapshot || [];
-
-            let bullishHeat = 0;
-            let bearishHeat = 0;
-
-            currentSnap.forEach(coinData => {
-                const mom = parseFloat(coinData['Mom Score'] || coinData['ROC %'] || coinData['Mom'] || 0);
-                const trend = parseFloat(coinData['Net Trend Signal'] || coinData['Net Trend'] || 0);
-
-                // Synthesize Heat Score from pure momentum
-                const heat = (mom * 5) + (trend * 0.5);
-
-                if (heat > 0) bullishHeat += heat;
-                else if (heat < 0) bearishHeat += Math.abs(heat);
-            });
-
-            timeline.push({
-                time: row.timestamp,
-                active_count: currentSnap.length,
-                bullish_heat: Math.round(bullishHeat),
-                bearish_heat: Math.round(bearishHeat),
-                net_heat: Math.round(bullishHeat - bearishHeat)
-            });
-        });
-
-        // Optimization: return a larger set (500 points) to support 2H+ lookbacks on the wide dashboard
-        res.json({ success: true, timeline: timeline.slice(-500) });
-
-    } catch (e) {
-        console.error("Pulse Analytics Error:", e);
-        res.status(500).json({ error: e.message });
-    }
-});
 
 // 9c. ALPHA SQUAD (Time-Series Volume & Momentum Deltas)
 app.get('/api/analytics/alpha-squad', (req, res) => {

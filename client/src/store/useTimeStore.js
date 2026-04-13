@@ -151,18 +151,13 @@ export const useTimeStore = create((set, get) => ({
         // Handle Stream C Webhook Updates (Fusion Dashboard)
         SocketService.on('smart-level-update', (data) => {
             console.log('⚡ Smart Level Update:', data);
-            // If the user is currently looking at the Fusion dashboard, refresh its data instantly
-            if (get().viewMode === 'fusion') {
-                get().fetchFusionData();
-            }
+            get().fetchFusionData();
         });
 
         // Handle Stream B Market Context Updates (Telemetry)
         SocketService.on('market-context-update', (data) => {
             console.log('⚡ Market Context Telemetry Update', data);
-            if (get().viewMode === 'fusion') {
-                get().fetchParticipationPulse();
-            }
+            get().fetchParticipationPulse();
         });
     },
 
