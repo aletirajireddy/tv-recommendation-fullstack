@@ -1,0 +1,15 @@
+{
+  "name": "dashboard-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server exposing Trade View Dashboard intel",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.5.0",
+    "better-sqlite3": "^12.5.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}

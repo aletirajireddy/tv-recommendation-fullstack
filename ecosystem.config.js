@@ -21,6 +21,17 @@ module.exports = {
         NODE_ENV: "development",
         PORT: 5173
       }
+    },
+    {
+      name: "mcp-server",
+      script: "index.js",
+      cwd: "mcp-server",
+      watch: true,
+      ignore_watch: ["node_modules", "../*.db*", "../*.db-wal", "../*.db-shm"],
+      env: {
+        NODE_ENV: "development",
+        PORT: 3001
+      }
     }
   ]
 };
