@@ -20,7 +20,7 @@ const mcpServer = new Server({
     }
 });
 
-app.get('/health', (req, res) => {
+app.get('/mcp/health', (req, res) => {
     res.json({ status: 'ok', engine: 'mcp-sse', timestamp: new Date() });
 });
 

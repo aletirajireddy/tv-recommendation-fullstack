@@ -15,11 +15,13 @@ if (!sseUrl) {
 let messageUrl = null;
 
 // 1. Connect to the Remote Tailscale SSE Endpoint
+console.error(`[Proxy] Connecting to Remote SSE: ${sseUrl}...`);
 const es = new EventSource(sseUrl);
 
 es.addEventListener('endpoint', (event) => {
     // The server tells us where to POST responses via the 'endpoint' event
     messageUrl = new URL(event.data, sseUrl).toString();
+    console.error(`[Proxy] Handshake Successful. Message Endpoint: ${messageUrl}`);
 });
 
 es.onmessage = (event) => {
