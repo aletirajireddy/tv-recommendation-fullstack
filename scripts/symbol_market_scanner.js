@@ -256,7 +256,7 @@
                         console.warn(`[Sync] ⚠️ Item ${item.id} already exists (Duplicate). Removing from queue.`);
                     } else {
                         console.log(`[Sync] ✅ Successfully flushed item ${item.id}`);
-                        // Update Sync Head (Last Alert TS) 
+                        // Update Sync Head (Last Alert TS)
                         try {
                             const resJson = JSON.parse(response.responseText);
                             if (resJson.last_alert_ts) {
@@ -758,8 +758,9 @@
 
         // Warning Signs
         if ((coin.dailyRange || 0) > 80) insights.push('⚠️ Late entry');
-        if ((coin.compressCount || 0) >= 3)
+        if ((coin.compressCount || 0) >= 3) {
             insights.push(`⚡ Compressed(${coin.compressCount})`);
+        }
         if (coin.freeze === 1) insights.push('❄️ Frozen');
 
         let direction = 'NEUTRAL';
@@ -886,7 +887,7 @@
             ticker: coin.ticker,
             cleanTicker: cleanTicker(coin.ticker),
             datakey: coin.datakey || coin.exchange_symbol, // [NEW] Essential for payload
-            exchange_symbol: coin.exchange_symbol,         // [NEW]
+            exchange_symbol: coin.exchange_symbol, // [NEW]
             score: coin.score,
             label: coin.label,
             direction: coin.direction,
@@ -1467,8 +1468,8 @@
                 timestamp: historyEntry.timestamp,
                 results: Array.from(uniqueMap.values()),
                 aiPriority: aiPriority,
-                market_sentiment: market_sentiment
-                // [Phase 10 - Deprecated] institutional_pulse: institutionalPulse
+                market_sentiment: market_sentiment,
+                institutional_pulse: institutionalPulse
             };
 
             return payload;
@@ -1480,8 +1481,8 @@
                 trigger: scanType,
                 error: error.message,
                 results: [],
-                market_sentiment: {}
-                // [Phase 10 - Deprecated] institutional_pulse: { }
+                market_sentiment: {},
+                institutional_pulse: { alerts: [] }
             };
         }
     }
