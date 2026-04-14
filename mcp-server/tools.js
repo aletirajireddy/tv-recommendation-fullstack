@@ -1,4 +1,6 @@
 const db = require('./database');
+const path = require('path');
+const RSIEngine = require(path.join(__dirname, '../server/services/RSIEngine'));
 
 async function getMarketSentiment() {
     const latestScan = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
@@ -108,10 +110,245 @@ async function analyzeTarget(ticker) {
     };
 }
 
+async function queryTechnicalFilters(filters) {
+    // 1. Fetch latest Macro Scan (26 columns)
+    const latestScanRow = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
+    let scanResultsMap = {};
+    if (latestScanRow) {
+        try {
+            const scanData = JSON.parse(latestScanRow.raw_data);
+            if (scanData.results) {
+                scanData.results.forEach(r => {
+                    scanResultsMap[r.ticker] = r.data || r;
+                });
+            }
+        } catch(e) {}
+    }
+
+    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const rows = db.prepare(`
+        SELECT ticker, raw_data 
+        FROM unified_alerts 
+        WHERE timestamp > ?
+        GROUP BY ticker
+        HAVING MAX(timestamp)
+    `).all(last24h);
+    
+    let matchedCoins = [];
+    
+    rows.forEach(row => {
+        try {
+            const data = JSON.parse(row.raw_data);
+            let match = true;
+            
+            // 1. Check RSI Criteria
+            if (filters.rsi && filters.rsi.timeframe && filters.rsi.value) {
+                let rsiVal = null;
+                const reqTf = filters.rsi.timeframe;
+                
+                if (data.rsi_matrix) {
+                   rsiVal = data.rsi_matrix[reqTf];
+                   // Fallback logic for missing exact timeframe
+                   if (!rsiVal && reqTf === 'm15') {
+                       if (data.rsi_matrix.m5 && data.rsi_matrix.m30) {
+                           rsiVal = (parseFloat(data.rsi_matrix.m5) + parseFloat(data.rsi_matrix.m30)) / 2;
+                       } else {
+                           rsiVal = data.rsi_matrix.m5 || data.rsi_matrix.m30;
+                       }
+                   }
+                }
+                
+                if (!rsiVal) {
+                    match = false;
+                } else {
+                    const r = parseFloat(rsiVal);
+                    if (filters.rsi.operator === '>') {
+                        if (r <= filters.rsi.value) match = false;
+                    } else if (filters.rsi.operator === '<') {
+                        if (r >= filters.rsi.value) match = false;
+                    }
+                }
+            }
+            
+            // 2. Check EMA Criteria
+            if (match && filters.ema200 && filters.ema200.timeframe && filters.ema200.operator) {
+                const reqTf = filters.ema200.timeframe;
+                let emaVal = null;
+                
+                if (data.smart_levels && data.smart_levels.emas_200) {
+                   const rawEma = data.smart_levels.emas_200[reqTf];
+                   if (rawEma) {
+                       emaVal = rawEma.p ? parseFloat(rawEma.p) : parseFloat(rawEma);
+                   } else if (!rawEma && reqTf === 'm5') {
+                       // Sometimes m5 is missing, safely fallback to next timeframe
+                       const fallback = data.smart_levels.emas_200['m15'] || data.smart_levels.emas_200['h1'];
+                       if (fallback) emaVal = fallback.p ? parseFloat(fallback.p) : parseFloat(fallback);
+                   }
+                }
+                
+                if (!emaVal) {
+                    match = false; // Exclude if level is unmapped
+                } else {
+                    const price = parseFloat(data.price || 0);
+                    if (price > 0) {
+                        if (filters.ema200.operator === '>') {
+                            if (price <= emaVal) match = false; // Looking for price > EMA
+                        } else if (filters.ema200.operator === '<') {
+                            if (price >= emaVal) match = false; // Looking for price < EMA
+                        }
+                    } else {
+                        match = false;
+                    }
+                }
+            }
+            
+            // 2.5 Check Volume & Change %
+            if (match && filters.volume && filters.volume.operator !== undefined) {
+                let volVal = null;
+                if (data.today_volume !== undefined) volVal = parseFloat(data.today_volume);
+                else if (data.volume && data.volume.day_vol !== undefined) volVal = parseFloat(data.volume.day_vol);
+                
+                if (volVal === null || isNaN(volVal)) {
+                    match = false;
+                } else {
+                    if (filters.volume.operator === '>') {
+                        if (volVal <= filters.volume.value) match = false;
+                    } else if (filters.volume.operator === '<') {
+                        if (volVal >= filters.volume.value) match = false;
+                    }
+                }
+            }
+            
+            if (match && filters.change_pct && filters.change_pct.operator !== undefined) {
+                let chgVal = null;
+                if (data.today_change_pct !== undefined) chgVal = parseFloat(data.today_change_pct);
+                
+                if (chgVal === null || isNaN(chgVal)) {
+                    match = false;
+                } else {
+                    if (filters.change_pct.operator === '>') {
+                        if (chgVal <= filters.change_pct.value) match = false;
+                    } else if (filters.change_pct.operator === '<') {
+                        if (chgVal >= filters.change_pct.value) match = false;
+                    }
+                }
+            }
+            
+            // 3. Check Smart Level Proximity (and Confluence)
+            let matched_levels = [];
+            if (match && filters.smart_level && filters.smart_level.max_distance_pct !== undefined) {
+                const breakers = RSIEngine.generateSpeedbreakers(data.price, data.smart_levels);
+                const targetType = filters.smart_level.type || 'ANY';
+                const minCount = filters.smart_level.min_confluence || 1;
+                
+                for (let b of breakers) {
+                    if (targetType === 'ANY' || b.type === targetType) {
+                        if (Math.abs(b.distance_pct) <= filters.smart_level.max_distance_pct) {
+                            matched_levels.push(b);
+                        }
+                    }
+                }
+                
+                if (matched_levels.length < minCount) match = false;
+            }
+            
+            // 4. Check 26-column Macro properties
+            let macro_data = null;
+            if (match && filters.macro_columns) {
+                macro_data = scanResultsMap[row.ticker];
+                if (!macro_data) {
+                    match = false; // Could not find this coin in the latest macro scan
+                } else {
+                    for (const [key, rule] of Object.entries(filters.macro_columns)) {
+                        const val = macro_data[key];
+                        if (val === undefined) {
+                            match = false;
+                            break;
+                        }
+                        
+                        if (typeof rule === 'object' && rule !== null) {
+                            if (rule.operator === '>') {
+                                if (val <= rule.value) match = false;
+                            } else if (rule.operator === '<') {
+                                if (val >= rule.value) match = false;
+                            } else if (rule.operator === '==') {
+                                if (val !== rule.value) match = false;
+                            }
+                        } else {
+                            // Exact match
+                            if (val !== rule) match = false;
+                        }
+                        
+                        if (!match) break;
+                    }
+                }
+            }
+            
+            if (match) {
+                // Provide a full picture back to the AI
+                const allBreakers = RSIEngine.generateSpeedbreakers(data.price, data.smart_levels);
+                
+                // Construct stripped-down macro context if available
+                let macroContext = null;
+                if (scanResultsMap[row.ticker]) {
+                   const md = scanResultsMap[row.ticker];
+                   macroContext = { score: md.score, breakout: md.breakout, volSpike: md.volSpike, momScore: md.momScore };
+                }
+                
+                matchedCoins.push({
+                    ticker: row.ticker,
+                    price: data.price,
+                    change_pct: data.today_change_pct,
+                    volume: data.today_volume || (data.volume ? data.volume.day_vol : null),
+                    macro_context: macroContext,
+                    rsi_matrix: data.rsi_matrix,
+                    smart_levels_matched: matched_levels.length > 0 ? matched_levels : null,
+                    closest_levels: allBreakers.slice(0, 3) // Give Claude the 3 closest levels for context
+                });
+            }
+        } catch(e) {}
+    });
+    
+    return {
+        criteria_used: filters,
+        matched_count: matchedCoins.length,
+        coins: matchedCoins
+    };
+}
+
+async function getDatabaseSchema() {
+    const tables = db.prepare("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'").all();
+    return tables.map(t => ({ table: t.name, schema: t.sql }));
+}
+
+async function runReadonlySqlQuery(query) {
+    // Basic sandboxing
+    if (!query.trim().toUpperCase().startsWith('SELECT') && !query.trim().toUpperCase().startsWith('WITH')) {
+         return { error: "Security Exception: Only SELECT statements are allowed via MCP." };
+    }
+    try {
+         let safeQuery = query;
+         if (!safeQuery.toUpperCase().includes('LIMIT')) {
+             safeQuery += " LIMIT 100"; // Prevent MCP payload overflow
+         }
+         const results = db.prepare(safeQuery).all();
+         return {
+             query_executed: safeQuery,
+             returned_rows: results.length,
+             data: results
+         };
+    } catch(err) {
+         return { error: "SQL Execution Error: " + err.message };
+    }
+}
+
 module.exports = {
     getMarketSentiment,
     getMasterWatchlist,
     getTopCatalysts,
     getInstitutionalPulse,
-    analyzeTarget
+    analyzeTarget,
+    queryTechnicalFilters,
+    getDatabaseSchema,
+    runReadonlySqlQuery
 };

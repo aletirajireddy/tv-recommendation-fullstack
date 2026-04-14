@@ -40,10 +40,15 @@ const backend = spawnProcess('BACKEND', 'npm', ['run', 'watch'], serverDir, '\x1
 const clientDir = path.join(__dirname, 'client');
 const frontend = spawnProcess('FRONTEND', 'npm', ['run', 'dev'], clientDir, '\x1b[36m'); // Cyan
 
+// 3. Start MCP Server (Intelligence Layer)
+const mcpDir = path.join(__dirname, 'mcp-server');
+const mcp = spawnProcess('MCP', 'npm', ['start'], mcpDir, '\x1b[33m'); // Yellow
+
 // Handle Exit
 process.on('SIGINT', () => {
     console.log('\n\x1b[31m[SYSTEM] Shutting down...\x1b[0m');
     backend.kill();
     frontend.kill();
+    mcp.kill();
     process.exit();
 });

@@ -620,30 +620,39 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
             return 0; // Neutral or uncategorized
         };
 
+        // Helper: Strip prefixes/suffixes to match 'ADAUSDT.P' with 'ADAUSDT'
+        const normalizeTicker = (str) => {
+            if (!str || typeof str !== 'string') return '';
+            const core = str.includes(':') ? str.split(':')[1] : str;
+            return core.replace(/\.P$|\.PRP$|\.PERP$/i, '').toUpperCase();
+        };
+
         const timeline = rows.map(row => {
             const payload = JSON.parse(row.payload_json);
             const activeSnaps = payload.screener_visible_snapshot || [];
             const watchlistSnaps = payload.watchlist_active_snapshot || [];
             
-            // Track actively watched coins
-            const watchlistTickers = new Set(watchlistSnaps.map(w => w.full));
+            // Build a normalized set of current watchlist coins
+            const normalizedWatchlist = new Set();
+            watchlistSnaps.forEach(w => {
+                if (w.full) normalizedWatchlist.add(normalizeTicker(w.full));
+            });
+
+            const rawWatchlistCount = payload.watchlist_count || watchlistSnaps.length || 0;
 
             let bull_score = 0;
             let bear_score = 0;
-            let net_screener_count = 0;
+            let overlapCount = 0;
 
             activeSnaps.forEach(item => {
-                // Rule: If it's already in the watchlist, do not count it as "New" momentum in the Screener
-                if (item.full && watchlistTickers.has(item.full)) {
-                    return;
+                // Use normalization to catch matches even if suffixes differ (.P)
+                const normScreener = item.full ? normalizeTicker(item.full) : '';
+                if (normScreener && normalizedWatchlist.has(normScreener)) {
+                    overlapCount++;
                 }
 
-                net_screener_count++;
+                // Calculate ratings for 100% of the discovery set
                 let coinTotal = 0;
-                
-                // The user's widget screenshot shows: Symbol, Tech Rating, MA Rating, Os Rating.
-                // Because TradingView DOM attributes can vary, we will scan *all* string values in the JSON object
-                // belonging to this coin. If a string is a standard TV rating, we score it.
                 Object.values(item).forEach(val => {
                     const score = getRatingScore(val);
                     coinTotal += score;
@@ -655,8 +664,10 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
 
             return {
                 time: row.timestamp,
-                screener_count: net_screener_count,
-                watchlist_count: payload.watchlist_count || watchlistSnaps.length || 0,
+                // Total Screener: The full raw set appearing in discovery
+                screener_count: activeSnaps.length,
+                // Tracked Watchlist: Total minus those currently being highlighted in discovery
+                watchlist_count: Math.max(0, rawWatchlistCount - overlapCount),
                 bull_score: bull_score,
                 bear_score: bear_score,
                 net_score: bull_score - bear_score

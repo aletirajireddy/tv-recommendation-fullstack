@@ -13,15 +13,34 @@ if (!sseUrl) {
 }
 
 let messageUrl = null;
+const messageQueue = [];
 
 // 1. Connect to the Remote Tailscale SSE Endpoint
 console.error(`[Proxy] Connecting to Remote SSE: ${sseUrl}...`);
 const es = new EventSource(sseUrl);
 
-es.addEventListener('endpoint', (event) => {
+async function forwardMessage(line) {
+    try {
+        await fetch(messageUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: line
+        });
+    } catch (e) {
+        console.error("[Proxy Error] Failed to send message to server:", e);
+    }
+}
+
+es.addEventListener('endpoint', async (event) => {
     // The server tells us where to POST responses via the 'endpoint' event
     messageUrl = new URL(event.data, sseUrl).toString();
     console.error(`[Proxy] Handshake Successful. Message Endpoint: ${messageUrl}`);
+    
+    // Flush any messages Claude sent before the connection was ready
+    while (messageQueue.length > 0) {
+        const msg = messageQueue.shift();
+        await forwardMessage(msg);
+    }
 });
 
 es.onmessage = (event) => {
@@ -44,18 +63,11 @@ const rl = readline.createInterface({
 
 rl.on('line', async (line) => {
     if (!messageUrl) {
-        console.error("[Proxy Error] Waiting for endpoint URL from server...");
+        // Queue messages if Claude is impatient
+        messageQueue.push(line);
         return;
     }
     
     // 4. When Claude Desktop asks a question, forward it as a POST request to your Tailscale server
-    try {
-        await fetch(messageUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: line
-        });
-    } catch (e) {
-        console.error("[Proxy Error] Failed to send message to server:", e);
-    }
+    await forwardMessage(line);
 });
