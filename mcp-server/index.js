@@ -7,7 +7,27 @@ const tools = require('./tools');
 const resources = require('./resources');
 
 const app = express();
-app.use(cors());
+// 1. Enhanced CORS for Cloud/AI Connectors
+app.use(cors({
+    origin: '*', // Allow Perplexity/OpenAI/Claude to connect
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Mcp-Session-Id', 'X-Request-Id'],
+    exposedHeaders: ['Mcp-Session-Id', 'X-Request-Id']
+}));
+
+// 2. Add a Landing Page/Root for /mcp to avoid 404 HTML errors
+app.get('/mcp', (req, res) => {
+    res.json({
+        name: "Trade View Dashboard MCP",
+        status: "Online",
+        endpoints: {
+            sse: "/mcp/sse",
+            message: "/mcp/message",
+            health: "/mcp/health"
+        },
+        transport: "sse"
+    });
+});
 
 app.get('/mcp/health', (req, res) => {
     res.json({ status: 'ok', engine: 'mcp-sse', timestamp: new Date() });

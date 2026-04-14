@@ -18,7 +18,13 @@ export default defineConfig({
       },
       '/mcp': {
         target: 'http://localhost:3001',
-        changeOrigin: true
+        changeOrigin: true,
+        secure: false,
+        headers: {
+          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache',
+          'X-Accel-Buffering': 'no'
+        }
       }
     }
   }
