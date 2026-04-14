@@ -2,9 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import { Activity, RefreshCw, Zap, TrendingUp, TrendingDown } from 'lucide-react';
 import {
-    ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine
+    ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush
 } from 'recharts';
 import { format } from 'date-fns';
+import { useChartBrush } from '../../hooks/useChartBrush';
 
 export function ParticipationPulseWidget() {
     const participationPulse = useTimeStore(s => s.participationPulse);
@@ -67,6 +68,9 @@ export function ParticipationPulseWidget() {
         });
     }, [participationPulse]);
 
+    // ── Shared brush hook (fixes localStorage persistence + live-follow) ──
+    const { brushRange, handleBrushChange } = useChartBrush('tv_pulseBrush', chartData);
+
     if(chartData.length === 0) return null;
 
     const latest = chartData[chartData.length - 1] || {};
@@ -107,7 +111,7 @@ export function ParticipationPulseWidget() {
     };
 
     return (
-        <div className={`flex flex-col w-full p-4 h-[350px] rounded-lg shadow-sm ${isPulsing ? 'animate-widget-glow' : ''}`} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+        <div className={`flex flex-col w-full p-4 h-[350px] rounded-lg shadow-sm ${isPulsing ? 'animate-widget-glow' : ''}`} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', touchAction: 'pan-y' }}>
             
             <div className="flex items-center justify-between mb-2 pb-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <div className="flex items-center gap-2">
@@ -209,6 +213,18 @@ export function ParticipationPulseWidget() {
                             dot={false}
                             isAnimationActive={false} 
                             activeDot={{ r: 6, fill: '#3B82F6', stroke: 'var(--bg-card)', strokeWidth: 2 }}
+                        />
+
+                        {/* Recharts Brush: desktop drag handles & optimized for mobile via touchAction */}
+                        <Brush 
+                            dataKey="timeLabel" 
+                            height={22}
+                            travellerWidth={18}
+                            stroke="var(--text-tertiary)" 
+                            fill="var(--bg-app)"
+                            onChange={handleBrushChange}
+                            startIndex={brushRange.startIndex}
+                            endIndex={brushRange.endIndex}
                         />
                     </ComposedChart>
                 </ResponsiveContainer>
