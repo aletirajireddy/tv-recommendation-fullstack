@@ -10,15 +10,22 @@ class TelegramService {
         this.bot = null;
 
         // Control Flags
-        // Load persisted state (Synchronous for better-sqlite3)
+        // 1. Environment Detection
+        this.env = process.env.APP_ENV || 'local';
+        this.isLocallyEnabled = process.env.TELEGRAM_ENABLED !== 'false'; // Master .env toggle
+
+        // 2. Load persisted DB state (Synchronous for better-sqlite3)
         try {
             const setting = db.prepare("SELECT value FROM system_settings WHERE key = 'telegram_enabled'").get();
             // Value is stored as string 'true'/'false'
-            this.isEnabled = setting ? (setting.value === 'true') : true; // Default ON
+            this.dbEnabled = setting ? (setting.value === 'true') : true; // Default ON
         } catch (e) {
-            console.warn('⚠️ Could not load Telegram settings, defaulting to ON');
-            this.isEnabled = true;
+            console.warn('⚠️ Could not load Telegram settings from DB, defaulting to ON');
+            this.dbEnabled = true;
         }
+
+        // Final composite state
+        this.isEnabled = this.isLocallyEnabled && this.dbEnabled;
 
         this.bootTime = Date.now(); // Fresh Start Protocol
 
@@ -33,18 +40,25 @@ class TelegramService {
         if (this.token && this.token !== 'YOUR_BOT_TOKEN_HERE') {
             try {
                 this.bot = new TelegramBot(this.token, { polling: false });
-                console.log(`✅ Telegram Service Initialized (Enabled: ${this.isEnabled})`);
+                console.log(`✅ Telegram Service Initialized [Env: ${this.env.toUpperCase()}] (Enabled: ${this.isEnabled})`);
 
                 // [USER REQUEST]: Send explicit Startup Notification
                 if (this.isEnabled) {
-                    this.sendAlert(`🚀 **SYSTEM ONLINE**\n\nDashboard V3 is active and monitoring.\nTime: ${new Date().toLocaleTimeString()}`, 'INFO');
+                    const prefix = this.getPrefix();
+                    this.sendAlert(`${prefix} 🚀 **SYSTEM ONLINE**\n\nDashboard V3 is active and monitoring.\nTime: ${new Date().toLocaleTimeString()}`, 'INFO');
                 }
             } catch (err) {
                 console.error('❌ Telegram Init Error:', err);
             }
         } else {
-            console.warn('⚠️ Telegram Token missing or invalid. Notifications disabled.');
+            console.warn(`⚠️ Telegram Token missing or invalid in [${this.env}] env. Notifications suppressed.`);
         }
+    }
+
+    getPrefix() {
+        if (this.env === 'cloud' || this.env === 'production') return '☁️ [CLOUD]';
+        if (this.env === 'local' || this.env === 'development') return '💻 [LOCAL]';
+        return `🆔 [${this.env.toUpperCase()}]`;
     }
 
     toggle(enabled) {
@@ -75,9 +89,12 @@ class TelegramService {
         if (!this.bot || !this.chatId || !this.isEnabled) return;
 
         try {
-            await this.bot.sendMessage(this.chatId, message, { parse_mode: 'Markdown' });
+            const prefix = this.getPrefix();
+            const taggedMessage = message.startsWith(prefix) ? message : `${prefix} ${message}`;
+            
+            await this.bot.sendMessage(this.chatId, taggedMessage, { parse_mode: 'Markdown' });
             this.lastSent = Date.now();
-            console.log('📤 Telegram Alert Sent');
+            console.log(`📤 Telegram Alert Sent [${this.env}]`);
         } catch (err) {
             console.error('❌ Failed to send Telegram alert:', err.message);
         }
