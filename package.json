@@ -1,0 +1,12 @@
+{
+  "name": "tv-dashboard-root",
+  "version": "1.0.0",
+  "description": "Root management for TV Recommendation Dashboard",
+  "scripts": {
+    "deploy": "powershell -File ./sync_to_cloud.ps1",
+    "start": "node start_all.js",
+    "test:telegram": "node server/test_telegram.js"
+  },
+  "author": "",
+  "license": "ISC"
+}

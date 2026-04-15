@@ -13,9 +13,28 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNING: Git push failed or nothing to push. Attempting to continue..." -ForegroundColor Yellow
 }
 
-Write-Host "`n[2/3] Triggering Cloud Update..."
-# SSH into the VM, pull the latest code, and restart the Node.js ecosystem
-ssh $VmUser@$VmTailnetIp 'cd ~/tv_dashboard && git pull origin main && npm run build --prefix client && pm2 reload ecosystem.config.js'
+Write-Host "`n[2/3] Triggering Cloud Update & Grooming..."
+# Remote commands:
+# 1. Pull code
+# 2. Ensure .env exists and has the correct APP_ENV/Telegram flags
+# 3. Install dependencies if package-lock changed
+# 4. Run Telegram diagnostic
+# 5. Reload PM2
+$remoteCmd = @"
+cd ~/tv_dashboard && \
+git pull origin main && \
+touch server/.env && \
+(grep -q 'APP_ENV' server/.env || echo 'APP_ENV=cloud' >> server/.env) && \
+(grep -q 'TELEGRAM_ENABLED' server/.env || echo 'TELEGRAM_ENABLED=true' >> server/.env) && \
+sed -i 's/^APP_ENV=.*/APP_ENV=cloud/' server/.env && \
+sed -i 's/^TELEGRAM_ENABLED=.*/TELEGRAM_ENABLED=true/' server/.env && \
+npm install --prefix server && \
+Write-Host '--- Running Remote Telegram Diagnostic ---' && \
+node server/test_telegram.js && \
+pm2 reload ecosystem.config.js
+"@
+
+ssh $VmUser@$VmTailnetIp $remoteCmd
 
 Write-Host "`n[3/3] Database Migration?"
 Write-Host "Do you want to OVERWRITE the Cloud Database with your Local Database? (y/N)"
