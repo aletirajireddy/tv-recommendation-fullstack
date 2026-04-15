@@ -1,5 +1,5 @@
 param(
-    [string]$VmTailnetIp = "YOUR_TAILSCALE_IP", # Replace with your VM's Tailscale IP or Domain
+    [string]$VmTailnetIp = "100.117.206.17", # vds-trading-prod
     [string]$VmUser = "ubuntu" # Default user for Ubuntu on Oracle Cloud
 )
 
