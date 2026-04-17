@@ -7,10 +7,18 @@ import { format, startOfDay, addHours } from 'date-fns';
 import { useChartBrush } from '../../hooks/useChartBrush';
 
 export function MarketSentimentTimeline() {
-    const timeline = useTimeStore(s => s.timeline);
+    const fullTimeline = useTimeStore(s => s.timeline);
+    const currentIndex = useTimeStore(s => s.currentIndex);
+    const lookbackHours = useTimeStore(s => s.lookbackHours);
 
     const { chartData, timezones } = useMemo(() => {
-        if (!timeline || timeline.length === 0) return { chartData: [], timezones: [] };
+        if (!fullTimeline || fullTimeline.length === 0) return { chartData: [], timezones: [] };
+        
+        // Time Isolation Protocol
+        // Limit backward history to the Lookback Lens
+        const refTimeMs = new Date(fullTimeline[currentIndex].timestamp).getTime();
+        const cutoffMs = refTimeMs - (lookbackHours * 60 * 60 * 1000);
+        const timeline = fullTimeline.slice(0, currentIndex + 1).filter(t => new Date(t.timestamp).getTime() >= cutoffMs);
         
         const data = timeline.map(t => {
             const mood = t.mood || 0;
@@ -41,12 +49,12 @@ export function MarketSentimentTimeline() {
         }
 
         return { chartData: data, timezones: markers };
-    }, [timeline]);
+    }, [fullTimeline, currentIndex, lookbackHours]);
 
     // ── Shared brush hook (fixes localStorage persistence + live-follow) ──
     const { brushRange, handleBrushChange } = useChartBrush('tv_marketSentimentBrush', chartData);
 
-    if (chartData.length === 0) {
+    if (chartData.length < 2) {
         return (
             <div className="flex items-center justify-center p-8 text-gray-500 font-mono text-xs border rounded-lg bg-[var(--bg-card)] border-[var(--border-subtle)]">
                 AWAITING MACRO TIMELINE...

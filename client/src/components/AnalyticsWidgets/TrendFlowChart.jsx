@@ -22,7 +22,7 @@ export function TrendFlowChart() {
     const data = useMemo(() => {
         if (!analyticsData?.time_spread) return [];
         // Slice the first 60 items since the backend sorts the newest first
-        const recentSpread = analyticsData.time_spread.slice(0, 60);
+        const recentSpread = analyticsData.time_spread;
         return toMoodFlowData(recentSpread);
     }, [analyticsData]);
 

@@ -15,7 +15,12 @@ const ScenarioBoard = () => {
 
     const fetchScenarios = async () => {
         try {
-            const res = await fetch(`/api/analytics/scenarios?hours=${TACTICAL_WINDOW_HOURS}&smartLevels=${useSmartLevelsContext}`);
+            let refTimeStr = '';
+            if (activeScan && activeScan.timestamp) {
+                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+            }
+
+            const res = await fetch(`/api/analytics/scenarios?hours=${TACTICAL_WINDOW_HOURS}&smartLevels=${useSmartLevelsContext}${refTimeStr}`);
             const data = await res.json();
             if (data && !data.error) {
                 setScenarios(data);

@@ -38,7 +38,7 @@ export function ParticipationPulseWidget() {
     const chartData = React.useMemo(() => {
         if (!participationPulse || participationPulse.length === 0) return [];
         
-        let dataToProcess = participationPulse.length > 120 ? participationPulse.slice(-120) : participationPulse;
+        let dataToProcess = participationPulse;
 
         // Force minimum 2 points for Recharts area rendering
         if (dataToProcess.length === 1) {

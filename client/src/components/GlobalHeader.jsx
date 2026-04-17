@@ -82,6 +82,8 @@ export function GlobalHeader() {
 
     // ... existing rendering logic ...
 
+    const isLive = timeline.length > 0 && currentIndex === timeline.length - 1;
+
     return (
         <header className={`${styles.header} ${isPulsing ? 'animate-header-flow' : ''}`}>
             <div className={styles.deckSection}>
@@ -91,6 +93,13 @@ export function GlobalHeader() {
             <div className={styles.metaSection}>
                 {/* VIEW MODE TOGGLE */}
                 <div className={styles.modeSwitch}>
+                    <div 
+                        className={isLive ? styles.activeMode : styles.inactiveMode} 
+                        style={{ marginRight: '16px', fontWeight: 'bold', pointerEvents: 'none' }}
+                    >
+                        {isLive ? <span style={{ color: '#ef4444' }}>🔴 LIVE</span> : <span style={{ color: '#f59e0b' }}>⏪ REPLAY</span>}
+                    </div>
+
                     <button
                         className={useSmartLevelsContext ? styles.activeMode : styles.inactiveMode}
                         onClick={() => setSmartLevelsContext(!useSmartLevelsContext)}

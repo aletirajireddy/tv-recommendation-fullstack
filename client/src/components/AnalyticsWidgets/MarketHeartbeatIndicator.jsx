@@ -7,11 +7,19 @@ import { format, startOfDay, addHours } from 'date-fns';
 import { useChartBrush } from '../../hooks/useChartBrush';
 
 export function MarketHeartbeatIndicator() {
-    const timeline      = useTimeStore(s => s.timeline);
+    const fullTimeline = useTimeStore(s => s.timeline);
+    const currentIndex = useTimeStore(s => s.currentIndex);
     const analyticsData = useTimeStore(s => s.analyticsData);
+    const lookbackHours = useTimeStore(s => s.lookbackHours);
 
     const { chartData, timezones } = useMemo(() => {
-        if (!timeline || timeline.length === 0) return { chartData: [], timezones: [] };
+        if (!fullTimeline || fullTimeline.length === 0) return { chartData: [], timezones: [] };
+
+        // Time Isolation: Only render history up to the current scrubber position!
+        // Also limit backwards to respect the Lookback Lens
+        const refTimeMs = new Date(fullTimeline[currentIndex].timestamp).getTime();
+        const cutoffMs = refTimeMs - (lookbackHours * 60 * 60 * 1000);
+        const timeline = fullTimeline.slice(0, currentIndex + 1).filter(t => new Date(t.timestamp).getTime() >= cutoffMs);
 
         const data = timeline.map(scan => {
             const rawMood = scan.mood || 0;
@@ -60,12 +68,12 @@ export function MarketHeartbeatIndicator() {
         }
 
         return { chartData: data, timezones: markers };
-    }, [timeline, analyticsData]);
+    }, [fullTimeline, currentIndex, analyticsData, lookbackHours]);
 
     // ── Shared brush hook (fixes localStorage persistence + live-follow) ──
     const { brushRange, handleBrushChange } = useChartBrush('tv_heartbeatBrush', chartData);
 
-    if (chartData.length === 0) return null;
+    if (chartData.length < 2) return null;
 
     const CustomTooltip = ({ active, payload }) => {
         if (active && payload && payload.length) {

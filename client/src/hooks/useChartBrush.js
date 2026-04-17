@@ -60,8 +60,14 @@ export function useChartBrush(storageKey, chartData) {
                 applyState({ ...cur, startIndex: newStart, endIndex: newEnd });
             }
         } else {
-            const clampedStart = Math.min(Math.max(0, cur.startIndex), lastIdx);
-            const clampedEnd   = Math.min(Math.max(clampedStart, cur.endIndex), lastIdx);
+            let clampedStart = Math.min(Math.max(0, cur.startIndex), lastIdx);
+            let clampedEnd   = Math.min(Math.max(clampedStart, cur.endIndex), lastIdx);
+
+            // Recharts Crash Prevention: If clamped window drops to 0 width, force it open
+            if (clampedStart === clampedEnd && lastIdx > 0) {
+                const winSize = cur.windowSize > 0 ? cur.windowSize : DEFAULT_WINDOW_SIZE;
+                clampedStart = Math.max(0, clampedEnd - winSize + 1);
+            }
 
             if (clampedStart !== cur.startIndex || clampedEnd !== cur.endIndex) {
                 applyState({ ...cur, startIndex: clampedStart, endIndex: clampedEnd });

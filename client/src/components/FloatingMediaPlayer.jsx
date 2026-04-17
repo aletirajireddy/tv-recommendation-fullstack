@@ -21,6 +21,58 @@ export function FloatingMediaPlayer() {
         setScrubVal(currentIndex);
     }, [currentIndex]);
 
+    // --- PLAYBACK ENGINE ---
+    useEffect(() => {
+        let interval;
+        if (isPlaying) {
+            interval = setInterval(() => {
+                const currentIdx = useTimeStore.getState().currentIndex;
+                const timeLineLen = useTimeStore.getState().timeline.length;
+                if (currentIdx < timeLineLen - 1) {
+                    useTimeStore.getState().stepForward();
+                } else {
+                    // Reached the end, pause playback
+                    useTimeStore.setState({ isPlaying: false });
+                }
+            }, 4000); // 4 second playback speed
+        }
+        return () => clearInterval(interval);
+    }, [isPlaying]);
+
+    // --- KEYBOARD CONTROLS ---
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            // Ignore if typing in an input
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            switch (e.code) {
+                case 'Space':
+                    e.preventDefault();
+                    useTimeStore.setState({ isPlaying: !useTimeStore.getState().isPlaying });
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    useTimeStore.getState().stepForward();
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    useTimeStore.getState().stepBack();
+                    break;
+                case 'Home':
+                    e.preventDefault();
+                    useTimeStore.getState().skipToStart();
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    useTimeStore.getState().skipToEnd();
+                    break;
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
     // --- DRAG LOGIC ---
     // Default position: Bottom Right (fixed fallback)
     const [position, setPosition] = useState({ x: window.innerWidth - 300, y: window.innerHeight - 100 });

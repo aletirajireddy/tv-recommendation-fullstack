@@ -100,8 +100,11 @@ class TelegramService {
         }
     }
 
-    getLogs(limit = 100) {
+    getLogs(limit = 100, anchorStr = null) {
         try {
+            if (anchorStr) {
+                return db.prepare('SELECT * FROM telegram_logs WHERE timestamp <= ? ORDER BY timestamp DESC LIMIT ?').all(anchorStr, limit);
+            }
             return db.prepare('SELECT * FROM telegram_logs ORDER BY timestamp DESC LIMIT ?').all(limit);
         } catch (e) {
             console.error('Failed to fetch TLogs:', e);

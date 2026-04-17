@@ -119,6 +119,7 @@ export const useTimeStore = create((set, get) => ({
             console.log('⚡ New Scan Received:', newScanMeta);
             const { timeline, currentIndex, loadScan, fetchAnalytics, fetchResearch, fetchNotifications } = get();
 
+            // isLive check allows us to buffer incoming data if the user is scrubbing historically
             const isLive = currentIndex === timeline.length - 1;
             const newTimeline = [...timeline, newScanMeta];
 
@@ -127,43 +128,57 @@ export const useTimeStore = create((set, get) => ({
                 lastSyncTime: new Date()
             });
 
-            // Rule #8: Live Reactivity - Snap to latest if we were already live
+            // Rule #14 Guard: Live vs Replay
             if (isLive) {
                 set({ currentIndex: newTimeline.length - 1 });
                 loadScan(newScanMeta.id); // This triggers GenieSmart calculation inside loadScan
+                
+                // Refresh analytics instantly because we are looking at the live edge
+                if (fetchAnalytics) fetchAnalytics();
+                if (fetchResearch) fetchResearch();
+                if (fetchNotifications) fetchNotifications();
+                if (get().fetchStrategyLogs) get().fetchStrategyLogs();
+                if (get().fetchAlphaSquad) get().fetchAlphaSquad();
             }
-
-            // Refresh analytics on new data
-            if (fetchAnalytics) fetchAnalytics();
-            if (fetchResearch) fetchResearch();
-            if (fetchNotifications) fetchNotifications();
-            if (get().fetchStrategyLogs) get().fetchStrategyLogs(); // Refresh TLogs
-            if (get().fetchAlphaSquad) get().fetchAlphaSquad(); // Refresh Alpha Squad
         });
 
         // Handle Ledger Updates (The Picker)
         SocketService.on('ledger-update', (data) => {
             console.log('⚡ Picker Update:', data);
-            // In V3, we might want to refresh a "Watchlist" component here
-            // For now, simpler notification or just log
         });
 
         // Handle Stream C Webhook Updates (Fusion Dashboard)
         SocketService.on('smart-level-update', (data) => {
             console.log('⚡ Smart Level Update:', data);
-            get().fetchFusionData();
+            const { timeline, currentIndex } = get();
+            const isLive = currentIndex === timeline.length - 1;
+            if (isLive) {
+                get().fetchFusionData();
+            }
         });
 
         // Handle Stream B Market Context Updates (Telemetry)
         SocketService.on('market-context-update', (data) => {
             console.log('⚡ Market Context Telemetry Update', data);
-            get().fetchParticipationPulse();
+            const { timeline, currentIndex } = get();
+            const isLive = currentIndex === timeline.length - 1;
+            if (isLive) {
+                get().fetchParticipationPulse();
+            }
         });
     },
 
     fetchNotifications: async () => {
         try {
-            const res = await fetch(`${API_BASE}/notifications?limit=100&_t=${Date.now()}`);
+            const { activeScan, timeline, currentIndex } = get();
+            let refTimeStr = '';
+            if (activeScan && activeScan.timestamp) {
+                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+            }
+
+            const res = await fetch(`${API_BASE}/notifications?limit=100${refTimeStr}&_t=${Date.now()}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             set({ notifications: Array.isArray(data) ? data : [] });
@@ -175,7 +190,15 @@ export const useTimeStore = create((set, get) => ({
 
     fetchStrategyLogs: async () => {
         try {
-            const res = await fetch(`${API_BASE}/strategy/logs?limit=100&_t=${Date.now()}`);
+            const { activeScan, timeline, currentIndex } = get();
+            let refTimeStr = '';
+            if (activeScan && activeScan.timestamp) {
+                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+            }
+
+            const res = await fetch(`${API_BASE}/strategy/logs?limit=100${refTimeStr}&_t=${Date.now()}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             set({ strategyLogs: Array.isArray(data) ? data : [] });
@@ -235,7 +258,7 @@ export const useTimeStore = create((set, get) => ({
 
     fetchTimeline: async () => {
         try {
-            const hours = get().lookbackHours || 24;
+            const hours = 720; // 30 Days fixed sandbox capacity
             const res = await fetch(`${API_BASE}/ai/history?hours=${hours}&_t=${Date.now()}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
@@ -388,6 +411,8 @@ export const useTimeStore = create((set, get) => ({
         set({ lookbackHours: hours });
         get().fetchAnalytics();
         get().fetchResearch();
+        get().fetchParticipationPulse();
+        get().fetchAlphaSquad();
     },
 
     fetchResearch: async () => {
@@ -425,7 +450,15 @@ export const useTimeStore = create((set, get) => ({
 
     fetchFusionData: async () => {
         try {
-            const res = await fetch(`${API_BASE}/fusion/dashboard`);
+            const { activeScan, timeline, currentIndex } = get();
+            let refTimeStr = '';
+            if (activeScan && activeScan.timestamp) {
+                refTimeStr = `?refTime=${encodeURIComponent(activeScan.timestamp)}`;
+            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                refTimeStr = `?refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+            }
+
+            const res = await fetch(`${API_BASE}/fusion/dashboard${refTimeStr}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             set({ 
@@ -440,7 +473,15 @@ export const useTimeStore = create((set, get) => ({
 
     fetchParticipationPulse: async () => {
         try {
-            const res = await fetch(`${API_BASE}/analytics/participation-pulse?hours=${get().lookbackHours}`);
+            const { lookbackHours, activeScan, timeline, currentIndex } = get();
+            let refTimeStr = '';
+            if (activeScan && activeScan.timestamp) {
+                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+            }
+
+            const res = await fetch(`${API_BASE}/analytics/participation-pulse?hours=${lookbackHours}${refTimeStr}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             set({ participationPulse: data.timeline || [] });
@@ -452,7 +493,15 @@ export const useTimeStore = create((set, get) => ({
 
     fetchAlphaSquad: async () => {
         try {
-            const res = await fetch(`${API_BASE}/analytics/alpha-squad?hours=${get().lookbackHours}`);
+            const { lookbackHours, activeScan, timeline, currentIndex } = get();
+            let refTimeStr = '';
+            if (activeScan && activeScan.timestamp) {
+                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+            }
+
+            const res = await fetch(`${API_BASE}/analytics/alpha-squad?hours=${lookbackHours}${refTimeStr}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             set({ alphaSquad: Array.isArray(data) ? data : [] });

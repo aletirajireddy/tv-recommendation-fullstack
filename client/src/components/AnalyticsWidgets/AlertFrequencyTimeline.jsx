@@ -51,7 +51,7 @@ export function AlertFrequencyTimeline() {
     // ── Shared brush hook (fixes localStorage persistence + live-follow) ──
     const { brushRange, handleBrushChange } = useChartBrush('tv_alertFreqBrush', chartData);
 
-    if (chartData.length === 0) {
+    if (chartData.length < 2) {
         return (
             <div className="flex items-center justify-center p-8 text-gray-500 font-mono text-xs border rounded-lg bg-[var(--bg-card)] border-[var(--border-subtle)]">
                 AWAITING ALERT DENSITY DATA...

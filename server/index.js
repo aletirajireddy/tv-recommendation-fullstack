@@ -599,15 +599,18 @@ app.post('/api/market-context', (req, res) => {
 app.get('/api/analytics/participation-pulse', (req, res) => {
     try {
         const hours = parseInt(req.query.hours) || 24;
-        const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+        const refTime = req.query.refTime ? new Date(req.query.refTime) : new Date();
+        const anchorTime = isNaN(refTime.getTime()) ? new Date() : refTime;
+        const anchorStr = anchorTime.toISOString();
+        const cutoff = new Date(anchorTime.getTime() - hours * 60 * 60 * 1000).toISOString();
 
         // Query the market context logs
         const rows = db.prepare(`
             SELECT timestamp, payload_json
             FROM market_context_logs
-            WHERE timestamp > ?
+            WHERE timestamp > ? AND timestamp <= ?
             ORDER BY timestamp ASC
-        `).all(cutoff);
+        `).all(cutoff, anchorStr);
 
         // Helper: Convert TV string rating to numeric score
         const getRatingScore = (val) => {
@@ -828,7 +831,10 @@ app.post('/api/settings/telegram', (req, res) => {
 app.get('/api/analytics/pulse', (req, res) => {
     try {
         const hours = parseInt(req.query.hours) || 24;
-        const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+        const refTime = req.query.refTime ? new Date(req.query.refTime) : new Date();
+        const anchorTime = isNaN(refTime.getTime()) ? new Date() : refTime;
+        const anchorStr = anchorTime.toISOString();
+        const cutoff = new Date(anchorTime.getTime() - hours * 60 * 60 * 1000).toISOString();
 
         // A. Multi-Widget Aggregation (One Pass)
         // 1. Fetch all minute-buckets in the window chronologically
@@ -846,13 +852,13 @@ app.get('/api/analytics/pulse', (req, res) => {
                 SUM(CASE WHEN direction < 0 THEN 1 ELSE 0 END) as bear_count,
                 group_concat(DISTINCT ticker) as tickers
             FROM unified_alerts 
-            WHERE timestamp > ? 
+            WHERE timestamp > ? AND timestamp <= ?
             GROUP BY (CASE 
                 WHEN timestamp LIKE '%-%' THEN strftime('%Y-%m-%d %H:%M', timestamp)
                 ELSE strftime('%Y-%m-%d %H:%M', datetime(CAST(timestamp AS INTEGER)/1000, 'unixepoch'))
             END)
             ORDER BY min_time ASC
-        `).all(cutoff);
+        `).all(cutoff, anchorStr);
 
         // 2. Node.js Time-Clustering Algorithm (Throttle events <= 3 mins apart)
         const clusters = [];
@@ -949,7 +955,7 @@ app.get('/api/analytics/pulse', (req, res) => {
 
         // 3. Market Structure (Live Snapshot from Latest Scan)
         // Groups assets by their EMA Position Code (Col 26)
-        const latestScan = db.prepare('SELECT id FROM scans ORDER BY timestamp DESC LIMIT 1').get();
+        const latestScan = db.prepare('SELECT id FROM scans WHERE timestamp <= ? ORDER BY timestamp DESC LIMIT 1').get(anchorStr);
         const market_structure = {
             bearish_structure: [],  // 3xx or 403
             choppy_structure: [],   // 2xx
@@ -991,10 +997,10 @@ app.get('/api/analytics/pulse', (req, res) => {
                 direction as bias_val,
                 origin
             FROM unified_alerts
-            WHERE timestamp > ?
+            WHERE timestamp > ? AND timestamp <= ?
             ORDER BY timestamp DESC
             LIMIT 50
-        `).all(cutoff);
+        `).all(cutoff, anchorStr);
 
         const signals = signalRows.map(r => {
             const biasVal = r.bias_val || 0;
@@ -1030,9 +1036,12 @@ app.get('/api/analytics/scenarios', (req, res) => {
     try {
         const hours = parseFloat(req.query.hours) || 1;
         const useSmartLevels = req.query.smartLevels === 'true'; // Toggle
+        const refTime = req.query.refTime ? new Date(req.query.refTime) : new Date();
+        const anchorTime = isNaN(refTime.getTime()) ? new Date() : refTime;
+        const anchorStr = anchorTime.toISOString();
 
         // 1. Get Latest Scan
-        const latestScan = db.prepare('SELECT id, timestamp FROM scans ORDER BY timestamp DESC LIMIT 1').get();
+        const latestScan = db.prepare('SELECT id, timestamp FROM scans WHERE timestamp <= ? ORDER BY timestamp DESC LIMIT 1').get(anchorStr);
         if (!latestScan) return res.json({ planA: [], planB: [], marketCheck: null });
 
         // 2. Fetch/Parse Payload
@@ -1046,14 +1055,14 @@ app.get('/api/analytics/scenarios', (req, res) => {
         // --- Fetch Active Smart Levels for the last 24h ---
         const levelMap = {};
         if (useSmartLevels) {
-            const cutoff24 = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
+            const cutoff24 = new Date(anchorTime.getTime() - (24 * 60 * 60 * 1000)).toISOString();
             const activeSmartLevels = db.prepare(`
                 SELECT ticker, raw_data
                 FROM smart_level_events
-                WHERE timestamp > ?
+                WHERE timestamp > ? AND timestamp <= ?
                 GROUP BY ticker
                 HAVING MAX(timestamp)
-            `).all(cutoff24);
+            `).all(cutoff24, anchorStr);
 
             // Helper to extract
             const extractLevels = (slObj) => {
@@ -1152,7 +1161,11 @@ app.get('/api/analytics/scenarios', (req, res) => {
 app.get('/api/strategy/logs', (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 50;
-        const logs = TelegramService.getLogs(limit);
+        const refTime = req.query.refTime ? new Date(req.query.refTime) : new Date();
+        const anchorTime = isNaN(refTime.getTime()) ? new Date() : refTime;
+        const anchorStr = anchorTime.toISOString();
+
+        const logs = TelegramService.getLogs(limit, anchorStr);
         res.json(logs);
     } catch (e) {
         console.error('Failed to fetch TLogs:', e);
@@ -1252,14 +1265,17 @@ app.get('/api/analytics/research', (req, res) => {
 app.get('/api/analytics/alpha-squad', (req, res) => {
     try {
         const hours = parseFloat(req.query.hours) || 24;
-        const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+        const refTime = req.query.refTime ? new Date(req.query.refTime) : new Date();
+        const anchorTime = isNaN(refTime.getTime()) ? new Date() : refTime;
+        const anchorStr = anchorTime.toISOString();
+        const cutoff = new Date(anchorTime.getTime() - hours * 60 * 60 * 1000).toISOString();
 
         const rows = db.prepare(`
             SELECT ticker, timestamp, raw_data, strength, direction, origin
             FROM unified_alerts
-            WHERE timestamp >= ?
+            WHERE timestamp >= ? AND timestamp <= ?
             ORDER BY timestamp ASC
-        `).all(cutoff);
+        `).all(cutoff, anchorStr);
 
         const tickerMap = {};
         rows.forEach(row => {
@@ -1382,18 +1398,22 @@ app.post('/api/webhook/smart-levels', (req, res) => {
 // ============================================================================
 app.get('/api/fusion/dashboard', (req, res) => {
     try {
+        const refTime = req.query.refTime ? new Date(req.query.refTime) : new Date();
+        const anchorTime = isNaN(refTime.getTime()) ? new Date() : refTime;
+        const anchorStr = anchorTime.toISOString();
+
         // 1. Get the latest Stream C events per ticker
         const streamC_Rows = db.prepare(`
             SELECT ticker, timestamp as alert_time, price, direction, roc_pct, raw_data 
             FROM smart_level_events 
             WHERE id IN (
-                SELECT MAX(id) FROM smart_level_events GROUP BY ticker
+                SELECT MAX(id) FROM smart_level_events WHERE timestamp <= ? GROUP BY ticker
             )
             ORDER BY timestamp DESC
-        `).all();
+        `).all(anchorStr);
 
         // 2. Get latest Stream A snapshot (Macro)
-        const latestMacroRow = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
+        const latestMacroRow = db.prepare('SELECT sr.raw_data FROM scan_results sr JOIN scans s ON sr.scan_id = s.id WHERE s.timestamp <= ? ORDER BY s.timestamp DESC LIMIT 1').get(anchorStr);
         const macroTickers = new Set();
         const macroDataMap = {}; // store ticker -> volume/changes
         if (latestMacroRow && latestMacroRow.raw_data) {
@@ -1408,25 +1428,25 @@ app.get('/api/fusion/dashboard', (req, res) => {
         }
 
         // 3. Get recent Stream B activity (Last 60 mins)
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const oneHourAgo = new Date(anchorTime.getTime() - 60 * 60 * 1000).toISOString();
         const streamB_Rows = db.prepare(`
             SELECT ticker, MAX(vol_change) as maxVolChange 
             FROM area1_scout_logs 
-            WHERE timestamp > ?
+            WHERE timestamp > ? AND timestamp <= ?
             GROUP BY ticker
-        `).all(oneHourAgo);
+        `).all(oneHourAgo, anchorStr);
         const scoutTickers = new Set(streamB_Rows.map(r => r.ticker));
         const scoutDataMap = {};
         streamB_Rows.forEach(r => scoutDataMap[r.ticker] = r.maxVolChange);
 
         // 3.5 Get Burst History (Last 24 Hours of Stream C and Inst. Webhooks for these tickers)
-        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const twentyFourHoursAgo = new Date(anchorTime.getTime() - 24 * 60 * 60 * 1000).toISOString();
         const burstRows = db.prepare(`
             SELECT ticker, timestamp, direction, strength, origin 
             FROM unified_alerts 
-            WHERE timestamp > ?
+            WHERE timestamp > ? AND timestamp <= ?
             ORDER BY timestamp DESC
-        `).all(twentyFourHoursAgo);
+        `).all(twentyFourHoursAgo, anchorStr);
 
         const burstHistoryMap = {};
         burstRows.forEach(r => {
