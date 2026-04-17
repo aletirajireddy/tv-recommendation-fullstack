@@ -13,7 +13,6 @@ export const useTimeStore = create((set, get) => ({
     activeScan: null,
     // socket: null, // Managed by SocketService
     lastSyncTime: null,
-    notifications: [], // AI Log
     strategyLogs: [],  // TLogs (Telegram History)
     aiHistory: [],     // New History State
     analyticsData: null,
@@ -117,7 +116,7 @@ export const useTimeStore = create((set, get) => ({
 
         SocketService.on('scan-update', (newScanMeta) => {
             console.log('⚡ New Scan Received:', newScanMeta);
-            const { timeline, currentIndex, loadScan, fetchAnalytics, fetchResearch, fetchNotifications } = get();
+            const { timeline, currentIndex, loadScan, fetchAnalytics, fetchResearch } = get();
 
             // isLive check allows us to buffer incoming data if the user is scrubbing historically
             const isLive = currentIndex === timeline.length - 1;
@@ -136,7 +135,6 @@ export const useTimeStore = create((set, get) => ({
                 // Refresh analytics instantly because we are looking at the live edge
                 if (fetchAnalytics) fetchAnalytics();
                 if (fetchResearch) fetchResearch();
-                if (fetchNotifications) fetchNotifications();
                 if (get().fetchStrategyLogs) get().fetchStrategyLogs();
                 if (get().fetchAlphaSquad) get().fetchAlphaSquad();
             }
@@ -168,25 +166,7 @@ export const useTimeStore = create((set, get) => ({
         });
     },
 
-    fetchNotifications: async () => {
-        try {
-            const { activeScan, timeline, currentIndex } = get();
-            let refTimeStr = '';
-            if (activeScan && activeScan.timestamp) {
-                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
-            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
-                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
-            }
 
-            const res = await fetch(`${API_BASE}/notifications?limit=100${refTimeStr}&_t=${Date.now()}`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            set({ notifications: Array.isArray(data) ? data : [] });
-        } catch (err) {
-            console.error('Failed to fetch notifications:', err);
-            set({ notifications: [] });
-        }
-    },
 
     fetchStrategyLogs: async () => {
         try {
