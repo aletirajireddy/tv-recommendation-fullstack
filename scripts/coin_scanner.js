@@ -331,8 +331,8 @@
         });
     }
 
-    function monitor() {
-        ensureWatchlistPanelOpen();
+    async function monitor() {
+        await ensureWatchlistPanelOpen();
         mapHeaders();
         updateArea2Watchlist();
 
@@ -406,7 +406,14 @@
                 }
             }
 
-            if (area2WatchlistSet.has(rowKey)) return;
+            if (area2WatchlistSet.has(rowKey)) {
+                if (activeMasterSet.has(rowKey) || pipelineRegistry.has(rowKey)) {
+                    activeMasterSet.delete(rowKey);
+                    pipelineRegistry.delete(rowKey);
+                    auditLog("SUPPRESSED", ticker, "Halted scouting. Coin already exists in UI Watchlist.", "SYSTEM");
+                }
+                return;
+            }
 
             if (serverTargetSet.has(rowKey) && !activeMasterSet.has(rowKey)) {
                 activeMasterSet.add(rowKey);
