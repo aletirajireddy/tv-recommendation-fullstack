@@ -1,6 +1,6 @@
 # TradingView Dashboard: System Architecture & Context Guide for AI
 
-**Version**: 2.0 (Includes MCP Agentic Layer)
+**Version**: 2.1 (Includes Institutional Backtesting & MCP)
 **Purpose**: This document serves as the absolute "Single Source of Truth" regarding the architecture of the TV Dashboard. Any AI assistant entering this project must read this to understand how data flows, where truth is derived, and how the 4 core pillars interact safely.
 
 ---
@@ -38,6 +38,7 @@ The system is designed with a strict separation of concerns. It follows a "Pass-
         *   `/socket.io/*` -> Forwards strictly to Backend (`3000`).
         *   `/mcp/*` -> Forwards strictly to MCP Server (`3001`).
     *   **Time Normalization**: Receives UTC ISO dates and forces them into local UI time.
+    *   **The Time-Mirror Protocol**: All components are bound by the temporal state of the `activeScan`. Future-data is mathematically purged from historical replay views.
     *   **Local State**: Uses `useTimeStore.js` to manage the "Playback Engine" (DVR sliding through historical market snapshots).
 
 ### Pillar 4: The AI Intelligence Layer (`mcp-server/`)
@@ -98,3 +99,8 @@ The system is built to handle missing data. TradingView tabs close. Desktops sle
 
 ### 4. Single Point of Failure Prevention
 Because of the Vite Proxy router, all external API integrations (Webhooks, AI Agents, Mobile Apps) can hit the exact same Tailscale URL. Ensure all new routes in `client/vite.config.js` are strictly scoped by prefixes (`/api`, `/mcp`, `/mobile`, etc.) to prevent route swallowing.
+
+### 5. Temporal Hermeticism (The "Eagle Eye" Standard)
+A backtest is only valid if it is clean. 
+*   **Rule**: Any component fetching data for a past timestamp MUST use a backward-facing lookback lens. 
+*   **Safety**: If a user scrubs to 2 days ago, the entire dashboard becomes a snapshot of the market's mind at that exact microsecond.

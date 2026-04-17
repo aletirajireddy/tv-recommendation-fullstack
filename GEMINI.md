@@ -1,6 +1,6 @@
     # GEMINI.md - The AI Architect's Context Module
-    **Version**: 1.0.0
-    **Last Updated**: January 2026 (Project Phase: Full-Stack Deployment)
+    **Version**: 1.4.0
+    **Last Updated**: April 2026 (Project Phase: Institutional Backtesting Hardening)
 
     ## 🤖 To Future AI Agents
     This file serves as your "Context Injection". If you are picking up this project, read this first to understand the *Soul* of the architecture, not just the code.
@@ -431,6 +431,31 @@
     *   **No Side Effects**: Stream C ingestion must NEVER execute backend recalculations that alter Stream A (`scan_results`) or Stream B (`area1_scout_logs`). It is read-only in terms of aggregate market context until the final cutover. The momentum values (like `direction: -2`) will eventually replace Stream A's `momScore` logic, but for now they remain strictly within Stream C.
     *   **Time Normalization**: The payload provides UNIX epoch timestamps (e.g. `1773840300000`). The server MUST convert this to an ISO 8601 UTC string before saving to database to maintain architectural consistency with Streams A & B.
     *   **Data Availability**: Any future enhancements that use Stream C data for dashboard overlays (Smart Levels or RSI matrix references) must fetch from the dedicated Stream C endpoints, preserving the separation of concerns.
+
+    ### Rule #19: The "Time-Mirror Protocol" (Backtest Sovereignty)
+    Institutional-Grade Backtesting requires that the dashboard behaves as a hermetic time capsule.
+    *   **The Constraint**: No widget or analytical fetch is allowed to "look forward" past the currently selected `refTime` (the Scrubber position).
+    *   **The Execution**: Every API call and data filter MUST strictly anchor to the `refTime`. If the scrubber is at 2:00 PM, a 24-hour lookback must strictly represent the period from 2:00 PM Today back to 2:00 PM Yesterday.
+    *   **Future Leakage Prevention**: Mandate "Backward-Filtering" at the component layer. If a dataset (e.g., `alphaSquad`) is fetched, it must be filtered locally or on the server to discard any entries with a timestamp > `refTime`.
+
+    ### Rule #20: DVR Sandbox Capacity & Decoding
+    The "Master Scrubber" (Time Machine) and the "Analytical Lens" (Lookback Slider) are independent but mathematically coupled.
+    *   **The Sandbox**: The timeline buffer is fixed at 720 hours (30 days). This is the absolute maximum range the DVR can scrub through.
+    *   **The Lens**: The "Lookback Hours" slider defines the magnification zoom of the charts.
+    *   **Rule of Decoupling**: Scrubbing the timeline shifts the *anchor* point; adjusting the lookback hours shifts the *width* of the lens. They must never be hardcoded or artificially limited (e.g., no raw `.slice(-120)`).
+
+    ### Rule #21: Live vs Replay States (Visual Integrity)
+    The user must always be aware of their "Timeline Reality".
+    *   **The Logic**: `isLive` is defined strictly as `currentIndex === timeline.length - 1`.
+    *   **The Visuals**:
+        *   **🔴 LIVE**: Pulsing red indicator. Active when at the current market edge.
+        *   **⏪ REPLAY**: Warning amber/gold indicator. Active when the scrubber is shifted even one scan into the past.
+    *   **Socket Behavior**: Incoming scans are buffered into the `timeline`. If `isLive` is true, the UI follows the new scan; if in **REPLAY** mode, the UI stays frozen in the past while the timeline grows silently in the background.
+
+    ### Rule #22: Ghost Logic Hygiene (Zero-Leakage Mandate)
+    Avoid introducing global states (like the removed `notifications` array) that bypass the Scrubber's temporal sandbox.
+    *   Any data intended for display in a widget must either be a property of the `activeScan` or a result of a fetch that explicitly includes `refTime`.
+    *   **Audit Requirement**: Periodically check `useTimeStore.js` for "Ghost Functions" that attempt network calls without a temporal anchor.
 
     *(End of Document)*
 

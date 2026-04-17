@@ -58,7 +58,9 @@ graph TD
 *   **State Management**: Zustand (`useTimeStore`) for handling timeline playback and live data switching.
 *   **Visualization**: Recharts for trend analysis, CSS Modules for responsive component styling.
 *   **Views**:
+*   **Views**:
     *   **Monitor Mode**: Historical playback, "DVR-style" rewinding of market scans.
+    *   **Eagle Eye Hardening**: Institutional-grade temporal isolation. All widgets (Pulse, TrendFlow, Heartbeat) are mathematically bound to the DVR scrubber to prevent future-data leakage.
     *   **Analytics Mode**: High-level grids (`ConfluenceGrid`, `TrendFlowChart`) showing market breadth and signal confluence.
 
 ### 3. Technical Implementation Details
@@ -97,6 +99,8 @@ pm2 save
 ### 5. Features Checklist
 - [x] **Live Ingestion**: Sub-second latency from TradingView to Dashboard.
 - [x] **Time Travel**: "DVR" playback of previous market scans.
+- [x] **Institutional Backtesting**: Hermetic temporal isolation (No future-data leakage).
+- [x] **Live/Replay Indicator**: Visual state feedback (🔴 LIVE vs ⏪ REPLAY).
 - [x] **Institutional Pulse**: Detection of "Burst" and "Wave" alert clusters.
 - [x] **Confluence Grid**: Visual heatmap of overlapping indicators (RSI + Momentum + Pattern).
 - [x] **Floating Media Player**: Persistent controls for timeline navigation.
