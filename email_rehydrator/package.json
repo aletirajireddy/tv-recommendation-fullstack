@@ -1,0 +1,17 @@
+{
+  "name": "tv-alerts-rehydrator",
+  "version": "1.0.0",
+  "description": "Standalone Fallback Gmail rehydrator for TradingView alerts with Google Auth Flow.",
+  "main": "index.js",
+  "scripts": {
+    "fetch": "node index.js",
+    "watch": "node index.js --watch"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "dotenv": "^16.4.5",
+    "google-auth-library": "^9.14.2",
+    "googleapis": "^144.0.0",
+    "@google-cloud/local-auth": "^3.0.1"
+  }
+}

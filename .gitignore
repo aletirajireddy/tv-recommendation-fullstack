@@ -11,3 +11,8 @@ coverage
 dump.pm2
 *.db-wal
 *.db-shm
+
+# Gmail Rehydrator
+email_rehydrator/token.json
+email_rehydrator/credentials.json
+email_rehydrator/sync_state.json
