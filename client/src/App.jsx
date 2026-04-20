@@ -53,17 +53,7 @@ function App() {
                 <FusionDashboard />
             </div>
             
-            {/* ROW 2.2: INSTITUTIONAL WIDGETS (Only in Live Mode) */}
-            {isLive && (
-                <>
-                    <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                        <CoinAgeWidget />
-                    </div>
-                    <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                        <GhostCoinWidget />
-                    </div>
-                </>
-            )}
+
 
             {/* ROW 2.5: RSI DISTRIBUTION SETUPS */}
             <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
@@ -93,9 +83,21 @@ function App() {
             </div>
 
             {/* ROW 4: SCOUT SCREENER (Participation Pulse moved to bottom) */}
-            <div className={styles.analyticsFullRow} style={{ marginTop: '24px' }}>
+            <div className={styles.analyticsFullRow} style={{ marginTop: '24px', marginBottom: '24px' }}>
                 <ParticipationPulseWidget />
             </div>
+
+            {/* ROW 5: INSTITUTIONAL WIDGETS (Moved to bottom) */}
+            {isLive && (
+                <>
+                    <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
+                        <CoinAgeWidget />
+                    </div>
+                    <div className={styles.analyticsFullRow}>
+                        <GhostCoinWidget />
+                    </div>
+                </>
+            )}
         </div>
 
         {/* FLOATING CONTROLS (Always Visible in BOTH Modes) */}

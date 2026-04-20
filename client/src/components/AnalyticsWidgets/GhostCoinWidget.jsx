@@ -99,7 +99,7 @@ export function GhostCoinWidget() {
                             <span className={styles.slider}></span>
                         </label>
                     </div>
-                    {queue.length > 0 && (
+                    {queue.length > 0 && !autoApprove && (
                         <button className={styles.approveAllBtn} onClick={approveAll}>
                             Approve All
                         </button>
