@@ -27,6 +27,7 @@ The system is designed with a strict separation of concerns. It follows a "Pass-
     *   `symbol_market_scanner.js` (Stream A): Scrapes the massive 40-coin overview table. Captures the 26-column technical schema (Support/Resistance levels, Momentum, Breakouts). Sends payloads directly to Backend Port `3000`.
     *   `coin_scanner.js` (Stream B): Isolated scout that pings specific qualified individual coins.
     *   `TradingView Webhooks` (Stream C): Remote alerts (Smart Levels, Institutional Volumes) sent from the TV Cloud directly to the public funnel URL.
+    *   **Fallback Rehydrator** (`email_rehydrator/`): A standalone Node.js daemon using the Gmail API (OAuth 2.0). If webhooks fail, it reads raw TradingView alerts directly from the user's inbox, deduplicates them against the DB, and injects any missing data. It acts as an unbreakable historical safety net.
 
 ### Pillar 3: The Presentation Layer (`client/`)
 *   **Role**: The UI & External Ingress Proxy.
