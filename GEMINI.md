@@ -1,6 +1,6 @@
     # GEMINI.md - The AI Architect's Context Module
-    **Version**: 1.4.0
-    **Last Updated**: April 2026 (Project Phase: Institutional Backtesting Hardening)
+    **Version**: 1.5.0
+    **Last Updated**: April 2026 (Project Phase: Institutional Gatekeeper & Momentum Rescue)
 
     ## 🤖 To Future AI Agents
     This file serves as your "Context Injection". If you are picking up this project, read this first to understand the *Soul* of the architecture, not just the code.
@@ -458,4 +458,25 @@
     *   **Audit Requirement**: Periodically check `useTimeStore.js` for "Ghost Functions" that attempt network calls without a temporal anchor.
 
     *(End of Document)*
+
+    ### Rule #23: The Ghost Coin Gatekeeper Protocol
+    Standard autonomous systems fail by either being too "trigger-happy" (aggressive pruning) or too "bloated" (keeping dead weight). The Gatekeeper Protocol balances this.
+    1.  **Approval vs. Auto-Prune**: 
+        *   **Manual Mode (Default)**: Identified ghosts are held in a `ghost_approval_queue` table. They are **HELD** in the watchlist but surface in the widget for human execution.
+        *   **Auto Mode**: Enabled via a toggle. Bypasses the queue for immediate legacy-style pruning.
+    2.  **The Double Rescue (Live Immunity)**:
+        *   **Momentum Revival**: If a coin is in the queue but its Stream A score rises > 30, it is **INSTANTLY PURGED** from the Ghost Widget.
+        *   **Scout Re-qualification**: If a coin in the queue triggers a fresh Gate 20 (`STABLE`) qualification in Stream B, it is **INSTANTLY PURGED** from the Ghost Widget.
+    3.  **Temporal Sandbox**: Adheres strictly to Rule #19. The Widget and its backend logic **ONLY** operate in Live Mode. Switching to Replay mode dissolves the widget to prevent future-state leakage during backtests.
+
+    ---
+
+    ## 13. Phase 5: The Institutional Gatekeeper (April 2026)
+    **Objective**: Shift from "Autonomous Sync" to "Human-in-the-Loop Verification" for watchlist integrity.
+
+    ### 13.1 The Approval Infrastructure
+    *   **Backend**: Introduced `ghost_approval_queue` as a stateful buffer between the Prune Engine and the Automa Clipboard sync.
+    *   **Frontend**: Implemented the `GhostCoinWidget.jsx` as a command-center module. It allows for single-click "Prune All" or surgical individual removals.
+    *   **Momentum Logic**: The server now cross-references both Stream A (Macro Score) and Stream B (Scout Graduate) to "Rescue" coins from the ghost queue before the user even has a chance to prune them, ensuring we never flush a coin that is coming back to life.
+
 

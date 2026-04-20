@@ -163,6 +163,34 @@ db.exec(`
     FROM institutional_interest_events;
 `);
 
-console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view)');
+// ============================================================================
+// 10. GHOST APPROVAL QUEUE
+// ============================================================================
+// Holds coins that meet prune criteria but are waiting for manual widget approval.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS ghost_approval_queue (
+        ticker TEXT PRIMARY KEY,
+        reason TEXT,
+        queued_at TEXT NOT NULL,
+        is_approved INTEGER DEFAULT 0  -- 0 = waiting, 1 = approved
+    );
+`);
+
+// ============================================================================
+// 11. COIN LIFECYCLES (Age & Maturity Tracking)
+// ============================================================================
+// Tracks the long-term age of a coin from its initial discovery in Stream B 
+// until its absolute demise in Stream A.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS coin_lifecycles (
+        ticker TEXT PRIMARY KEY,
+        born_at TEXT NOT NULL,         -- ISO 8601 UTC
+        last_seen_at TEXT,             -- ISO 8601 UTC
+        death_at TEXT,                 -- ISO 8601 UTC
+        status TEXT                    -- 'ACTIVE', 'GHOST', 'DEAD'
+    );
+`);
+
+console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles');
 
 module.exports = db;

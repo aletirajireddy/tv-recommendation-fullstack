@@ -1,0 +1,154 @@
+.widgetWrapper {
+    margin-bottom: 24px;
+    font-family: 'Inter', sans-serif;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.mainTitle {
+    font-size: 13px;
+    font-weight: 700;
+    color: #455a64;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+
+.card {
+    background: #ffffff;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+}
+
+.cardEmpty {
+    opacity: 0.8;
+}
+
+.cardHeader {
+    font-size: 11px;
+    font-weight: 700;
+    color: #546e7a;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #eeeeee;
+    margin-bottom: 8px;
+}
+
+.countBadge {
+    background: #eceff1;
+    color: #607d8b;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 48px;
+}
+
+.emptyText {
+    text-align: center;
+    color: #b0bec5;
+    font-size: 12px;
+    font-weight: 500;
+    margin-top: 12px;
+}
+
+.row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    transition: background 0.2s;
+}
+
+.row:hover {
+    background: #f8f9fa;
+}
+
+.tickerGroup {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ticker {
+    font-size: 12px;
+    font-weight: 600;
+    color: #37474f;
+}
+
+.ghostIcon {
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+.ageBadge {
+    font-size: 11px;
+    font-weight: 700;
+    color: #455a64;
+    background: #f5f5f5;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* Category Specific Styles */
+.catNewborn {
+    border-color: rgba(76, 175, 80, 0.3);
+    background: rgba(76, 175, 80, 0.04);
+}
+.catNewborn .ticker { color: #2e7d32; }
+.catNewborn .ageBadge { background: #e8f5e9; color: #388e3c; }
+
+.catEstablished {
+    border-color: rgba(255, 152, 0, 0.3);
+    background: rgba(255, 152, 0, 0.04);
+}
+.catEstablished .ticker { color: #ef6c00; }
+.catEstablished .ageBadge { background: #fff3e0; color: #f57c00; }
+
+.catVeteran {
+    border-color: rgba(156, 39, 176, 0.2);
+    background: rgba(156, 39, 176, 0.02);
+}
+.catVeteran .ticker { color: #7b1fa2; }
+.catVeteran .ageBadge { background: #f3e5f5; color: #8e24aa; }
+
+.catFixture {
+    border-color: rgba(158, 158, 158, 0.3);
+    background: rgba(158, 158, 158, 0.02);
+}
+.catFixture .ticker { color: #616161; }
+.catFixture .ageBadge { background: #eeeeee; color: #757575; }
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Responsive adjustment for Grid */
+@media (max-width: 1200px) {
+    .grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}

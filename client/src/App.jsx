@@ -16,6 +16,8 @@ import AlertFrequencyTimeline from './components/AnalyticsWidgets/AlertFrequency
 import { ParticipationPulseWidget } from './components/AnalyticsWidgets/ParticipationPulseWidget';
 import FusionDashboard from './components/AnalyticsWidgets/FusionDashboard';
 import RSIDistributionWidget from './components/AnalyticsWidgets/RSIDistributionWidget';
+import { GhostCoinWidget } from './components/AnalyticsWidgets/GhostCoinWidget';
+import { CoinAgeWidget } from './components/AnalyticsWidgets/CoinAgeWidget';
 
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
@@ -25,6 +27,9 @@ import { useTimeStore } from './store/useTimeStore';
 
 function App() {
   const viewMode = useTimeStore(s => s.viewMode);
+  const isLive = useTimeStore(s => {
+    return s.timeline.length > 0 ? s.currentIndex === s.timeline.length - 1 : false;
+  });
 
   return (
     <div className={styles.appContainer}>
@@ -47,6 +52,18 @@ function App() {
             <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
                 <FusionDashboard />
             </div>
+            
+            {/* ROW 2.2: INSTITUTIONAL WIDGETS (Only in Live Mode) */}
+            {isLive && (
+                <>
+                    <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
+                        <CoinAgeWidget />
+                    </div>
+                    <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
+                        <GhostCoinWidget />
+                    </div>
+                </>
+            )}
 
             {/* ROW 2.5: RSI DISTRIBUTION SETUPS */}
             <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>

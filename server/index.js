@@ -291,6 +291,14 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString();
     const eightHoursAgo = new Date(now - 8 * 60 * 60 * 1000).toISOString();
 
+    // --- 0. FETCH SYSTEM SETTINGS AND GHOST QUEUE ---
+    const autoApproveSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'ghost_auto_approve'").get();
+    const autoApprove = autoApproveSetting ? autoApproveSetting.value === '1' : false;
+
+    const ghostQueueRows = db.prepare("SELECT * FROM ghost_approval_queue").all();
+    const ghostQueueMap = {};
+    ghostQueueRows.forEach(row => ghostQueueMap[row.ticker] = row);
+
     // --- 1. THE 8-HOUR STABILITY GUARD ---
     const stabilityCheck = db.prepare(`
         SELECT COUNT(*) as count, MIN(timestamp) as oldest 
@@ -449,6 +457,15 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
 
         activeList.push(fullTicker);
 
+        // [LIFECYCLE TRACKING - Update Last Seen & Ensure Exists]
+        db.prepare(`
+            INSERT INTO coin_lifecycles (ticker, born_at, last_seen_at, status) 
+            VALUES (?, ?, ?, 'ACTIVE') 
+            ON CONFLICT(ticker) DO UPDATE SET 
+                last_seen_at = excluded.last_seen_at, 
+                status = CASE WHEN status = 'DEAD' THEN 'ACTIVE' ELSE status END
+        `).run(cleanTicker, new Date().toISOString(), new Date().toISOString());
+
         const isProtected = PERMANENT_MAJORS.includes(fullTicker) || protectedAltcoins.has(fullTicker);
 
         let shouldPrune = false;
@@ -481,8 +498,43 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
         }
 
         if (shouldPrune) {
-            pruneList.push(fullTicker);
-            ghostList.push({ ticker: cleanTicker, reason: pruneReason });
+            // Ghost Approval Queue Logic
+            const queuedGhost = ghostQueueMap[cleanTicker];
+            let bypassQueue = false;
+
+            if (autoApprove) {
+                bypassQueue = true;
+            } else if (queuedGhost && queuedGhost.is_approved === 1) {
+                bypassQueue = true;
+                // Once pruned, remove from queue
+                db.prepare("DELETE FROM ghost_approval_queue WHERE ticker = ?").run(cleanTicker);
+            }
+
+            if (bypassQueue) {
+                pruneList.push(fullTicker);
+                ghostList.push({ ticker: cleanTicker, reason: pruneReason, state: 'PRUNING' });
+                // [LIFECYCLE TRACKING - Mark DEAD]
+                db.prepare("UPDATE coin_lifecycles SET status = 'DEAD', death_at = ? WHERE ticker = ?").run(new Date().toISOString(), cleanTicker);
+            } else {
+                // Upsert into queue if not already there
+                if (!queuedGhost) {
+                    db.prepare(`
+                        INSERT INTO ghost_approval_queue (ticker, reason, queued_at, is_approved)
+                        VALUES (?, ?, ?, 0)
+                        ON CONFLICT(ticker) DO UPDATE SET reason = excluded.reason
+                    `).run(cleanTicker, pruneReason, new Date().toISOString());
+                }
+                ghostList.push({ ticker: cleanTicker, reason: pruneReason, state: 'WAITING' });
+                db.prepare("UPDATE coin_lifecycles SET status = 'GHOST' WHERE ticker = ?").run(cleanTicker);
+            }
+        } else {
+            // MOMENTUM RESCUE / GATE 20 RESCUE
+            // If it's no longer a ghost but was sitting in the queue, violently rescue it.
+            if (ghostQueueMap[cleanTicker]) {
+                db.prepare("DELETE FROM ghost_approval_queue WHERE ticker = ?").run(cleanTicker);
+                db.prepare("UPDATE coin_lifecycles SET status = 'ACTIVE' WHERE ticker = ?").run(cleanTicker);
+                console.log(`[GHOST-ENGINE] 🛟 Rescued ${cleanTicker} from Ghost Queue (Re-qualified or Momentum Recovered)`);
+            }
         }
     });
 
@@ -535,6 +587,23 @@ app.post('/qualified-pick', (req, res) => {
             INSERT INTO area1_scout_logs (ticker, exchange, price, type, timestamp, vol_change, raw_data)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         `).run(ticker, exchange, price, saveType, now, volChange, JSON.stringify(req.body));
+
+        // [LIFECYCLE TRACKING - Birth Capture]
+        if (type === 'STABLE') {
+            const existing = db.prepare("SELECT * FROM coin_lifecycles WHERE ticker = ?").get(ticker);
+            if (!existing || existing.status === 'DEAD') {
+                if (existing) {
+                    db.prepare("UPDATE coin_lifecycles SET born_at = ?, last_seen_at = ?, status = 'ACTIVE', death_at = NULL WHERE ticker = ?").run(now, now, ticker);
+                } else {
+                    db.prepare(`
+                        INSERT INTO coin_lifecycles (ticker, born_at, last_seen_at, status)
+                        VALUES (?, ?, ?, 'ACTIVE')
+                    `).run(ticker, now, now);
+                }
+            } else {
+                db.prepare("UPDATE coin_lifecycles SET last_seen_at = ?, status = 'ACTIVE' WHERE ticker = ?").run(now, ticker);
+            }
+        }
 
         // Let the UI know a pick came in
         io.emit('ledger-update', { ticker, price, signal: type });
@@ -809,6 +878,61 @@ app.get('/api/ai/history', (req, res) => {
         res.json(rows);
     } catch (e) {
         console.error("History Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ============================================================================
+// 5.5 GHOST APPROVAL WIDGET API
+// ============================================================================
+
+app.get('/api/ghosts/queue', (req, res) => {
+    try {
+        const autoApproveSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'ghost_auto_approve'").get();
+        const autoApprove = autoApproveSetting ? autoApproveSetting.value === '1' : false;
+        const queue = db.prepare("SELECT * FROM ghost_approval_queue WHERE is_approved = 0 ORDER BY queued_at DESC").all();
+        res.json({ auto_approve: autoApprove, queue });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ghosts/approve', (req, res) => {
+    try {
+        const { ticker } = req.body;
+        if (!ticker) return res.status(400).json({ error: "Ticker required" });
+        db.prepare("UPDATE ghost_approval_queue SET is_approved = 1 WHERE ticker = ?").run(ticker);
+        res.json({ success: true, ticker });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ghosts/approve-all', (req, res) => {
+    try {
+        db.prepare("UPDATE ghost_approval_queue SET is_approved = 1 WHERE is_approved = 0").run();
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ghosts/toggle-auto', (req, res) => {
+    try {
+        const { enabled } = req.body;
+        const val = enabled ? '1' : '0';
+        db.prepare("INSERT INTO system_settings (key, value) VALUES ('ghost_auto_approve', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(val);
+        res.json({ success: true, auto_approve: enabled });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/coins/age', (req, res) => {
+    try {
+        const rows = db.prepare("SELECT ticker, born_at, last_seen_at, status FROM coin_lifecycles WHERE status IN ('ACTIVE', 'GHOST') ORDER BY born_at DESC").all();
+        res.json(rows);
+    } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
