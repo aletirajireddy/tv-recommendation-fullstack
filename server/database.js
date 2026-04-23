@@ -191,6 +191,86 @@ db.exec(`
     );
 `);
 
-console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles');
+// ============================================================================
+// 12. VALIDATION TRIALS (3rd Umpire Validator - Trial Records)
+// ============================================================================
+// One row per detected setup. Captures the full feature snapshot at detection
+// and config snapshot for live-mode immutability. Verdicts are CONFIRMED |
+// FAILED | NEUTRAL_TIMEOUT | EARLY_FAVORABLE.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS validation_trials (
+        trial_id TEXT PRIMARY KEY,
+        ticker TEXT NOT NULL,
+        direction TEXT NOT NULL,                  -- LONG | SHORT
+        trigger_source TEXT NOT NULL,             -- STREAM_C
+        trigger_event_id INTEGER,                 -- FK smart_level_events.id
+        trigger_type TEXT NOT NULL,               -- BOUNCE | BREAKOUT
+        trigger_price REAL NOT NULL,
+        level_price REAL,
+        level_type TEXT,                          -- MEGA_SPOT|EMA200|EMA50|FIB|LOGIC
+        detected_at TEXT NOT NULL,                -- ISO 8601 UTC
+        cooldown_until TEXT NOT NULL,
+        watch_until TEXT NOT NULL,
+        state TEXT NOT NULL,                      -- DETECTED|COOLDOWN|WATCHING|RESOLVED
+        verdict TEXT,                             -- CONFIRMED|FAILED|NEUTRAL_TIMEOUT|EARLY_FAVORABLE
+        failure_reason TEXT,
+        resolved_at TEXT,
+        config_snapshot TEXT NOT NULL,            -- JSON of validator settings at trial creation
+        feature_snapshot TEXT NOT NULL,           -- JSON: EMAs, RSI, vol, mood at detection
+        raw_trigger_blob TEXT NOT NULL
+    );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_trials_state ON validation_trials(state);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_trials_detected ON validation_trials(detected_at);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_trials_ticker_time ON validation_trials(ticker, detected_at);`);
+
+// ============================================================================
+// 13. VALIDATION STATE LOG (Trial State Transition Tape)
+// ============================================================================
+// Every state change in a trial's life. Required for DVR-aware replay so the
+// validator widget can show what was known at any historical moment without
+// future-data leakage (Rule #19 Time-Mirror Protocol).
+db.exec(`
+    CREATE TABLE IF NOT EXISTS validation_state_log (
+        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trial_id TEXT NOT NULL,
+        changed_at TEXT NOT NULL,                 -- ISO 8601 UTC
+        state TEXT NOT NULL,                      -- DETECTED|COOLDOWN|WATCHING|RESOLVED
+        rule_snapshot TEXT,                       -- JSON: rule pass/fail snapshot
+        current_price REAL,
+        unrealized_move_pct REAL,
+        FOREIGN KEY(trial_id) REFERENCES validation_trials(trial_id) ON DELETE CASCADE
+    );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_state_log_trial ON validation_state_log(trial_id, changed_at);`);
+
+// ============================================================================
+// 14. PATTERN STATISTICS (Pre-computed Win Rates by Combination)
+// ============================================================================
+// Rebuilt periodically from validation_trials. Powers the stats panel and the
+// MCP get_pattern_stats tool with low-token pre-aggregated answers.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS pattern_statistics (
+        stat_key TEXT PRIMARY KEY,                -- canonical filter signature
+        direction TEXT,
+        level_type TEXT,
+        vol_filter INTEGER,                       -- null=any, 0=no spike, 1=spike
+        ema_1h_align INTEGER,                     -- null=any, 0=opposed, 1=aligned
+        ema_4h_align INTEGER,
+        trigger_type TEXT,                        -- BOUNCE | BREAKOUT | null=any
+        sample_count INTEGER,
+        win_count_15m INTEGER,
+        win_rate_15m REAL,
+        win_count_30m INTEGER,
+        win_rate_30m REAL,
+        win_count_1h INTEGER,
+        win_rate_1h REAL,
+        avg_move_pct REAL,
+        confidence TEXT,                          -- LOW | MEDIUM | HIGH
+        last_updated TEXT
+    );
+`);
+
+console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles, validation_trials, validation_state_log, pattern_statistics');
 
 module.exports = db;

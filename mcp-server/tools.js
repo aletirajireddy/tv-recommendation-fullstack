@@ -342,6 +342,138 @@ async function runReadonlySqlQuery(query) {
     }
 }
 
+async function getVolumeBuildup() {
+    try {
+        const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const rows = db.prepare(`
+            SELECT sr.ticker, sr.score, sr.volSpike, sr.momScore, sr.breakout,
+                   sr.price, sr.change_pct, sr.timestamp
+            FROM scan_results sr
+            INNER JOIN (
+                SELECT ticker, MAX(timestamp) AS latest FROM scan_results WHERE timestamp > ? GROUP BY ticker
+            ) latest ON sr.ticker = latest.ticker AND sr.timestamp = latest.latest
+            WHERE sr.volSpike = 1
+            ORDER BY sr.momScore DESC LIMIT 20
+        `).all(cutoff);
+        return {
+            description: "Coins with active volume spike (volSpike=1) from latest scan — potential institutional accumulation",
+            count: rows.length,
+            coins: rows
+        };
+    } catch(e) {
+        return { error: e.message };
+    }
+}
+
+async function getValidatedSetups(stateFilter) {
+    try {
+        const states = stateFilter && stateFilter !== 'ALL'
+            ? [stateFilter]
+            : ['WATCHING', 'EARLY_FAVORABLE', 'CONFIRMED'];
+
+        const placeholders = states.map(() => '?').join(',');
+        const rows = db.prepare(`
+            SELECT trial_id, ticker, direction, trigger_type, level_type,
+                   trigger_price, level_price, state, verdict,
+                   detected_at, cooldown_until, watch_until,
+                   latest_move, failure_reason
+            FROM validation_trials
+            WHERE state IN (${placeholders})
+            ORDER BY detected_at DESC LIMIT 30
+        `).all(...states);
+
+        return {
+            description: "Active 3rd Umpire Validator trials — EMA hierarchy validated setups",
+            count: rows.length,
+            trials: rows
+        };
+    } catch(e) {
+        return { error: e.message };
+    }
+}
+
+async function getUpcomingWatchers() {
+    try {
+        const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        const latestScans = db.prepare(`
+            SELECT sr.ticker, sr.price, sr.timestamp, sr.smart_levels
+            FROM scan_results sr
+            INNER JOIN (
+                SELECT ticker, MAX(timestamp) AS latest FROM scan_results WHERE timestamp > ? GROUP BY ticker
+            ) latest ON sr.ticker = latest.ticker AND sr.timestamp = latest.latest
+            WHERE sr.smart_levels IS NOT NULL
+        `).all(cutoff);
+
+        const results = [];
+        for (const row of latestScans) {
+            let sl;
+            try { sl = JSON.parse(row.smart_levels); } catch { continue; }
+            const price = row.price;
+            if (!price) continue;
+
+            const levels = [];
+            if (sl.mega_spot?.p) levels.push({ label: 'Mega Spot', price: sl.mega_spot.p });
+            if (sl.emas_200?.h4?.p) levels.push({ label: '4H EMA200', price: sl.emas_200.h4.p });
+            if (sl.emas_200?.h1?.p) levels.push({ label: '1H EMA200', price: sl.emas_200.h1.p });
+            if (sl.daily_logic?.base_res?.p) levels.push({ label: 'Daily Res', price: sl.daily_logic.base_res.p });
+            if (sl.daily_logic?.base_supp?.p) levels.push({ label: 'Daily Supp', price: sl.daily_logic.base_supp.p });
+
+            for (const lvl of levels) {
+                const distPct = Math.abs((price - lvl.price) / lvl.price * 100);
+                if (distPct <= 0.5) {
+                    const direction = price < lvl.price ? 'LONG' : 'SHORT';
+                    results.push({
+                        ticker: row.ticker,
+                        current_price: price,
+                        level_label: lvl.label,
+                        level_price: lvl.price,
+                        distance_pct: Math.round(distPct * 100) / 100,
+                        expected_direction: direction
+                    });
+                }
+            }
+        }
+
+        results.sort((a, b) => a.distance_pct - b.distance_pct);
+        return {
+            description: "Tickers within 0.5% of a smart level — pre-alert positioning candidates",
+            count: results.length,
+            watchers: results.slice(0, 20)
+        };
+    } catch(e) {
+        return { error: e.message };
+    }
+}
+
+async function getPatternStats({ direction, trigger_type, min_samples = 3, min_win_rate = 0 } = {}) {
+    try {
+        let where = 'WHERE sample_count >= ?';
+        const params = [min_samples];
+
+        if (direction) { where += ' AND direction = ?'; params.push(direction); }
+        if (trigger_type) { where += ' AND trigger_type = ?'; params.push(trigger_type); }
+        if (min_win_rate > 0) { where += ' AND win_rate_30m >= ?'; params.push(min_win_rate); }
+
+        const rows = db.prepare(`
+            SELECT stat_key, direction, trigger_type, vol_filter, ema_1h_align, ema_4h_align,
+                   sample_count, win_rate_30m, avg_move_pct, confidence, last_updated
+            FROM pattern_statistics
+            ${where}
+            ORDER BY sample_count DESC, win_rate_30m DESC
+            LIMIT 30
+        `).all(...params);
+
+        return {
+            description: "3rd Umpire Validator pre-computed win rates by setup combination",
+            count: rows.length,
+            filters_applied: { direction, trigger_type, min_samples, min_win_rate },
+            stats: rows
+        };
+    } catch(e) {
+        return { error: e.message };
+    }
+}
+
 module.exports = {
     getMarketSentiment,
     getMasterWatchlist,
@@ -350,5 +482,9 @@ module.exports = {
     analyzeTarget,
     queryTechnicalFilters,
     getDatabaseSchema,
-    runReadonlySqlQuery
+    runReadonlySqlQuery,
+    getVolumeBuildup,
+    getValidatedSetups,
+    getUpcomingWatchers,
+    getPatternStats
 };

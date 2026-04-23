@@ -152,6 +152,39 @@ function createMcpServer() {
                     },
                     required: ["query"]
                 }
+            },
+            {
+                name: "get_volume_buildups",
+                description: "Returns coins currently showing sustained volume spike (volSpike=1) with price compression — high-probability institutional accumulation candidates. Useful for identifying pre-breakout setups before a Stream C smart level event fires.",
+                inputSchema: { type: "object", properties: {} }
+            },
+            {
+                name: "get_validated_setups",
+                description: "Returns active 3rd Umpire Validator trials that are currently WATCHING, EARLY_FAVORABLE, or CONFIRMED — setups that have passed the EMA hierarchy rule checklist. These are actionable trade candidates with a defined entry, direction, and invalidation.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        state: { type: "string", description: "Filter by state: WATCHING, EARLY_FAVORABLE, CONFIRMED, or ALL (default ALL active)" }
+                    }
+                }
+            },
+            {
+                name: "get_upcoming_watchers",
+                description: "Returns tickers whose current price is within 0.5% of a known smart level (Mega Spot, EMA200 key TFs, Daily Logic) but have not yet triggered a Stream C event. These are setups to pre-position before the alert fires.",
+                inputSchema: { type: "object", properties: {} }
+            },
+            {
+                name: "get_pattern_stats",
+                description: "Returns pre-computed win rate statistics from the 3rd Umpire Validator pattern_statistics table, grouped by direction, volume presence, EMA alignment, and trigger type. Use this to assess historical edge for a given setup combination before trading.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        direction: { type: "string", description: "Filter by LONG or SHORT" },
+                        trigger_type: { type: "string", description: "Filter by BREAKOUT or BOUNCE" },
+                        min_samples: { type: "number", description: "Minimum sample count for statistical reliability (default 3)" },
+                        min_win_rate: { type: "number", description: "Minimum win rate % to include (default 0)" }
+                    }
+                }
             }
         ]
     }));
@@ -227,6 +260,18 @@ function createMcpServer() {
                 case 'run_readonly_sql_query':
                     result = await tools.runReadonlySqlQuery(args.query);
                     break;
+                case 'get_volume_buildups':
+                    result = await tools.getVolumeBuildup();
+                    break;
+                case 'get_validated_setups':
+                    result = await tools.getValidatedSetups(args?.state);
+                    break;
+                case 'get_upcoming_watchers':
+                    result = await tools.getUpcomingWatchers();
+                    break;
+                case 'get_pattern_stats':
+                    result = await tools.getPatternStats(args || {});
+                    break;
                 default:
                     throw new Error(`Unknown tool: ${name}`);
             }
@@ -266,7 +311,7 @@ app.post('/mcp/message', async (req, res) => {
     await transport.handlePostMessage(req, res);
 });
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.log(`🚀 MCP Express Server running on HTTP!`);
     console.log(`👉 Connect MCP clients to SSE endpoint: http://localhost:${PORT}/mcp/sse`);

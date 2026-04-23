@@ -18,6 +18,7 @@ import FusionDashboard from './components/AnalyticsWidgets/FusionDashboard';
 import RSIDistributionWidget from './components/AnalyticsWidgets/RSIDistributionWidget';
 import { GhostCoinWidget } from './components/AnalyticsWidgets/GhostCoinWidget';
 import { CoinAgeWidget } from './components/AnalyticsWidgets/CoinAgeWidget';
+import { ValidatorTimelineWidget } from './components/AnalyticsWidgets/ValidatorTimelineWidget';
 
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
@@ -42,6 +43,11 @@ function App() {
         {/* UNIFIED TIMELINE VIEW */}
         <div className={styles.colAnalytics} style={{ padding: 0 }}>
         
+            {/* ROW 0: 3rd UMPIRE VALIDATOR (Top row — always visible) */}
+            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
+                <ValidatorTimelineWidget />
+            </div>
+
             {/* ROW 1: TIMELINE ANALYZERS (Moved to the very top!) */}
             <div className={styles.analyticsSplitRow} style={{ marginBottom: '24px' }}>
                 <MarketSentimentTimeline />

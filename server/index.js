@@ -8,6 +8,8 @@ const db = require('./database'); // V3 Database Module
 // Telegram service kept for notifications (optional integration later)
 const TelegramService = require('./services/telegram');
 const RSIEngine = require('./services/RSIEngine');
+const UmpireEngine = require('./validator/UmpireEngine');
+const telegramValidator = require('./services/telegramValidator');
 
 const app = express();
 const server = http.createServer(app);
@@ -147,6 +149,11 @@ app.post('/scan-report', (req, res) => {
 
         // E. PROACTIVE AI ENGINE (Section 9 RFC)
         analyzeProactiveStrategies(payload);
+
+        // F. 3rd UMPIRE VALIDATOR (passive, fire-and-forget — Step 1 skeleton)
+        setImmediate(() => {
+            try { umpire.onStreamA(payload); } catch (err) { console.error('Umpire onStreamA error:', err); }
+        });
 
         res.json({ success: true, id: payload.id });
 
@@ -937,6 +944,164 @@ app.get('/api/coins/age', (req, res) => {
     }
 });
 
+// ============================================================================
+// VALIDATOR API (3rd Umpire)
+// ============================================================================
+const { rebuildStatistics, getStats } = require('./validator/statisticsEngine');
+
+// GET /api/validator/trials — active + recent resolved, DVR-aware
+app.get('/api/validator/trials', (req, res) => {
+    try {
+        const refTime = req.query.refTime ? req.query.refTime : new Date().toISOString();
+        const limit = parseInt(req.query.limit) || 30;
+
+        // Active trials (not resolved): filter by detected_at <= refTime
+        const active = db.prepare(`
+            SELECT t.*,
+                   (SELECT rule_snapshot FROM validation_state_log
+                    WHERE trial_id = t.trial_id AND changed_at <= ?
+                    ORDER BY changed_at DESC LIMIT 1) as latest_rules,
+                   (SELECT unrealized_move_pct FROM validation_state_log
+                    WHERE trial_id = t.trial_id AND unrealized_move_pct IS NOT NULL AND changed_at <= ?
+                    ORDER BY changed_at DESC LIMIT 1) as latest_move
+            FROM validation_trials t
+            WHERE t.detected_at <= ? AND t.state != 'RESOLVED'
+            ORDER BY t.detected_at DESC
+        `).all(refTime, refTime, refTime);
+
+        // Resolved trials within DVR window
+        const resolved = db.prepare(`
+            SELECT t.*,
+                   (SELECT unrealized_move_pct FROM validation_state_log
+                    WHERE trial_id = t.trial_id AND unrealized_move_pct IS NOT NULL
+                    ORDER BY changed_at DESC LIMIT 1) as final_move
+            FROM validation_trials t
+            WHERE t.detected_at <= ? AND t.state = 'RESOLVED'
+              AND (t.resolved_at IS NULL OR t.resolved_at <= ?)
+            ORDER BY t.resolved_at DESC LIMIT ?
+        `).all(refTime, refTime, limit);
+
+        // Replay mode: recompute state from state_log if trial was still active at refTime
+        const replayActive = [];
+        for (const t of active) {
+            const stateAtRef = db.prepare(`
+                SELECT state FROM validation_state_log
+                WHERE trial_id = ? AND changed_at <= ?
+                ORDER BY changed_at DESC LIMIT 1
+            `).get(t.trial_id, refTime);
+            replayActive.push({ ...t, replay_state: stateAtRef?.state || t.state });
+        }
+
+        res.json({ active: replayActive, resolved, refTime });
+    } catch (e) {
+        console.error('Validator trials error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/validator/settings
+app.get('/api/validator/settings', (req, res) => {
+    try {
+        res.json(require('./validator/settingsManager').getAll());
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /api/validator/settings
+app.post('/api/validator/settings', (req, res) => {
+    try {
+        const sm = require('./validator/settingsManager');
+        const updated = {};
+        for (const [key, value] of Object.entries(req.body)) {
+            if (key.startsWith('validator.')) {
+                sm.writeKey(key, value);
+                updated[key] = value;
+            }
+        }
+        res.json({ success: true, updated });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/validator/stats — returns pre-computed pattern_statistics
+app.get('/api/validator/stats', (req, res) => {
+    try {
+        // Rebuild on demand if no stats exist yet
+        const count = db.prepare('SELECT COUNT(*) as c FROM pattern_statistics').get();
+        if (count.c === 0) rebuildStatistics();
+
+        const stats = getStats({
+            direction: req.query.direction,
+            vol_filter: req.query.vol != null ? parseInt(req.query.vol) : undefined,
+            ema_1h_align: req.query.ema1h != null ? parseInt(req.query.ema1h) : undefined,
+            ema_4h_align: req.query.ema4h != null ? parseInt(req.query.ema4h) : undefined
+        });
+        res.json(stats);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /api/validator/stats/rebuild — manual trigger
+app.post('/api/validator/stats/rebuild', (req, res) => {
+    try {
+        const written = rebuildStatistics();
+        res.json({ success: true, entries: written });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/validator/export — CSV download for offline ML training
+app.get('/api/validator/export', (req, res) => {
+    try {
+        const from = req.query.from || new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
+        const to   = req.query.to   || new Date().toISOString();
+
+        const trials = db.prepare(`
+            SELECT t.*,
+                   (SELECT unrealized_move_pct FROM validation_state_log
+                    WHERE trial_id = t.trial_id AND unrealized_move_pct IS NOT NULL
+                    ORDER BY changed_at DESC LIMIT 1) as final_move_pct
+            FROM validation_trials t
+            WHERE t.detected_at >= ? AND t.detected_at <= ?
+            ORDER BY t.detected_at ASC
+        `).all(from, to);
+
+        if (trials.length === 0) return res.json({ message: 'No data in range', rows: 0 });
+
+        const headers = [
+            'trial_id','ticker','direction','trigger_type','level_type','trigger_price',
+            'level_price','detected_at','verdict','failure_reason','final_move_pct',
+            'ema200_5m_dist','ema200_15m_dist','ema200_1h_dist','ema200_4h_dist',
+            'mega_spot_dist','rsi_h1','roc_pct','vol_spike','market_mood'
+        ];
+
+        const rows = [headers.join(',')];
+        for (const t of trials) {
+            let f = {};
+            try { f = JSON.parse(t.feature_snapshot || '{}'); } catch {}
+            rows.push([
+                t.trial_id, t.ticker, t.direction, t.trigger_type, t.level_type,
+                t.trigger_price, t.level_price, t.detected_at, t.verdict || '',
+                t.failure_reason || '', t.final_move_pct ?? '',
+                f.ema200_5m_dist_pct ?? '', f.ema200_15m_dist_pct ?? '',
+                f.ema200_1h_dist_pct ?? '', f.ema200_4h_dist_pct ?? '',
+                f.mega_spot_dist_pct ?? '', f.rsi_h1 ?? '',
+                f.roc_pct ?? '', f.vol_spike ?? '', f.market_mood ?? ''
+            ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+        }
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="validation_trials_${from.slice(0,10)}_to_${to.slice(0,10)}.csv"`);
+        res.send(rows.join('\n'));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // 6. NOTIFICATIONS STUB (Optional)
 app.get('/api/notifications', (req, res) => {
     res.json([]);
@@ -1510,6 +1675,11 @@ app.post('/api/webhook/smart-levels', (req, res) => {
             io.emit('smart-level-update', { ticker, direction, timestamp: parsedTimestamp });
         }
 
+        // 3rd UMPIRE VALIDATOR (passive, fire-and-forget — Step 1 skeleton)
+        setImmediate(() => {
+            try { umpire.onStreamC(payload); } catch (err) { console.error('Umpire onStreamC error:', err); }
+        });
+
         res.json({ success: true, ticker });
     } catch (e) {
         console.error("Stream C Webhook Error:", e);
@@ -1731,7 +1901,12 @@ app.get('/api/fusion/dashboard', (req, res) => {
     }
 });
 
-const PORT = 3000;
+// --- 3rd Umpire Validator ---
+const umpire = new UmpireEngine({ io });
+telegramValidator.attach(umpire, TelegramService);
+umpire.start();
+
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 V3 Server running on port ${PORT} (All Interfaces)`);
 });

@@ -108,3 +108,81 @@ Because of the Vite Proxy router, all external API integrations (Webhooks, AI Ag
 A backtest is only valid if it is clean. 
 *   **Rule**: Any component fetching data for a past timestamp MUST use a backward-facing lookback lens. 
 *   **Safety**: If a user scrubs to 2 days ago, the entire dashboard becomes a snapshot of the market's mind at that exact microsecond.
+
+---
+
+## Pillar 1 Extension: 3rd Umpire Validator (`server/validator/`)
+
+**Version**: 1.0 (Step 1 complete — skeleton active)  
+**Branch**: `feature/market-observer-validator`
+
+### What it is
+An event-driven trial state machine that judges Stream C smart-level events against a configurable 7-rule checklist. Verdicts: `CONFIRMED | FAILED | NEUTRAL_TIMEOUT | EARLY_FAVORABLE`. Runs entirely inside the existing `tv-backend` process — no new services, no new TradingView calls.
+
+### New DB Tables (additive — zero existing tables modified)
+| Table | Purpose |
+|---|---|
+| `validation_trials` | One row per detected setup — full feature + config snapshot at detection |
+| `validation_state_log` | State transition tape — enables DVR-aware replay (Rule #19 compliance) |
+| `pattern_statistics` | Pre-computed win rates by stream/EMA/vol combination — powers MCP low-token answers |
+
+### New Modules
+| File | Purpose |
+|---|---|
+| `server/validator/UmpireEngine.js` | Event-driven state machine. Hooks: `onStreamA`, `onStreamC`, `checkTimers` |
+| `server/validator/settingsManager.js` | 15 configurable keys, seeded into `system_settings` on first boot |
+| `server/validator/rules.js` | 7 rule evaluators (skeleton — Step 3 implements logic) |
+
+### The 7 Rules (EMA Hierarchy)
+| Rule | Role | Timeframe |
+|---|---|---|
+| Trigger valid | Required | — |
+| 5m EMA200 hold | **GATE** (must pass) | Entry |
+| 15m EMA200 sustain | **GATE** (must pass within 15m) | Sustain |
+| 1h EMA200 align | MINOR (weight only) | Trend |
+| 4h EMA200 align | **MAJOR** (can veto) | Macro |
+| Volume confirm | Weight | volSpike on retest |
+| Reactive zone touch | Structure | 0.3–0.5% retest band |
+
+### Integration Points (zero disturbance)
+*   `server/index.js` line after Stream A ingest: `setImmediate(() => umpire.onStreamA(payload))`
+*   `server/index.js` line after Stream C ingest: `setImmediate(() => umpire.onStreamC(payload))`
+*   Both are fire-and-forget — they never block the HTTP response or affect existing logic.
+
+### Telegram Behaviour
+*   **Live mode**: Phase-2 verdict alerts with full context (rules, mood, win-rate, next level, invalidation)
+*   **Replay mode**: Silent — no alerts fired during DVR scrubbing
+
+### Implementation Phases
+| Phase | Status | Description |
+|---|---|---|
+| 1 — DB + Skeleton | ✅ Complete | Tables created, engine wired, settings seeded on boot |
+| 2 — Trigger Detection | ⬜ Next | `onStreamC` creates trials, state machine transitions |
+| 3 — Rule Evaluation | ⬜ Pending | 7 rules evaluated per Stream A tick, verdicts resolved |
+| 4 — Frontend Widget | ⬜ Pending | `ValidatorTimelineWidget.jsx` — top row, DVR-aware |
+| 5 — Telegram + MCP + Stats | ⬜ Pending | Enriched alerts, 4 MCP tools, pattern_statistics rebuild |
+
+---
+
+## Development Environment Setup
+
+### Port Assignments
+| Service | Port |
+|---|---|
+| Backend | **3000** |
+| Frontend | **5173** |
+| MCP Server | **3001** |
+
+This repo (`E:\AI\claude_project\tv-recommendation-fullstack`) is the **active working repo** and runs on the standard ports. The old repo at `E:\AI\tv_dashboard` is retired — its PM2 processes have been removed.
+
+### Starting / Stopping
+```bash
+# From E:\AI\claude_project\tv-recommendation-fullstack
+pm2 start ecosystem.config.js      # start all 3 services
+pm2 restart ecosystem.config.js    # restart after code changes
+pm2 stop ecosystem.config.js       # stop all
+pm2 logs tv-backend --lines 30     # view backend logs
+```
+
+### Env-Driven Port Config
+All three services read their port from `process.env.PORT` (defaults: 3000 / 5173 / 3001). Vite reads `VITE_API_PORT` and `VITE_MCP_PORT` for proxy targets (both default to the standard ports).

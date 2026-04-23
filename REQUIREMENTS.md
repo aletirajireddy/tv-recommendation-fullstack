@@ -105,3 +105,22 @@ pm2 save
 - [x] **Confluence Grid**: Visual heatmap of overlapping indicators (RSI + Momentum + Pattern).
 - [x] **Floating Media Player**: Persistent controls for timeline navigation.
 - [x] **Dual-Monitor Ready**: Responsive grid layout that adapts to large screens.
+
+### 6. 3rd Umpire Validator (branch: `feature/market-observer-validator`)
+- [x] **DB Schema**: `validation_trials`, `validation_state_log`, `pattern_statistics` tables added (non-destructive).
+- [x] **Settings Persistence**: 15 configurable keys in `system_settings` (cooldown, watch window, EMA roles, thresholds).
+- [x] **Engine Skeleton**: `UmpireEngine` wired into Stream A and C ingestion hooks (fire-and-forget).
+- [ ] **Trigger Detection**: Opens trials on Stream C smart-level events (BOUNCE + BREAKOUT).
+- [ ] **Rule Evaluation**: 7 rules (5m/15m/1h/4h EMA, volume, reactive zone) evaluated per Stream A tick.
+- [ ] **Verdict Resolution**: CONFIRMED / FAILED / NEUTRAL_TIMEOUT / EARLY_FAVORABLE.
+- [ ] **DVR-Aware Widget**: `ValidatorTimelineWidget.jsx` — top row, replays state at any historical refTime.
+- [ ] **Settings Modal**: UI gear icon exposes all 15 config keys without code changes.
+- [ ] **Stats Panel**: Win-rate table + bar chart by stream/EMA/vol combination.
+- [ ] **CSV Export**: Date-picker download of `training_features` for future offline ML.
+- [ ] **Enriched Telegram**: Phase-2 verdict alerts with context, win-rate history, next level, invalidation.
+- [ ] **MCP Tools**: `get_volume_buildups`, `get_validated_setups`, `get_upcoming_watchers`, `get_pattern_stats`.
+
+### 7. Dev Environment
+- [x] **Zero-conflict ports**: Dev runs on 3010/5174/3011 alongside production 3000/5173/3001.
+- [x] **`ecosystem.dev.config.js`**: Single command starts all three dev services in watch mode.
+- [x] **Env-driven ports**: All services read PORT from environment — no hardcoded values.

@@ -4,7 +4,7 @@ module.exports = {
       name: "tv-backend",
       script: "index.js",
       cwd: "server",
-      watch: ["index.js", "services", "utils"], // Watch mode for BE source
+      watch: ["index.js", "services", "utils", "validator"], // Watch mode for BE source
       ignore_watch: ["node_modules", "dashboard*.db", "dashboard*.db-journal", "*.log"],
       env: {
         NODE_ENV: "development",
