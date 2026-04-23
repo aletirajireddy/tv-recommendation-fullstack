@@ -1,6 +1,6 @@
     # GEMINI.md - The AI Architect's Context Module
-    **Version**: 1.5.0
-    **Last Updated**: April 2026 (Project Phase: Institutional Gatekeeper & Momentum Rescue)
+    **Version**: 1.6.0
+    **Last Updated**: April 23, 2026 (Project Phase: Playback Hardening & UI Performance)
 
     ## 🤖 To Future AI Agents
     This file serves as your "Context Injection". If you are picking up this project, read this first to understand the *Soul* of the architecture, not just the code.
@@ -471,6 +471,21 @@
         *   **Momentum Revival**: If a coin is in the queue but its Stream A score rises > 30, it is **INSTANTLY PURGED** from the Ghost Widget.
         *   **Scout Re-qualification**: If a coin in the queue triggers a fresh Gate 20 (`STABLE`) qualification in Stream B, it is **INSTANTLY PURGED** from the Ghost Widget.
     3.  **Temporal Sandbox**: Adheres strictly to Rule #19. The Widget and its backend logic **ONLY** operate in Live Mode. Switching to Replay mode dissolves the widget to prevent future-state leakage during backtests.
+
+    ### Rule #24: Closed-Loop Playback Backpressure
+    Refactored the playback engine from a blind `setInterval` to a state-driven `useEffect` loop. 
+    *   **The Logic**: It now waits for `isLoading === false` and `isPlaying === true` before initiating a 3-second delay timer for the next step. 
+    *   **The Result**: This prevents network congestion and UI clutter during slow API responses, ensuring the UI only advances once the current frame is fully rendered.
+
+    ### Rule #25: Analytics Debouncing & Contextual Throttling
+    Heavy analytical API calls (`fetchAnalytics`, `fetchResearch`, etc.) are now debounced by 300ms to prevent UI thread lockups.
+    *   **Playback Throttling**: These calls are **skipped** during rapid playback in `loadScan`. 
+    *   **Re-Sync**: Full analytics are only triggered once the user pauses playback or reaches the end of the timeline, drastically reducing backend load and UI stuttering.
+
+    ### Rule #26: Chart Data Truncation Strategy
+    To maintain performance and visual clarity on the 30-day "Time-Mirror" sandbox, widgets (like `TrendFlowChart.jsx`) must slice their dataset before rendering.
+    *   **Standard**: Limit to a relevant "Trend Window" (e.g., the last 60 clusters). 
+    *   **Why**: This prevents Recharts from crashing or creating "Barcode Clutter" when processing thousands of data points from the full 30-day lookback.
 
     ---
 

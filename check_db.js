@@ -1,19 +1,16 @@
 const Database = require('better-sqlite3');
-const db = new Database('dashboard.db');
+const db = new Database('dashboard_v3.db');
 
-console.log("=== LATEST SCANS ===");
-const scans = db.prepare("SELECT id, timestamp, latency, metadata_json FROM scans ORDER BY timestamp DESC LIMIT 3").all();
-console.table(scans);
+try {
+    const lifecycles = db.prepare("SELECT * FROM coin_lifecycles").all();
+    console.log("Lifecycles count:", lifecycles.length);
+    console.log("Sample:", lifecycles.slice(0, 5));
+    
+    const settings = db.prepare("SELECT * FROM system_settings").all();
+    console.log("Settings:", settings);
 
-console.log("\n=== LATEST MARKET STATES ===");
-const states = db.prepare("SELECT scan_id, mood_score, trend_sentiment, timestamp FROM market_states ORDER BY timestamp DESC LIMIT 3").all();
-console.table(states);
-
-console.log("\n=== LATEST ENTRIES (Sample) ===");
-if (scans.length > 0) {
-    const entries = db.prepare("SELECT ticker, status, raw_data_json FROM scan_entries WHERE scan_id = ? LIMIT 3").all(scans[0].id);
-    entries.forEach(e => {
-        console.log(`Ticker: ${e.ticker}, Status: ${e.status}`);
-        console.log(`Raw Data Snippet:`, e.raw_data_json.substring(0, 100) + "...");
-    });
+    const scans = db.prepare("SELECT COUNT(*) as count FROM scan_results").get();
+    console.log("Scan results count:", scans.count);
+} catch (e) {
+    console.error(e);
 }

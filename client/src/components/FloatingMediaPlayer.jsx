@@ -13,6 +13,7 @@ export function FloatingMediaPlayer() {
     const skipToStart = useTimeStore(s => s.skipToStart);
     const skipToEnd = useTimeStore(s => s.skipToEnd);
     const loadScan = useTimeStore(s => s.loadScan);
+    const isLoading = useTimeStore(s => s.isLoading);
 
     // Local scrubber state for smooth dragging
     const [scrubVal, setScrubVal] = useState(currentIndex);
@@ -21,11 +22,12 @@ export function FloatingMediaPlayer() {
         setScrubVal(currentIndex);
     }, [currentIndex]);
 
-    // --- PLAYBACK ENGINE ---
+    // --- PLAYBACK ENGINE (CLOSED-LOOP) ---
     useEffect(() => {
-        let interval;
-        if (isPlaying) {
-            interval = setInterval(() => {
+        let timeout;
+        // Only trigger the next step if we are actively playing AND the current frame has finished loading
+        if (isPlaying && !isLoading) {
+            timeout = setTimeout(() => {
                 const currentIdx = useTimeStore.getState().currentIndex;
                 const timeLineLen = useTimeStore.getState().timeline.length;
                 if (currentIdx < timeLineLen - 1) {
@@ -33,11 +35,14 @@ export function FloatingMediaPlayer() {
                 } else {
                     // Reached the end, pause playback
                     useTimeStore.setState({ isPlaying: false });
+                    // Fetch final analytics since we stopped naturally
+                    useTimeStore.getState().fetchAnalytics();
+                    useTimeStore.getState().fetchResearch();
                 }
-            }, 4000); // 4 second playback speed
+            }, 3000); // Wait 3 seconds AFTER the frame is fully loaded and rendered
         }
-        return () => clearInterval(interval);
-    }, [isPlaying]);
+        return () => clearTimeout(timeout);
+    }, [isPlaying, isLoading, currentIndex]);
 
     // --- KEYBOARD CONTROLS ---
     useEffect(() => {
@@ -48,7 +53,12 @@ export function FloatingMediaPlayer() {
             switch (e.code) {
                 case 'Space':
                     e.preventDefault();
-                    useTimeStore.setState({ isPlaying: !useTimeStore.getState().isPlaying });
+                    const playingSpace = useTimeStore.getState().isPlaying;
+                    useTimeStore.setState({ isPlaying: !playingSpace });
+                    if (playingSpace) {
+                        useTimeStore.getState().fetchAnalytics();
+                        useTimeStore.getState().fetchResearch();
+                    }
                     break;
                 case 'ArrowRight':
                     e.preventDefault();
@@ -185,7 +195,13 @@ export function FloatingMediaPlayer() {
     };
 
     const togglePlay = () => {
-        useTimeStore.setState({ isPlaying: !isPlaying });
+        const currentlyPlaying = useTimeStore.getState().isPlaying;
+        useTimeStore.setState({ isPlaying: !currentlyPlaying });
+        if (currentlyPlaying) {
+            // If it was playing and we just paused it, fetch final data
+            useTimeStore.getState().fetchAnalytics();
+            useTimeStore.getState().fetchResearch();
+        }
     };
 
     return (

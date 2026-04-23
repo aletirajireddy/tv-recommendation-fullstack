@@ -4,6 +4,11 @@ import GenieSmart from '../services/GenieSmart';
 
 const API_BASE = '/api';
 
+let debounceTimerAnalytics = null;
+let debounceTimerResearch = null;
+let debounceTimerParticipation = null;
+let debounceTimerAlpha = null;
+
 export const useTimeStore = create((set, get) => ({
     // 1. STATE
     timeline: [],
@@ -189,38 +194,43 @@ export const useTimeStore = create((set, get) => ({
     },
 
     fetchAnalytics: async () => {
-        // ... existing analytics fetch ...
-        // Cancel previous request
-        const { abortControllers } = get();
-        if (abortControllers.analytics) abortControllers.analytics.abort();
+        if (debounceTimerAnalytics) clearTimeout(debounceTimerAnalytics);
+        return new Promise((resolve) => {
+            debounceTimerAnalytics = setTimeout(async () => {
+                // Cancel previous request
+                const { abortControllers } = get();
+                if (abortControllers.analytics) abortControllers.analytics.abort();
 
-        const controller = new AbortController();
-        set({ abortControllers: { ...abortControllers, analytics: controller } });
+                const controller = new AbortController();
+                set({ abortControllers: { ...abortControllers, analytics: controller } });
 
-        try {
-            const { lookbackHours, activeScan, timeline, currentIndex } = get();
+                try {
+                    const { lookbackHours, activeScan, timeline, currentIndex } = get();
 
-            // Determine Reference Time (Replay vs Live)
-            let refTimeStr = '';
-            if (activeScan && activeScan.timestamp) {
-                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
-            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
-                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
-            }
+                    // Determine Reference Time (Replay vs Live)
+                    let refTimeStr = '';
+                    if (activeScan && activeScan.timestamp) {
+                        refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+                    } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                        refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+                    }
 
-            const res = await fetch(`${API_BASE}/analytics/pulse?hours=${lookbackHours}${refTimeStr}&_t=${Date.now()}`, {
-                signal: controller.signal
-            });
+                    const res = await fetch(`${API_BASE}/analytics/pulse?hours=${lookbackHours}${refTimeStr}&_t=${Date.now()}`, {
+                        signal: controller.signal
+                    });
 
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
 
-            set({ analyticsData: data });
-        } catch (err) {
-            if (err.name !== 'AbortError') {
-                console.error('Analytics Error:', err);
-            }
-        }
+                    set({ analyticsData: data });
+                } catch (err) {
+                    if (err.name !== 'AbortError') {
+                        console.error('Analytics Error:', err);
+                    }
+                }
+                resolve();
+            }, 300);
+        });
     },
 
     refreshAll: async () => {
@@ -336,8 +346,11 @@ export const useTimeStore = create((set, get) => ({
 
             // Sync Analytics & Research to new time context
             // Note: In V3, activeScan.timestamp is strictly UTC ISO
-            get().fetchAnalytics();
-            get().fetchResearch();
+            // Skip heavy queries if we are rapidly playing back frames
+            if (!get().isPlaying) {
+                get().fetchAnalytics();
+                get().fetchResearch();
+            }
         } catch (err) {
             if (err.name !== 'AbortError') {
                 console.error('Failed to load scan details:', err);
@@ -354,6 +367,8 @@ export const useTimeStore = create((set, get) => ({
             loadScan(timeline[nextIndex].id);
         } else {
             set({ isPlaying: false });
+            get().fetchAnalytics();
+            get().fetchResearch();
         }
     },
 
@@ -396,36 +411,42 @@ export const useTimeStore = create((set, get) => ({
     },
 
     fetchResearch: async () => {
-        // Cancel previous request
-        const { abortControllers } = get();
-        if (abortControllers.research) abortControllers.research.abort();
+        if (debounceTimerResearch) clearTimeout(debounceTimerResearch);
+        return new Promise((resolve) => {
+            debounceTimerResearch = setTimeout(async () => {
+                // Cancel previous request
+                const { abortControllers } = get();
+                if (abortControllers.research) abortControllers.research.abort();
 
-        const controller = new AbortController();
-        set({ abortControllers: { ...abortControllers, research: controller } });
+                const controller = new AbortController();
+                set({ abortControllers: { ...abortControllers, research: controller } });
 
-        try {
-            const { lookbackHours, activeScan, timeline, currentIndex } = get();
-            console.log('[Research] Fetching data...', { currentIndex, hasActiveScan: !!activeScan, timelineLen: timeline.length });
+                try {
+                    const { lookbackHours, activeScan, timeline, currentIndex } = get();
+                    console.log('[Research] Fetching data...', { currentIndex, hasActiveScan: !!activeScan, timelineLen: timeline.length });
 
-            let refTimeStr = '';
-            if (activeScan && activeScan.timestamp) {
-                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
-            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
-                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
-            }
+                    let refTimeStr = '';
+                    if (activeScan && activeScan.timestamp) {
+                        refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+                    } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                        refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+                    }
 
-            const query = `${API_BASE}/analytics/research?hours=${lookbackHours || 24}${refTimeStr}&_t=${Date.now()}`;
-            const res = await fetch(query, { signal: controller.signal });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const query = `${API_BASE}/analytics/research?hours=${lookbackHours || 24}${refTimeStr}&_t=${Date.now()}`;
+                    const res = await fetch(query, { signal: controller.signal });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-            const data = await res.json();
-            set({ researchData: data });
-        } catch (err) {
-            if (err.name !== 'AbortError') {
-                console.error('Research API Error:', err);
-                set({ researchData: null });
-            }
-        }
+                    const data = await res.json();
+                    set({ researchData: data });
+                } catch (err) {
+                    if (err.name !== 'AbortError') {
+                        console.error('Research API Error:', err);
+                        set({ researchData: null });
+                    }
+                }
+                resolve();
+            }, 300);
+        });
     },
 
     fetchFusionData: async () => {
@@ -452,42 +473,54 @@ export const useTimeStore = create((set, get) => ({
     },
 
     fetchParticipationPulse: async () => {
-        try {
-            const { lookbackHours, activeScan, timeline, currentIndex } = get();
-            let refTimeStr = '';
-            if (activeScan && activeScan.timestamp) {
-                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
-            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
-                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
-            }
+        if (debounceTimerParticipation) clearTimeout(debounceTimerParticipation);
+        return new Promise((resolve) => {
+            debounceTimerParticipation = setTimeout(async () => {
+                try {
+                    const { lookbackHours, activeScan, timeline, currentIndex } = get();
+                    let refTimeStr = '';
+                    if (activeScan && activeScan.timestamp) {
+                        refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+                    } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                        refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+                    }
 
-            const res = await fetch(`${API_BASE}/analytics/participation-pulse?hours=${lookbackHours}${refTimeStr}`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            set({ participationPulse: data.timeline || [] });
-        } catch (err) {
-            console.error('Failed to fetch Participation Pulse data:', err);
-            set({ participationPulse: [] });
-        }
+                    const res = await fetch(`${API_BASE}/analytics/participation-pulse?hours=${lookbackHours}${refTimeStr}`);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+                    set({ participationPulse: data.timeline || [] });
+                } catch (err) {
+                    console.error('Failed to fetch Participation Pulse data:', err);
+                    set({ participationPulse: [] });
+                }
+                resolve();
+            }, 300);
+        });
     },
 
     fetchAlphaSquad: async () => {
-        try {
-            const { lookbackHours, activeScan, timeline, currentIndex } = get();
-            let refTimeStr = '';
-            if (activeScan && activeScan.timestamp) {
-                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
-            } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
-                refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
-            }
+        if (debounceTimerAlpha) clearTimeout(debounceTimerAlpha);
+        return new Promise((resolve) => {
+            debounceTimerAlpha = setTimeout(async () => {
+                try {
+                    const { lookbackHours, activeScan, timeline, currentIndex } = get();
+                    let refTimeStr = '';
+                    if (activeScan && activeScan.timestamp) {
+                        refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+                    } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                        refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
+                    }
 
-            const res = await fetch(`${API_BASE}/analytics/alpha-squad?hours=${lookbackHours}${refTimeStr}`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            set({ alphaSquad: Array.isArray(data) ? data : [] });
-        } catch (err) {
-            console.error('Failed to fetch Alpha Squad data:', err);
-            set({ alphaSquad: [] });
-        }
+                    const res = await fetch(`${API_BASE}/analytics/alpha-squad?hours=${lookbackHours}${refTimeStr}`);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+                    set({ alphaSquad: Array.isArray(data) ? data : [] });
+                } catch (err) {
+                    console.error('Failed to fetch Alpha Squad data:', err);
+                    set({ alphaSquad: [] });
+                }
+                resolve();
+            }, 300);
+        });
     },
 }));

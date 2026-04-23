@@ -1,6 +1,7 @@
 # TradingView Dashboard: System Architecture & Context Guide for AI
 
-**Version**: 2.1 (Includes Institutional Backtesting & MCP)
+**Version**: 2.2 (Includes Playback Hardening & Performance Optimization)
+**Last Updated**: April 23, 2026
 **Purpose**: This document serves as the absolute "Single Source of Truth" regarding the architecture of the TV Dashboard. Any AI assistant entering this project must read this to understand how data flows, where truth is derived, and how the 4 core pillars interact safely.
 
 ---
@@ -41,6 +42,8 @@ The system is designed with a strict separation of concerns. It follows a "Pass-
     *   **Time Normalization**: Receives UTC ISO dates and forces them into local UI time.
     *   **The Time-Mirror Protocol**: All components are bound by the temporal state of the `activeScan`. Future-data is mathematically purged from historical replay views.
     *   **Local State**: Uses `useTimeStore.js` to manage the "Playback Engine" (DVR sliding through historical market snapshots).
+    *   **Closed-Loop Playback**: Implements backpressure in the media player to wait for server responses (`isLoading`) before advancing frames, preventing UI lockups and network congestion.
+    *   **Analytical Window Decoupling**: The "Lookback Slider" acts as a magnification lens relative to the scrubber's current reference time, rather than truncating the timeline sandbox.
 
 ### Pillar 4: The AI Intelligence Layer (`mcp-server/`)
 *   **Role**: The Extensible Agentic API.

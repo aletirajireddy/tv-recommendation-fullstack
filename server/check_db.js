@@ -1,8 +1,20 @@
-const db = require('better-sqlite3')('dashboard_v3.db');
+const Database = require('better-sqlite3');
+const path = require('path');
+const dbPath = path.resolve(__dirname, '..', 'dashboard_v3.db');
+const db = new Database(dbPath);
+
+console.log("Checking DB at:", dbPath);
+
 try {
-    const rows = db.prepare('SELECT id, ticker, timestamp, price, direction, roc_pct FROM smart_level_events ORDER BY timestamp DESC LIMIT 5').all();
-    console.log(JSON.stringify(rows, null, 2));
-} catch(e) {
-    console.error(e);
+    const lifecycles = db.prepare("SELECT * FROM coin_lifecycles").all();
+    console.log("Lifecycles count:", lifecycles.length);
+    console.log("Sample:", lifecycles.slice(0, 5));
+    
+    const settings = db.prepare("SELECT * FROM system_settings").all();
+    console.log("Settings:", settings);
+
+    const scans = db.prepare("SELECT COUNT(*) as count FROM scan_results").get();
+    console.log("Scan results count:", scans.count);
+} catch (e) {
+    console.error("DB Error:", e.message);
 }
-process.exit(0);
