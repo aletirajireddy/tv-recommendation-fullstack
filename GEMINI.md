@@ -1,6 +1,6 @@
     # GEMINI.md - The AI Architect's Context Module
-    **Version**: 1.6.0
-    **Last Updated**: April 23, 2026 (Project Phase: Playback Hardening & UI Performance)
+    **Version**: 1.7.0
+    **Last Updated**: April 23, 2026 (Project Phase: 3rd Umpire Validator & MCP Forensic Hardening)
 
     ## 🤖 To Future AI Agents
     This file serves as your "Context Injection". If you are picking up this project, read this first to understand the *Soul* of the architecture, not just the code.
@@ -498,3 +498,26 @@
     *   **Momentum Logic**: The server now cross-references both Stream A (Macro Score) and Stream B (Scout Graduate) to "Rescue" coins from the ghost queue before the user even has a chance to prune them, ensuring we never flush a coin that is coming back to life.
 
 
+    ### Rule #27: The "Umpire Simulation" Protocol
+    The 3rd Umpire Validator acts as a high-fidelity state machine for trade validation.
+    *   **The Trigger**: Exclusively driven by Stream C (Smart Levels). No manual trial creation.
+    *   **The Context**: Every trial captures a immutable `feature_snapshot` (EMAs, RSI, Mood) from Stream A at the exact microsecond of detection.
+    *   **The Timeline**: Adheres to Rule #19. Trials and their state transitions (`validation_state_log`) are timestamped in UTC.
+    *   **Playback**: The `ValidatorTimelineWidget` uses the `activeScan.timestamp` to filter trials. It only shows trials that were "Active" or "Recently Resolved" relative to the DVR scrubber position.
+
+    ### Rule #28: MCP Forensic Transparency
+    The Model Context Protocol (MCP) server must expose the full "Thought Process" of the system to AI agents.
+    *   **Deep Dives**: Tools like `get_trial_details` must return the full `validation_state_log` and `feature_snapshot`.
+    *   **Data Integrity**: AI agents should use `get_pattern_stats` to verify historical edge before confirming setups.
+    *   **Lifecycle Awareness**: AI must use `get_coin_lifecycles` to understand the "maturity" of a signal (Scout birth vs. Umpire validation).
+
+    ---
+
+    ## 14. Phase 6: The 3rd Umpire Validator (April 2026)
+    **Objective**: Institutional-grade trade validation and automated backtesting infrastructure.
+    *   **Engine**: `UmpireEngine.js` manages the lifecycle of trade "trials" from detection to resolution.
+    *   **Validation**: 7 core rules (EMA Hierarchy, Volume, Reactive Zones) judge every setup.
+    *   **Statistics**: `pattern_statistics` table provides a real-time, pre-computed win-rate matrix for every possible setup combination.
+    *   **DVR Integration**: Full support for historical simulation, allowing the user to replay any 30-day window and see the validator's rule-evaluations in real-time.
+
+    *(End of Document)*

@@ -376,17 +376,73 @@ async function getValidatedSetups(stateFilter) {
             SELECT trial_id, ticker, direction, trigger_type, level_type,
                    trigger_price, level_price, state, verdict,
                    detected_at, cooldown_until, watch_until,
-                   latest_move, failure_reason
+                   latest_move, failure_reason, feature_snapshot, config_snapshot
             FROM validation_trials
             WHERE state IN (${placeholders})
             ORDER BY detected_at DESC LIMIT 30
         `).all(...states);
 
+        // Parse JSON blobs for better AI consumption
+        const parsedRows = rows.map(r => ({
+            ...r,
+            feature_snapshot: r.feature_snapshot ? JSON.parse(r.feature_snapshot) : null,
+            config_snapshot: r.config_snapshot ? JSON.parse(r.config_snapshot) : null
+        }));
+
         return {
             description: "Active 3rd Umpire Validator trials — EMA hierarchy validated setups",
-            count: rows.length,
-            trials: rows
+            count: parsedRows.length,
+            trials: parsedRows
         };
+    } catch(e) {
+        return { error: e.message };
+    }
+}
+
+async function getTrialDetails(trial_id) {
+    if (!trial_id) return { error: "trial_id is required" };
+    try {
+        const trial = db.prepare('SELECT * FROM validation_trials WHERE trial_id = ?').get(trial_id);
+        if (!trial) return { error: `Trial ${trial_id} not found` };
+
+        const logs = db.prepare('SELECT * FROM validation_state_log WHERE trial_id = ? ORDER BY changed_at ASC').all(trial_id);
+
+        trial.feature_snapshot = trial.feature_snapshot ? JSON.parse(trial.feature_snapshot) : null;
+        trial.config_snapshot = trial.config_snapshot ? JSON.parse(trial.config_snapshot) : null;
+        trial.raw_trigger_blob = trial.raw_trigger_blob ? JSON.parse(trial.raw_trigger_blob) : null;
+
+        const parsedLogs = logs.map(l => ({
+            ...l,
+            rule_snapshot: l.rule_snapshot ? JSON.parse(l.rule_snapshot) : null
+        }));
+
+        return {
+            trial_summary: trial,
+            state_transitions: parsedLogs
+        };
+    } catch(e) {
+        return { error: e.message };
+    }
+}
+
+async function getCoinLifecycles(status) {
+    try {
+        let rows;
+        if (status && status !== 'ALL') {
+            rows = db.prepare('SELECT * FROM coin_lifecycles WHERE status = ? ORDER BY born_at DESC LIMIT 50').all(status);
+        } else {
+            rows = db.prepare('SELECT * FROM coin_lifecycles ORDER BY born_at DESC LIMIT 50').all();
+        }
+        return { count: rows.length, lifecycles: rows };
+    } catch(e) {
+        return { error: e.message };
+    }
+}
+
+async function getGhostApprovalQueue() {
+    try {
+        const rows = db.prepare('SELECT * FROM ghost_approval_queue WHERE is_approved = 0 ORDER BY queued_at DESC').all();
+        return { count: rows.length, queue: rows };
     } catch(e) {
         return { error: e.message };
     }
@@ -486,5 +542,8 @@ module.exports = {
     getVolumeBuildup,
     getValidatedSetups,
     getUpcomingWatchers,
-    getPatternStats
+    getPatternStats,
+    getTrialDetails,
+    getCoinLifecycles,
+    getGhostApprovalQueue
 };

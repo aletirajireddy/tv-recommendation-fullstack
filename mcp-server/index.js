@@ -185,6 +185,32 @@ function createMcpServer() {
                         min_win_rate: { type: "number", description: "Minimum win rate % to include (default 0)" }
                     }
                 }
+            },
+            {
+                name: "get_trial_details",
+                description: "Deep dive into a specific 3rd Umpire Validator trial. Returns the full feature snapshot (market context at detection) and the step-by-step state transition log showing exactly which rules passed or failed during the trial's lifespan.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        trial_id: { type: "string", description: "The trial_id returned from get_validated_setups" }
+                    },
+                    required: ["trial_id"]
+                }
+            },
+            {
+                name: "get_coin_lifecycles",
+                description: "Retrieves the age and maturity tracking for coins discovered by the system. Helpful for understanding how long a coin has been tracked or if it's dead.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        status: { type: "string", description: "Filter by status: ACTIVE, GHOST, DEAD, or ALL (default ALL)" }
+                    }
+                }
+            },
+            {
+                name: "get_ghost_approval_queue",
+                description: "Returns the list of coins currently awaiting manual approval to be designated as 'GHOST' (pruned).",
+                inputSchema: { type: "object", properties: {} }
             }
         ]
     }));
@@ -271,6 +297,15 @@ function createMcpServer() {
                     break;
                 case 'get_pattern_stats':
                     result = await tools.getPatternStats(args || {});
+                    break;
+                case 'get_trial_details':
+                    result = await tools.getTrialDetails(args.trial_id);
+                    break;
+                case 'get_coin_lifecycles':
+                    result = await tools.getCoinLifecycles(args?.status);
+                    break;
+                case 'get_ghost_approval_queue':
+                    result = await tools.getGhostApprovalQueue();
                     break;
                 default:
                     throw new Error(`Unknown tool: ${name}`);

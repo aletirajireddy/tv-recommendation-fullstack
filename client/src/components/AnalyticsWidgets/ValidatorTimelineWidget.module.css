@@ -81,7 +81,19 @@
 .emptyState { text-align: center; padding: 20px; color: #4a5568; font-size: 13px; }
 
 /* ─── TRIAL CARDS ─── */
-.trialList { display: flex; flex-direction: column; gap: 8px; }
+.trialList { 
+    display: flex; 
+    flex-direction: column; 
+    gap: 8px; 
+    max-height: 280px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.trialList::-webkit-scrollbar { width: 6px; }
+.trialList::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.02); border-radius: 4px; }
+.trialList::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 4px; }
+.trialList::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
 
 .trialCard {
     background: rgba(255,255,255,0.03);

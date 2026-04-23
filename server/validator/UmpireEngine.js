@@ -71,13 +71,13 @@ class UmpireEngine extends EventEmitter {
             'SELECT id FROM smart_level_events WHERE ticker = ? ORDER BY id DESC LIMIT 1'
         ).get(ticker);
 
-        const now = new Date();
+        const now = payload.timestamp ? new Date(payload.timestamp) : new Date();
         const cooldownMs = (cfg['validator.cooldown_minutes'] || 15) * 60 * 1000;
         const watchMs = (cfg['validator.watch_window_minutes'] || 60) * 60 * 1000;
         const cooldownUntil = new Date(now.getTime() + cooldownMs);
         const watchUntil = new Date(cooldownUntil.getTime() + watchMs);
 
-        const trialId = `trial_${ticker}_${Date.now()}`;
+        const trialId = `trial_${ticker}_${now.getTime()}`;
 
         try {
             db.prepare(`
@@ -95,7 +95,7 @@ class UmpireEngine extends EventEmitter {
                 JSON.stringify(payload)
             );
 
-            this._logState(trialId, 'COOLDOWN', null, price, 0);
+            this._logState(trialId, 'COOLDOWN', null, price, 0, now.toISOString());
 
             console.log(`🎯 [UMPIRE] Trial opened: ${ticker} ${trialDirection} | ${triggerType} @ ${price} | cooldown ${cfg['validator.cooldown_minutes']}m`);
             this._emitUpdate({ type: 'TRIAL_OPENED', trialId, ticker, direction: trialDirection, triggerType, price, levelType, levelPrice });
@@ -107,8 +107,10 @@ class UmpireEngine extends EventEmitter {
         }
     }
 
-    onStreamA(payload) {
+    onStreamA(payload, nowOverride = null) {
         if (!payload?.results) return;
+
+        const now = nowOverride ? new Date(nowOverride) : new Date();
 
         const activeTrials = db.prepare(`
             SELECT * FROM validation_trials WHERE state IN ('COOLDOWN', 'WATCHING')
@@ -124,7 +126,7 @@ class UmpireEngine extends EventEmitter {
             if (t) tickerMap[t] = d;
         }
 
-        const now = new Date();
+
 
         for (const trial of activeTrials) {
             const scanData = tickerMap[trial.ticker];
@@ -145,7 +147,7 @@ class UmpireEngine extends EventEmitter {
 
             const ruleSnapshot = rules.evaluateAll(trial, features, scanData, cfg, currentPrice);
 
-            this._logState(trial.trial_id, trial.state, JSON.stringify(ruleSnapshot), currentPrice, priceMovePct);
+            this._logState(trial.trial_id, trial.state, JSON.stringify(ruleSnapshot), currentPrice, priceMovePct, now.toISOString());
 
             // Only apply verdict logic during WATCHING state
             if (trial.state !== 'WATCHING') continue;
@@ -157,15 +159,15 @@ class UmpireEngine extends EventEmitter {
         }
     }
 
-    checkTimers() {
-        const now = new Date();
+    checkTimers(nowOverride = null) {
+        const now = nowOverride ? new Date(nowOverride) : new Date();
 
         // COOLDOWN → WATCHING transitions
         const cooling = db.prepare(`SELECT * FROM validation_trials WHERE state = 'COOLDOWN'`).all();
         for (const trial of cooling) {
             if (now >= new Date(trial.cooldown_until)) {
                 db.prepare(`UPDATE validation_trials SET state = 'WATCHING' WHERE trial_id = ?`).run(trial.trial_id);
-                this._logState(trial.trial_id, 'WATCHING', null, null, null);
+                this._logState(trial.trial_id, 'WATCHING', null, null, null, now.toISOString());
                 console.log(`👀 [UMPIRE] ${trial.ticker} → WATCHING`);
                 this._emitUpdate({ type: 'STATE_CHANGE', trialId: trial.trial_id, state: 'WATCHING', ticker: trial.ticker });
             }
@@ -254,7 +256,7 @@ class UmpireEngine extends EventEmitter {
             this._logState(
                 trial.trial_id, 'RESOLVED',
                 ruleSnapshot ? JSON.stringify(ruleSnapshot) : null,
-                currentPrice, priceMovePct
+                currentPrice, priceMovePct, now.toISOString()
             );
 
             const moveStr = priceMovePct != null ? ` | Move: ${priceMovePct.toFixed(2)}%` : '';
@@ -269,12 +271,13 @@ class UmpireEngine extends EventEmitter {
         }
     }
 
-    _logState(trialId, state, ruleSnapshot, currentPrice, unrealizedMovePct) {
+    _logState(trialId, state, ruleSnapshot, currentPrice, unrealizedMovePct, timestamp = null) {
         try {
+            const time = timestamp || new Date().toISOString();
             db.prepare(`
                 INSERT INTO validation_state_log (trial_id, changed_at, state, rule_snapshot, current_price, unrealized_move_pct)
                 VALUES (?, ?, ?, ?, ?, ?)
-            `).run(trialId, new Date().toISOString(), state, ruleSnapshot, currentPrice, unrealizedMovePct);
+            `).run(trialId, time, state, ruleSnapshot, currentPrice, unrealizedMovePct);
         } catch (err) {
             console.error('[Umpire] _logState error:', err.message);
         }

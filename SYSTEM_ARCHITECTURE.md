@@ -157,10 +157,10 @@ An event-driven trial state machine that judges Stream C smart-level events agai
 | Phase | Status | Description |
 |---|---|---|
 | 1 — DB + Skeleton | ✅ Complete | Tables created, engine wired, settings seeded on boot |
-| 2 — Trigger Detection | ⬜ Next | `onStreamC` creates trials, state machine transitions |
-| 3 — Rule Evaluation | ⬜ Pending | 7 rules evaluated per Stream A tick, verdicts resolved |
-| 4 — Frontend Widget | ⬜ Pending | `ValidatorTimelineWidget.jsx` — top row, DVR-aware |
-| 5 — Telegram + MCP + Stats | ⬜ Pending | Enriched alerts, 4 MCP tools, pattern_statistics rebuild |
+| 2 — Trigger Detection | ✅ Complete | `onStreamC` creates trials, state machine transitions |
+| 3 — Rule Evaluation | ✅ Complete | 7 rules evaluated per Stream A tick, verdicts resolved |
+| 4 — Frontend Widget | ✅ Complete | `ValidatorTimelineWidget.jsx` — scrollable, top row, DVR-aware |
+| 5 — Telegram + MCP + Stats | ✅ Complete | Enriched alerts, 7 MCP tools, pattern_statistics rebuild |
 
 ---
 
