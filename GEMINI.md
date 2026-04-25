@@ -520,4 +520,22 @@
     *   **Statistics**: `pattern_statistics` table provides a real-time, pre-computed win-rate matrix for every possible setup combination.
     *   **DVR Integration**: Full support for historical simulation, allowing the user to replay any 30-day window and see the validator's rule-evaluations in real-time.
 
+    ## 15. Phase 7: Master Coin Store V4 (April 2026)
+    **Objective**: Centralized, event-sourced materialized timeline of coin state for deep AI forensics and historical backtesting.
+
+    ### 15.1 The Architecture
+    *   **The Table**: `master_coin_store` within `dashboard_v3.db`. Stores a unified JSON state representing the convergence of Stream A (Macro Metrics), Stream B (Watchlist), and Stream C (Smart Levels).
+    *   **The Engine**: `MasterStoreService.js` handles ingestion. It pulls the latest state for a ticker, applies a delta update from the incoming stream, and saves a new materialized snapshot timestamped to the millisecond.
+    *   **Zero-Impact Integration**: The ingestion hooks are wrapped in `setImmediate()` and `.catch()` guards at the very end of `server/index.js` routes, ensuring no blocking of existing real-time socket emissions.
+
+    ### Rule #29: The 30-Day Materialized Prune
+    To prevent infinite JSON blob growth, `MasterStoreService.js` implements a rolling 30-day prune engine.
+    *   **Execution**: It runs asynchronously during ingestion, purging rows older than 30 days.
+    *   **Stability**: Keeps the SQLite database bounded around ~1.5GB, ensuring long-term institutional stability without manual intervention.
+
+    ### Rule #30: MCP Timeline Transparency
+    The V4 timeline is exclusively for deep AI forensics and backend analytics, completely decoupled from the React Client's real-time DVR memory.
+    *   **The Tool**: Exposed to AI via `query_master_coin_store` in the MCP server.
+    *   **Usage**: AI agents can pull the exact chronological event sequence of a coin, seeing exactly when momentum hit, when it was scouted, and when a level broke, all aligned in a single query.
+
     *(End of Document)*

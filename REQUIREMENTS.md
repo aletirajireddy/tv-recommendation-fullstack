@@ -117,10 +117,16 @@ pm2 save
 - [ ] **Settings Modal**: UI gear icon exposes all 15 config keys without code changes.
 - [ ] **Stats Panel**: Win-rate table + bar chart by stream/EMA/vol combination.
 - [ ] **CSV Export**: Date-picker download of `training_features` for future offline ML.
-- [ ] **Enriched Telegram**: Phase-2 verdict alerts with context, win-rate history, next level, invalidation.
-- [ ] **MCP Tools**: `get_volume_buildups`, `get_validated_setups`, `get_upcoming_watchers`, `get_pattern_stats`.
+- [x] **Enriched Telegram**: Phase-2 verdict alerts with context, win-rate history, next level, invalidation.
+- [x] **MCP Tools**: `get_volume_buildups`, `get_validated_setups`, `get_upcoming_watchers`, `get_pattern_stats`.
 
-### 7. Dev Environment
+### 7. Master Coin Store V4 (Materialized Timeline)
+- [x] **DB Schema**: `master_coin_store` table added for unified stream merging.
+- [x] **Ingestion Engine**: `MasterStoreService.js` for asynchronous state delta merging.
+- [x] **Rolling Prune Engine**: 30-day automated historical cleanup for DB size bounding.
+- [x] **AI Forensics**: `query_master_coin_store` tool exposed in MCP server for timeline extraction.
+
+### 8. Dev Environment
 - [x] **Zero-conflict ports**: Dev runs on 3010/5174/3011 alongside production 3000/5173/3001.
 - [x] **`ecosystem.dev.config.js`**: Single command starts all three dev services in watch mode.
 - [x] **Env-driven ports**: All services read PORT from environment — no hardcoded values.

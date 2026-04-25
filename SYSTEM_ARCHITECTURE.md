@@ -59,6 +59,7 @@ The system is designed with a strict separation of concerns. It follows a "Pass-
         *   `get_top_catalysts` (Breakouts and Volume Spikes).
         *   `get_institutional_pulse` (Whale footprint tracking).
         *   `analyze_target` (Deep dive on one ticker).
+        *   `query_master_coin_store` (V4 Materialized timeline spanning Stream A, B, and C).
 
 ---
 
@@ -161,6 +162,23 @@ An event-driven trial state machine that judges Stream C smart-level events agai
 | 3 — Rule Evaluation | ✅ Complete | 7 rules evaluated per Stream A tick, verdicts resolved |
 | 4 — Frontend Widget | ✅ Complete | `ValidatorTimelineWidget.jsx` — scrollable, top row, DVR-aware |
 | 5 — Telegram + MCP + Stats | ✅ Complete | Enriched alerts, 7 MCP tools, pattern_statistics rebuild |
+
+---
+
+## Pillar 1 Extension: Master Coin Store V4
+
+**Version**: 1.0 (Live)  
+**Branch**: `feature/master-coin-store-v4`
+
+### What it is
+A centralized, event-sourced materialized timeline that unifies all asynchronous data streams (A, B, C) into a single, queryable historical record per coin. Designed specifically for deep AI forensics and complex historical backtesting.
+
+### Key Components
+*   **Database Table**: `master_coin_store` (stores full JSON state slices and a merged_context).
+*   **Engine**: `server/services/MasterStoreService.js`. Implements a "last known state" merge strategy.
+*   **Pruning**: Built-in 30-day automated rolling prune engine to bound database growth.
+*   **Ingestion Hooks**: Fire-and-forget `setImmediate` injections in `server/index.js` ensuring zero impact on live data flows.
+*   **MCP Integration**: `query_master_coin_store` tool for LLM consumption.
 
 ---
 
