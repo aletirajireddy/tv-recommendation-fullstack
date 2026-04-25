@@ -305,17 +305,19 @@ class UmpireEngine extends EventEmitter {
         const rsi = payload.rsi_matrix || {};
         const dist = (p) => (p && price) ? (price - p) / p * 100 : null;
 
+        const toNum = (v) => v != null ? Number(v) || null : null;
+
         return {
             price, direction,
-            ema200_5m_price:      e200.m5?.p  ?? null,
-            ema200_15m_price:     e200.m15?.p ?? null,
-            ema200_1h_price:      e200.h1?.p  ?? null,
-            ema200_4h_price:      e200.h4?.p  ?? null,
+            ema200_5m_price:      toNum(e200.m5?.p),
+            ema200_15m_price:     toNum(e200.m15?.p),
+            ema200_1h_price:      toNum(e200.h1?.p),
+            ema200_4h_price:      toNum(e200.h4?.p),
             ema200_5m_dist_pct:   dist(e200.m5?.p),
             ema200_15m_dist_pct:  dist(e200.m15?.p),
             ema200_1h_dist_pct:   dist(e200.h1?.p),
             ema200_4h_dist_pct:   dist(e200.h4?.p),
-            mega_spot_price:      sl.mega_spot?.p ?? null,
+            mega_spot_price:      toNum(sl.mega_spot?.p),
             mega_spot_dist_pct:   dist(sl.mega_spot?.p),
             rsi_h1:               rsi.h1 ?? null,
             roc_pct:              payload.momentum?.roc_pct ?? payload.roc_pct ?? 0
@@ -338,8 +340,11 @@ class UmpireEngine extends EventEmitter {
         ].filter(c => c.p);
 
         if (!candidates.length) return { levelType: 'UNKNOWN', levelPrice: price };
-        candidates.sort((a, b) => Math.abs(price - a.p) - Math.abs(price - b.p));
-        return { levelType: candidates[0].type, levelPrice: candidates[0].p };
+        // Coerce all .p values to numbers before comparison
+        const numCandidates = candidates.map(c => ({ ...c, p: Number(c.p) })).filter(c => c.p > 0);
+        if (!numCandidates.length) return { levelType: 'UNKNOWN', levelPrice: price };
+        numCandidates.sort((a, b) => Math.abs(price - a.p) - Math.abs(price - b.p));
+        return { levelType: numCandidates[0].type, levelPrice: numCandidates[0].p };
     }
 
     _getLatestMarketMood() {

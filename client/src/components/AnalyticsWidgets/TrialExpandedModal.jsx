@@ -1,40 +1,82 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import {
+    ComposedChart, Line, Area, Scatter,
+    XAxis, YAxis, Tooltip, Legend,
+    ReferenceLine, ReferenceArea,
+    ResponsiveContainer,
+} from 'recharts';
 import styles from './ValidatorTimelineWidget.module.css';
 
 /**
- * TrialExpandedModal — Full forensic candlestick chart for a single trial.
+ * TrialExpandedModal — Full forensic price chart for a single trial.
  *
- * Fetches /api/validator/trial/:id/ohlc and renders:
- *   - Real OHLC candles (grouped from master_coin_store at 5m intervals)
- *   - Smart level line (breakout/bounce target — orange)
- *   - Trigger price line (white)
- *   - EMA200: 5m (blue), 15m, 1h, 4h (progressively darker)
- *   - COOLDOWN + WATCHING zone shading
- *   - Vertical markers at trigger and verdict
- *   - Wick rejection and body size visible for pattern reading
- *   - Side panel: state transitions + trial meta
+ * Uses Recharts ComposedChart (responsive, correct proportions).
+ * Data: /api/validator/trial/:id/ohlc (price series) +
+ *       /api/validator/trial/:id/timeline (state log)
+ *
+ * Chart shows:
+ *   - Real price line from master_coin_store snapshots (colored by direction)
+ *   - Area fill (LONG=green, SHORT=red) below/above trigger to show P&L visually
+ *   - Phase bands: COOLDOWN (grey) / WATCHING (blue) zones
+ *   - Key price levels: Trigger, Smart Level, all 4 EMA200s
+ *   - Trigger vertical marker (purple) + Verdict vertical marker (green/red)
+ *   - Individual scan snapshot dots (show actual data density)
+ *
+ * Side panel: state transitions with rule pass/fail chips + trial meta
  */
+
+function smartFmt(price) {
+    if (price == null || isNaN(price) || price === 0) return '0';
+    if (price >= 1000)  return price.toFixed(2);
+    if (price >= 1)     return price.toFixed(4);
+    if (price >= 0.01)  return price.toFixed(5);
+    if (price >= 0.001) return price.toFixed(6);
+    return price.toFixed(8);
+}
+function fmtTime(ms) {
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+function fmtTimeFull(ms) {
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+const VERDICT_COLOR = { CONFIRMED: '#68d391', FAILED: '#fc8181', NEUTRAL_TIMEOUT: '#a0aec0', EARLY_FAVORABLE: '#f6ad55' };
+const STATE_COLOR   = { COOLDOWN: '#a0aec0', WATCHING: '#63b3ed', RESOLVED: '#68d391' };
+
+const EMA_DEFS = [
+    { key: 'ema200_4h',  color: '#2b6cb0', dash: '2 7', label: '4h EMA200' },
+    { key: 'ema200_1h',  color: '#3182ce', dash: '2 5', label: '1h EMA200' },
+    { key: 'ema200_15m', color: '#4299e1', dash: '2 4', label: '15m EMA200' },
+    { key: 'ema200_5m',  color: '#63b3ed', dash: '3 3', label: '5m EMA200' },
+];
+
 export function TrialExpandedModal({ trialId, onClose }) {
     const [ohlc, setOhlc] = useState(null);
     const [stateLog, setStateLog] = useState([]);
+    const [trial, setTrial] = useState(null);
     const [error, setError] = useState(null);
-    const [interval, setIntervalMin] = useState(5);
+    const [intervalMin, setIntervalMin] = useState(5);
+    const [loadingOhlc, setLoadingOhlc] = useState(true);
 
-    const loadOhlc = (intervalMin) => {
-        fetch(`/api/validator/trial/${encodeURIComponent(trialId)}/ohlc?interval=${intervalMin}`)
+    const loadOhlc = (iv) => {
+        setLoadingOhlc(true);
+        fetch(`/api/validator/trial/${encodeURIComponent(trialId)}/ohlc?interval=${iv}`)
             .then(r => r.json())
             .then(d => { if (d.error) setError(d.error); else setOhlc(d); })
-            .catch(e => setError(e.message));
+            .catch(e => setError(e.message))
+            .finally(() => setLoadingOhlc(false));
     };
 
     useEffect(() => {
-        loadOhlc(interval);
-        // Also fetch state log
+        loadOhlc(intervalMin);
         fetch(`/api/validator/trial/${encodeURIComponent(trialId)}/timeline`)
             .then(r => r.json())
-            .then(d => { if (d.state_log) setStateLog(d.state_log); })
+            .then(d => {
+                if (d.state_log)  setStateLog(d.state_log);
+                if (d.trial)      setTrial(d.trial);
+            })
             .catch(() => {});
-    }, [trialId, interval]);
+    }, [trialId]);
 
     useEffect(() => {
         const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -42,323 +84,312 @@ export function TrialExpandedModal({ trialId, onClose }) {
         return () => window.removeEventListener('keydown', onKey);
     }, [onClose]);
 
-    const changeInterval = (v) => { setIntervalMin(v); setOhlc(null); loadOhlc(v); };
+    const handleInterval = (iv) => { setIntervalMin(iv); loadOhlc(iv); };
 
-    const verdictColor = !ohlc?.verdict ? '#a0aec0'
-        : ohlc.verdict === 'CONFIRMED' ? '#68d391'
-        : ohlc.verdict === 'FAILED' ? '#fc8181'
-        : '#a0aec0';
+    // Build price series from candle close prices
+    const series = useMemo(() => {
+        if (!ohlc?.candles) return [];
+        return ohlc.candles.map(c => ({
+            t: c.ts,
+            price: c.close,
+            samples: c.samples,
+        }));
+    }, [ohlc]);
 
-    const STATE_COLORS = { COOLDOWN: '#a0aec0', WATCHING: '#63b3ed', RESOLVED: '#68d391' };
+    // Price domain
+    const { pMin, pMax } = useMemo(() => {
+        if (!ohlc || series.length === 0) return { pMin: 0, pMax: 1 };
+        const lvl = ohlc.levels;
+        const all = [
+            ...series.map(s => s.price),
+            lvl.trigger, lvl.smart_level,
+            lvl.ema200_5m, lvl.ema200_15m, lvl.ema200_1h, lvl.ema200_4h,
+        ].filter(p => p != null && p > 0);
+        const mn = Math.min(...all);
+        const mx = Math.max(...all);
+        const pad = (mx - mn) * 0.10 || mn * 0.02;
+        return { pMin: mn - pad, pMax: mx + pad };
+    }, [ohlc, series]);
+
+    const isLong = ohlc?.direction === 'LONG';
+    const lineColor = isLong ? '#68d391' : '#fc8181';
+    const areaFill  = isLong ? 'rgba(104,211,145,0.10)' : 'rgba(252,129,129,0.10)';
+    const verdictColor = VERDICT_COLOR[ohlc?.verdict] || '#a0aec0';
+
+    const ph = ohlc?.phases || {};
+    const cooldownStart = ph.detected_ms;
+    const cooldownEnd   = ph.cooldown_until_ms;
+    const watchStart    = ph.cooldown_until_ms || ph.detected_ms;
+    const watchEnd      = ph.resolved_ms || series.at(-1)?.t;
 
     return (
         <>
             <div className={styles.overlay} onClick={onClose} />
             <div style={{
-                position: 'fixed', top: '4%', left: '3%', right: '3%', bottom: '4%',
+                position: 'fixed', top: '3%', left: '2%', right: '2%', bottom: '3%',
                 background: '#0d1117', border: '1px solid rgba(255,255,255,0.15)',
-                borderRadius: 10, zIndex: 1000, padding: 16, overflow: 'hidden',
+                borderRadius: 10, zIndex: 1000,
                 display: 'flex', flexDirection: 'column',
-                boxShadow: '0 24px 64px rgba(0,0,0,0.8)',
+                boxShadow: '0 24px 80px rgba(0,0,0,0.85)',
+                overflow: 'hidden',
             }}>
-                {/* HEADER */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
-                    {ohlc && (
+                {/* ── HEADER ── */}
+                <div style={{
+                    padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)',
+                    display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
+                }}>
+                    {ohlc ? (
                         <>
-                            <span style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0' }}>{ohlc.ticker}</span>
-                            <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 4, background: ohlc.direction === 'LONG' ? 'rgba(104,211,145,0.15)' : 'rgba(252,129,129,0.15)', color: ohlc.direction === 'LONG' ? '#68d391' : '#fc8181', fontWeight: 600 }}>
-                                {ohlc.direction === 'LONG' ? '▲ LONG' : '▼ SHORT'}
-                            </span>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>{ohlc.ticker}</span>
+                            <span style={{
+                                fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 600,
+                                background: isLong ? 'rgba(104,211,145,0.15)' : 'rgba(252,129,129,0.15)',
+                                color: lineColor,
+                            }}>{isLong ? '▲ LONG' : '▼ SHORT'}</span>
                             <span style={{ fontSize: 11, color: '#718096' }}>{ohlc.trigger_type} · {ohlc.level_type}</span>
                             {ohlc.verdict && (
-                                <span style={{ fontSize: 12, fontWeight: 600, color: verdictColor, marginLeft: 4 }}>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: verdictColor, marginLeft: 2 }}>
                                     {ohlc.verdict === 'CONFIRMED' ? '✅' : ohlc.verdict === 'FAILED' ? '❌' : '⏹'} {ohlc.verdict}
                                 </span>
                             )}
                         </>
-                    )}
+                    ) : <span style={{ color: '#718096' }}>Loading…</span>}
+
                     <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <span style={{ fontSize: 10, color: '#718096' }}>Interval:</span>
+                        <span style={{ fontSize: 10, color: '#718096' }}>Granularity:</span>
                         {[1, 5, 15, 30].map(v => (
-                            <button key={v} onClick={() => changeInterval(v)} style={{
-                                padding: '3px 8px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
-                                background: interval === v ? 'rgba(99,179,237,0.2)' : 'rgba(255,255,255,0.05)',
-                                color: interval === v ? '#63b3ed' : '#718096',
-                                border: `1px solid ${interval === v ? 'rgba(99,179,237,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                            <button key={v} onClick={() => handleInterval(v)} style={{
+                                padding: '3px 9px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                                background: intervalMin === v ? 'rgba(99,179,237,0.2)' : 'rgba(255,255,255,0.05)',
+                                color: intervalMin === v ? '#63b3ed' : '#718096',
+                                border: `1px solid ${intervalMin === v ? 'rgba(99,179,237,0.4)' : 'rgba(255,255,255,0.08)'}`,
                             }}>{v}m</button>
                         ))}
-                        <button onClick={onClose} style={{ marginLeft: 8, background: 'rgba(252,129,129,0.15)', color: '#fc8181', border: '1px solid rgba(252,129,129,0.3)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 12 }}>✕ Esc</button>
+                        <button onClick={onClose} style={{
+                            marginLeft: 8, padding: '4px 12px', fontSize: 12, cursor: 'pointer',
+                            background: 'rgba(252,129,129,0.15)', color: '#fc8181',
+                            border: '1px solid rgba(252,129,129,0.3)', borderRadius: 6,
+                        }}>✕ Esc</button>
                     </div>
                 </div>
 
-                {error && <div style={{ color: '#fc8181', padding: 20 }}>Error: {error}</div>}
+                {error && <div style={{ padding: 20, color: '#fc8181' }}>Error: {error}</div>}
 
-                {/* BODY */}
-                <div style={{ display: 'flex', flex: 1, gap: 12, overflow: 'hidden', minHeight: 0 }}>
-                    {/* CHART */}
-                    <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                        {!ohlc && !error && (
-                            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#718096' }}>Loading candles…</div>
-                        )}
-                        {ohlc && ohlc.candle_count === 0 && (
-                            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8, color: '#718096', border: '1px dashed rgba(255,255,255,0.08)', borderRadius: 8 }}>
-                                <div style={{ fontSize: 24 }}>📭</div>
-                                <div>No master_coin_store price data in this window.</div>
-                                <div style={{ fontSize: 11 }}>Trial may pre-date master store ingestion or no scanner snapshots in window.</div>
+                {/* ── BODY ── */}
+                <div style={{ flex: 1, display: 'flex', gap: 0, overflow: 'hidden', minHeight: 0 }}>
+
+                    {/* ── CHART ── */}
+                    <div style={{ flex: 1, padding: '12px 0 12px 8px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                        {loadingOhlc && (
+                            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#718096' }}>
+                                Loading chart…
                             </div>
                         )}
-                        {ohlc && ohlc.candle_count > 0 && (
-                            <FullCandleChart ohlc={ohlc} />
+
+                        {!loadingOhlc && series.length === 0 && (
+                            <div style={{
+                                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                flexDirection: 'column', gap: 10, color: '#718096',
+                                border: '1px dashed rgba(255,255,255,0.08)', borderRadius: 8, margin: 12,
+                            }}>
+                                <div style={{ fontSize: 28 }}>📭</div>
+                                <div>No price snapshots in master store for this window.</div>
+                                <div style={{ fontSize: 11 }}>Try a wider granularity, or this trial pre-dates master store ingestion.</div>
+                            </div>
+                        )}
+
+                        {!loadingOhlc && series.length > 0 && (
+                            <>
+                                {/* Chart legend row */}
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, padding: '0 8px 6px', fontSize: 10, color: '#718096' }}>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke={lineColor} strokeWidth={2} /></svg> Price
+                                    </span>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke="rgba(255,255,255,0.4)" strokeWidth={1.5} strokeDasharray="3 3" /></svg> Trigger
+                                    </span>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke="#f6ad55" strokeWidth={1.5} strokeDasharray="5 3" /></svg> {ohlc?.level_type || 'Level'}
+                                    </span>
+                                    {EMA_DEFS.filter(e => ohlc?.levels?.[e.key] > 0).map(e => (
+                                        <span key={e.key} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                            <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke={e.color} strokeWidth={1.5} strokeDasharray={e.dash} /></svg> {e.label}
+                                        </span>
+                                    ))}
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <span style={{ width: 16, height: 10, background: 'rgba(160,174,192,0.15)', display: 'inline-block', borderRadius: 2 }} /> Cooldown
+                                    </span>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <span style={{ width: 16, height: 10, background: 'rgba(99,179,237,0.15)', display: 'inline-block', borderRadius: 2 }} /> Watching
+                                    </span>
+                                    <span style={{ marginLeft: 'auto', color: '#4a5568' }}>
+                                        {ohlc?.candle_count} snapshots · {intervalMin}m buckets
+                                    </span>
+                                </div>
+
+                                <div style={{ flex: 1, minHeight: 0 }}>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={series} margin={{ top: 8, right: 100, left: 8, bottom: 20 }}>
+                                            <XAxis
+                                                dataKey="t" type="number" scale="time"
+                                                domain={['dataMin', 'dataMax']}
+                                                tickFormatter={fmtTime}
+                                                tick={{ fontSize: 10, fill: '#718096' }}
+                                                tickCount={8}
+                                            />
+                                            <YAxis
+                                                domain={[pMin, pMax]}
+                                                tick={{ fontSize: 10, fill: '#718096' }}
+                                                tickFormatter={smartFmt}
+                                                width={72}
+                                                tickCount={7}
+                                            />
+                                            <Tooltip
+                                                contentStyle={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, fontSize: 11 }}
+                                                labelFormatter={(v) => fmtTimeFull(v)}
+                                                formatter={(v, n) => [smartFmt(v), n === 'price' ? 'Price' : n]}
+                                            />
+
+                                            {/* Phase zones */}
+                                            {cooldownStart != null && cooldownEnd != null && (
+                                                <ReferenceArea x1={cooldownStart} x2={cooldownEnd}
+                                                    fill="rgba(160,174,192,0.09)" stroke="rgba(160,174,192,0.15)" strokeWidth={0.5}
+                                                />
+                                            )}
+                                            {watchStart != null && watchEnd != null && watchEnd > watchStart && (
+                                                <ReferenceArea x1={watchStart} x2={watchEnd}
+                                                    fill="rgba(99,179,237,0.08)" stroke="rgba(99,179,237,0.15)" strokeWidth={0.5}
+                                                />
+                                            )}
+
+                                            {/* EMA levels */}
+                                            {EMA_DEFS.map(({ key, color, dash, label }) => {
+                                                const price = ohlc?.levels?.[key];
+                                                if (!price || price <= 0) return null;
+                                                return (
+                                                    <ReferenceLine key={key} y={price}
+                                                        stroke={color} strokeDasharray={dash} strokeWidth={1.5}
+                                                        label={{ value: label, fill: color, fontSize: 9, position: 'right', offset: 4 }}
+                                                    />
+                                                );
+                                            })}
+
+                                            {/* Smart level */}
+                                            {ohlc?.levels?.smart_level > 0 && ohlc.levels.smart_level !== ohlc.levels.trigger && (
+                                                <ReferenceLine y={ohlc.levels.smart_level}
+                                                    stroke="#f6ad55" strokeDasharray="6 4" strokeWidth={2}
+                                                    label={{ value: ohlc.level_type || 'Level', fill: '#f6ad55', fontSize: 10, position: 'right', offset: 4 }}
+                                                />
+                                            )}
+
+                                            {/* Trigger price */}
+                                            {ohlc?.levels?.trigger > 0 && (
+                                                <ReferenceLine y={ohlc.levels.trigger}
+                                                    stroke="rgba(255,255,255,0.45)" strokeDasharray="4 3" strokeWidth={1.5}
+                                                    label={{ value: `Trigger ${smartFmt(ohlc.levels.trigger)}`, fill: 'rgba(255,255,255,0.5)', fontSize: 9, position: 'right', offset: 4 }}
+                                                />
+                                            )}
+
+                                            {/* Vertical: trigger moment */}
+                                            {cooldownStart != null && (
+                                                <ReferenceLine x={cooldownStart} stroke="#9f7aea" strokeDasharray="4 3" strokeWidth={2}
+                                                    label={{ value: '⚡ Trigger', fill: '#9f7aea', fontSize: 10, position: 'insideTopLeft' }}
+                                                />
+                                            )}
+
+                                            {/* Vertical: verdict */}
+                                            {ph.resolved_ms != null && (
+                                                <ReferenceLine x={ph.resolved_ms}
+                                                    stroke={verdictColor} strokeDasharray="4 3" strokeWidth={2}
+                                                    label={{ value: `🏁 ${ohlc?.verdict || ''}`, fill: verdictColor, fontSize: 10, position: 'insideTopRight' }}
+                                                />
+                                            )}
+
+                                            {/* Price area + line */}
+                                            <Area
+                                                type="monotone" dataKey="price"
+                                                stroke={lineColor} strokeWidth={2.5}
+                                                fill={areaFill}
+                                                dot={{ r: 2.5, fill: lineColor, strokeWidth: 0 }}
+                                                activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
+                                                isAnimationActive={false}
+                                            />
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </>
                         )}
                     </div>
 
-                    {/* SIDE PANEL */}
-                    <div style={{ width: 220, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto' }}>
-                        {/* Levels legend */}
-                        {ohlc && (
+                    {/* ── SIDE PANEL ── */}
+                    <div style={{
+                        width: 230, flexShrink: 0,
+                        borderLeft: '1px solid rgba(255,255,255,0.06)',
+                        padding: 12, display: 'flex', flexDirection: 'column',
+                        gap: 12, overflow: 'auto',
+                    }}>
+                        {/* Trial meta */}
+                        {(ohlc || trial) && (
                             <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: 10 }}>
-                                <div style={{ fontSize: 11, fontWeight: 600, color: '#a0aec0', marginBottom: 8 }}>LEVELS</div>
-                                <LevelRow color="rgba(255,255,255,0.5)" dash label="Trigger" value={ohlc.levels.trigger} />
-                                <LevelRow color="#f6ad55" dash label={ohlc.level_type || 'Smart Level'} value={ohlc.levels.smart_level} />
-                                <LevelRow color="#63b3ed" dot label="5m EMA200" value={ohlc.levels.ema200_5m} />
-                                <LevelRow color="#4299e1" dot label="15m EMA200" value={ohlc.levels.ema200_15m} />
-                                <LevelRow color="#3182ce" dot label="1h EMA200" value={ohlc.levels.ema200_1h} />
-                                <LevelRow color="#2b6cb0" dot label="4h EMA200" value={ohlc.levels.ema200_4h} />
+                                <div style={{ fontSize: 10, fontWeight: 600, color: '#718096', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Trial</div>
+                                {[
+                                    ['Trigger @', smartFmt(ohlc?.levels?.trigger)],
+                                    ['Level @', smartFmt(ohlc?.levels?.smart_level)],
+                                    ['Detected', ohlc?.phases?.detected_ms && fmtTime(ohlc.phases.detected_ms)],
+                                    ['Resolved', ohlc?.phases?.resolved_ms && fmtTime(ohlc.phases.resolved_ms)],
+                                    ['Snapshots', ohlc?.candle_count],
+                                ].filter(([, v]) => v != null).map(([k, v]) => (
+                                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                                        <span style={{ color: '#718096' }}>{k}</span>
+                                        <span style={{ color: '#cbd5e0', fontWeight: 600 }}>{v}</span>
+                                    </div>
+                                ))}
                             </div>
                         )}
 
                         {/* State transitions */}
                         <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: 10, flex: 1, overflow: 'auto' }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: '#a0aec0', marginBottom: 8 }}>STATE LOG</div>
-                            {stateLog.length === 0 ? (
-                                <div style={{ fontSize: 11, color: '#718096' }}>No transitions logged.</div>
-                            ) : stateLog.map((s, i) => {
-                                const ruleSnap = (() => { try { return JSON.parse(s.rule_snapshot); } catch { return {}; } })();
-                                const rules = Object.entries(ruleSnap).filter(([k]) => k !== 'TRIGGER_VALID');
-                                return (
-                                    <div key={i} style={{ marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                                            <span style={{ color: STATE_COLORS[s.state] || '#cbd5e0', fontWeight: 600 }}>{s.state}</span>
-                                            <span style={{ color: '#718096' }}>{new Date(s.changed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-                                        </div>
-                                        <div style={{ fontSize: 10, color: '#a0aec0', margin: '2px 0' }}>
-                                            ${Number(s.current_price).toFixed(4)}
-                                            {s.unrealized_move_pct != null && (
-                                                <span style={{ marginLeft: 8, color: s.unrealized_move_pct > 0 ? '#68d391' : '#fc8181', fontWeight: 600 }}>
-                                                    {s.unrealized_move_pct > 0 ? '+' : ''}{Number(s.unrealized_move_pct).toFixed(2)}%
-                                                </span>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: '#718096', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>State Log</div>
+                            {stateLog.length === 0
+                                ? <div style={{ fontSize: 11, color: '#4a5568' }}>No transitions yet.</div>
+                                : stateLog.map((s, i) => {
+                                    const rules = (() => { try { return Object.entries(JSON.parse(s.rule_snapshot || '{}')).filter(([k]) => k !== 'TRIGGER_VALID'); } catch { return []; } })();
+                                    return (
+                                        <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                                                <span style={{ color: STATE_COLOR[s.state] || '#cbd5e0', fontWeight: 600 }}>{s.state}</span>
+                                                <span style={{ color: '#718096' }}>{fmtTimeFull(new Date(s.changed_at).getTime())}</span>
+                                            </div>
+                                            <div style={{ fontSize: 10, color: '#a0aec0', margin: '3px 0' }}>
+                                                {smartFmt(s.current_price)}
+                                                {s.unrealized_move_pct != null && (
+                                                    <span style={{ marginLeft: 8, fontWeight: 600, color: s.unrealized_move_pct > 0 ? '#68d391' : '#fc8181' }}>
+                                                        {s.unrealized_move_pct > 0 ? '+' : ''}{Number(s.unrealized_move_pct).toFixed(2)}%
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {rules.length > 0 && (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                                                    {rules.map(([id, r]) => (
+                                                        <span key={id} style={{
+                                                            fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                                                            background: r.passed ? 'rgba(104,211,145,0.1)' : 'rgba(252,129,129,0.1)',
+                                                            color: r.passed ? '#68d391' : '#fc8181',
+                                                            border: `1px solid ${r.passed ? 'rgba(104,211,145,0.2)' : 'rgba(252,129,129,0.2)'}`,
+                                                        }}>
+                                                            {r.passed ? '✓' : '✗'} {id.replace('EMA_', '').replace('_ALIGN', '').replace('_HOLD', '').replace('_SUSTAIN', '').replace('_CONFIRM', '').replace(/_/g, ' ')}
+                                                        </span>
+                                                    ))}
+                                                </div>
                                             )}
                                         </div>
-                                        {rules.length > 0 && (
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 3 }}>
-                                                {rules.map(([id, r]) => (
-                                                    <span key={id} style={{ fontSize: 9, padding: '1px 4px', borderRadius: 3, background: r.passed ? 'rgba(104,211,145,0.1)' : 'rgba(252,129,129,0.1)', color: r.passed ? '#68d391' : '#fc8181' }}>
-                                                        {r.passed ? '✓' : '✗'} {id.replace('EMA_', '').replace('_', ' ')}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })
+                            }
                         </div>
                     </div>
                 </div>
             </div>
         </>
-    );
-}
-
-function LevelRow({ color, dash, dot, label, value }) {
-    if (!value) return null;
-    return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, fontSize: 10 }}>
-            <svg width={24} height={10}>
-                {dash
-                    ? <line x1={0} x2={24} y1={5} y2={5} stroke={color} strokeWidth={1.5} strokeDasharray="4 3" />
-                    : <line x1={0} x2={24} y1={5} y2={5} stroke={color} strokeWidth={1.5} strokeDasharray="1 4" />
-                }
-            </svg>
-            <span style={{ color: '#a0aec0', flex: 1 }}>{label}</span>
-            <span style={{ color, fontWeight: 600, fontFamily: 'monospace' }}>{Number(value).toFixed(4)}</span>
-        </div>
-    );
-}
-
-function FullCandleChart({ ohlc }) {
-    const { candles, levels, phases, direction } = ohlc;
-    const isLong = direction === 'LONG';
-
-    // Dimensions
-    const W = 900;
-    const H = 440;
-    const PAD = { top: 20, right: 90, bottom: 30, left: 70 };
-    const chartW = W - PAD.left - PAD.right;
-    const chartH = H - PAD.top - PAD.bottom;
-
-    const allPrices = [
-        ...candles.flatMap(c => [c.high, c.low]),
-        levels.trigger, levels.smart_level,
-        levels.ema200_5m, levels.ema200_15m, levels.ema200_1h, levels.ema200_4h,
-    ].filter(Boolean);
-    const rawMin = Math.min(...allPrices);
-    const rawMax = Math.max(...allPrices);
-    const padPct = (rawMax - rawMin) * 0.10 || rawMin * 0.003;
-    const priceMin = rawMin - padPct;
-    const priceMax = rawMax + padPct;
-    const priceRange = priceMax - priceMin;
-
-    const py = (price) => PAD.top + chartH - ((price - priceMin) / priceRange) * chartH;
-
-    const timeMin = candles[0].ts;
-    const timeMax = candles[candles.length - 1].ts + ohlc.interval_min * 60 * 1000;
-    const timeRange = timeMax - timeMin || 1;
-    const tx = (ms) => PAD.left + ((ms - timeMin) / timeRange) * chartW;
-
-    const slotW = chartW / candles.length;
-    const bodyW = Math.max(4, slotW * 0.6);
-
-    // Phase coords
-    const detX     = phases.detected_ms ? tx(phases.detected_ms) : null;
-    const coolX2   = phases.cooldown_until_ms ? tx(phases.cooldown_until_ms) : null;
-    const resolveX = phases.resolved_ms ? tx(phases.resolved_ms) : null;
-    const watchX2  = phases.resolved_ms ? tx(phases.resolved_ms) : tx(timeMax);
-
-    // Y-axis ticks (6 levels)
-    const yTicks = Array.from({ length: 6 }, (_, i) => priceMin + (priceRange / 5) * i);
-
-    // X-axis ticks (at candle boundaries, max ~8)
-    const tickEvery = Math.ceil(candles.length / 8);
-    const xTicks = candles.filter((_, i) => i % tickEvery === 0);
-
-    const EMAs = [
-        { key: 'ema200_4h', color: '#2b6cb0', label: '4h EMA', dash: '2 6' },
-        { key: 'ema200_1h', color: '#3182ce', label: '1h EMA', dash: '2 5' },
-        { key: 'ema200_15m', color: '#4299e1', label: '15m EMA', dash: '2 4' },
-        { key: 'ema200_5m', color: '#63b3ed', label: '5m EMA', dash: '3 3' },
-    ];
-
-    return (
-        <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%" style={{ display: 'block' }}>
-            {/* Background */}
-            <rect width={W} height={H} fill="#0a0f16" rx={6} />
-
-            {/* Grid lines */}
-            {yTicks.map((p, i) => (
-                <line key={i} x1={PAD.left} x2={W - PAD.right} y1={py(p)} y2={py(p)}
-                    stroke="rgba(255,255,255,0.05)" strokeWidth={1} />
-            ))}
-
-            {/* COOLDOWN zone */}
-            {detX != null && coolX2 != null && (
-                <rect x={Math.min(detX, coolX2)} y={PAD.top} width={Math.abs(coolX2 - detX)} height={chartH}
-                    fill="rgba(160,174,192,0.06)" />
-            )}
-            {/* WATCHING zone */}
-            {(coolX2 ?? detX) != null && (
-                <rect x={coolX2 ?? detX} y={PAD.top} width={Math.max(0, watchX2 - (coolX2 ?? detX))} height={chartH}
-                    fill="rgba(99,179,237,0.06)" />
-            )}
-
-            {/* EMA lines */}
-            {EMAs.map(({ key, color, dash }) => {
-                const price = levels[key];
-                if (!price) return null;
-                return (
-                    <line key={key} x1={PAD.left} x2={W - PAD.right} y1={py(price)} y2={py(price)}
-                        stroke={color} strokeWidth={1.5} strokeDasharray={dash} opacity={0.8} />
-                );
-            })}
-
-            {/* Smart level line (orange) */}
-            {levels.smart_level && levels.smart_level !== levels.trigger && (
-                <line x1={PAD.left} x2={W - PAD.right} y1={py(levels.smart_level)} y2={py(levels.smart_level)}
-                    stroke="#f6ad55" strokeWidth={2} strokeDasharray="6 4" />
-            )}
-
-            {/* Trigger line (white) */}
-            <line x1={PAD.left} x2={W - PAD.right} y1={py(levels.trigger)} y2={py(levels.trigger)}
-                stroke="rgba(255,255,255,0.55)" strokeWidth={1.5} strokeDasharray="4 4" />
-
-            {/* Candlesticks */}
-            {candles.map((c, i) => {
-                const cx = tx(c.ts + (ohlc.interval_min * 60 * 1000) / 2);
-                const bTop    = py(Math.max(c.open, c.close));
-                const bBottom = py(Math.min(c.open, c.close));
-                const bH = Math.max(1.5, bBottom - bTop);
-                const color = c.bullish ? '#68d391' : '#fc8181';
-                const fillColor = c.bullish ? 'rgba(104,211,145,0.8)' : 'rgba(252,129,129,0.8)';
-                return (
-                    <g key={c.ts}>
-                        {/* Full wick */}
-                        <line x1={cx} x2={cx} y1={py(c.high)} y2={py(c.low)} stroke={color} strokeWidth={1.5} />
-                        {/* Body */}
-                        <rect x={cx - bodyW / 2} y={bTop} width={bodyW} height={bH}
-                            fill={fillColor} stroke={color} strokeWidth={1} />
-                    </g>
-                );
-            })}
-
-            {/* Trigger vertical line + label */}
-            {detX != null && (
-                <>
-                    <line x1={detX} x2={detX} y1={PAD.top} y2={H - PAD.bottom}
-                        stroke="#9f7aea" strokeWidth={2} strokeDasharray="4 3" opacity={0.9} />
-                    <text x={detX + 4} y={PAD.top + 14} fontSize={10} fill="#9f7aea" fontWeight={600}>⚡ Trigger</text>
-                </>
-            )}
-
-            {/* Verdict vertical line + label */}
-            {resolveX != null && (
-                <>
-                    <line x1={resolveX} x2={resolveX} y1={PAD.top} y2={H - PAD.bottom}
-                        stroke={ohlc.verdict === 'CONFIRMED' ? '#68d391' : '#fc8181'} strokeWidth={2} strokeDasharray="4 3" opacity={0.9} />
-                    <text x={resolveX + 4} y={PAD.top + 14} fontSize={10} fill={ohlc.verdict === 'CONFIRMED' ? '#68d391' : '#fc8181'} fontWeight={600}>
-                        {ohlc.verdict === 'CONFIRMED' ? '✅' : '❌'} {ohlc.verdict}
-                    </text>
-                </>
-            )}
-
-            {/* Phase zone labels */}
-            {detX != null && coolX2 != null && (
-                <text x={(detX + coolX2) / 2} y={PAD.top + 10} fontSize={9} fill="rgba(160,174,192,0.5)" textAnchor="middle">COOLDOWN</text>
-            )}
-            {(coolX2 ?? detX) != null && watchX2 > (coolX2 ?? detX) && (
-                <text x={((coolX2 ?? detX) + watchX2) / 2} y={PAD.top + 10} fontSize={9} fill="rgba(99,179,237,0.5)" textAnchor="middle">WATCHING</text>
-            )}
-
-            {/* Y-axis */}
-            {yTicks.map((p, i) => (
-                <g key={i}>
-                    <text x={PAD.left - 6} y={py(p) + 3} fontSize={10} fill="#718096" textAnchor="end">
-                        {Number(p).toFixed(4)}
-                    </text>
-                </g>
-            ))}
-
-            {/* Right axis — level labels */}
-            {levels.trigger && (
-                <text x={W - PAD.right + 6} y={py(levels.trigger) + 3} fontSize={9} fill="rgba(255,255,255,0.55)">Trigger</text>
-            )}
-            {levels.smart_level && levels.smart_level !== levels.trigger && (
-                <text x={W - PAD.right + 6} y={py(levels.smart_level) + 3} fontSize={9} fill="#f6ad55">{ohlc.level_type}</text>
-            )}
-            {EMAs.map(({ key, color, label }) => {
-                const price = levels[key];
-                if (!price) return null;
-                return <text key={key} x={W - PAD.right + 6} y={py(price) + 3} fontSize={9} fill={color}>{label}</text>;
-            })}
-
-            {/* X-axis ticks */}
-            {xTicks.map((c, i) => (
-                <text key={i} x={tx(c.ts + (ohlc.interval_min * 60 * 1000) / 2)} y={H - 6} fontSize={9} fill="#718096" textAnchor="middle">
-                    {new Date(c.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </text>
-            ))}
-
-            {/* Chart border */}
-            <rect x={PAD.left} y={PAD.top} width={chartW} height={chartH}
-                fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
-        </svg>
     );
 }

@@ -1312,7 +1312,14 @@ app.get('/api/validator/trial/:trialId/ohlc', (req, res) => {
         const trig = Number(trial.trigger_price);
         const lvl  = Number(trial.level_price) || trig;
 
-        const ema = (dist) => dist != null ? trig / (1 + dist / 100) : null;
+        // Use _price fields directly (preferred), fall back to computing from _dist_pct
+        const emaPrice = (key) => {
+            const direct = Number(featureSnap[`ema200_${key}_price`]);
+            if (direct > 0) return direct;
+            const distPct = featureSnap[`ema200_${key}_dist_pct`];
+            if (distPct != null) return trig / (1 + distPct / 100);
+            return null;
+        };
 
         res.json({
             ticker: trial.ticker,
@@ -1324,10 +1331,10 @@ app.get('/api/validator/trial/:trialId/ohlc', (req, res) => {
             levels: {
                 trigger: trig,
                 smart_level: lvl,
-                ema200_5m:  ema(featureSnap.ema200_5m_dist),
-                ema200_15m: ema(featureSnap.ema200_15m_dist),
-                ema200_1h:  ema(featureSnap.ema200_1h_dist),
-                ema200_4h:  ema(featureSnap.ema200_4h_dist),
+                ema200_5m:  emaPrice('5m'),
+                ema200_15m: emaPrice('15m'),
+                ema200_1h:  emaPrice('1h'),
+                ema200_4h:  emaPrice('4h'),
             },
             // Phase boundaries (ms) for vertical shading
             phases: {

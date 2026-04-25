@@ -19,6 +19,15 @@ const RULE_LABELS = {
 
 const ROLE_COLORS = { GATE: '#fc8181', MAJOR: '#f6ad55', MINOR: '#63b3ed', WEIGHT: '#718096' };
 
+function smartFmt(price) {
+    if (price == null || isNaN(price) || price === 0) return '0';
+    if (price >= 1000)  return price.toFixed(2);
+    if (price >= 1)     return price.toFixed(4);
+    if (price >= 0.01)  return price.toFixed(5);
+    if (price >= 0.001) return price.toFixed(6);
+    return price.toFixed(8);
+}
+
 function fmtTime(iso) {
     if (!iso) return '—';
     return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -151,8 +160,8 @@ function TrialCard({ trial, isResolved, onExpand }) {
             </div>
 
             <div className={styles.trialMeta}>
-                <span>@ ${Number(trial.trigger_price).toFixed(4)}</span>
-                {trial.level_price && <span>Level ${Number(trial.level_price).toFixed(4)}</span>}
+                <span>@ {smartFmt(Number(trial.trigger_price))}</span>
+                {trial.level_price && <span>Level {smartFmt(Number(trial.level_price))}</span>}
                 <span>{fmtTime(trial.detected_at)}</span>
                 {isResolved && trial.resolved_at && <span>→ {fmtTime(trial.resolved_at)}</span>}
                 {trial.failure_reason && <span style={{ color: '#fc8181' }}>Reason: {trial.failure_reason.replace(/_/g, ' ')}</span>}

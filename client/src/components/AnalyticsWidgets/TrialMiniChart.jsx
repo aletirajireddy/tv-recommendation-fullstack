@@ -1,20 +1,39 @@
 import React, { useEffect, useState, useRef } from 'react';
+import {
+    AreaChart, Area, Line, LineChart, XAxis, YAxis, Tooltip,
+    ReferenceLine, ReferenceArea, ResponsiveContainer, ComposedChart,
+} from 'recharts';
 
 /**
- * TrialMiniChart — real price-action mini chart per trial card.
+ * TrialMiniChart — real price-action chart embedded in each trial card.
  *
- * Renders via a custom SVG canvas (no Recharts overhead at 120px height).
- * Data: fetched lazily from /api/validator/trial/:id/ohlc (real master_coin_store candles).
+ * Uses Recharts (responsive, no SVG distortion).
+ * Data: real price snapshots from master_coin_store via /api/validator/trial/:id/ohlc
+ *       (uses candle close prices — each one is a real scanner read, not interpolated)
  *
- * Displays:
- *   - Candlestick bars (body + wick) — green=bullish, red=bearish
- *   - Smart level line (orange dashed)
- *   - Trigger price line (white dashed)
- *   - 5m EMA200 line (blue dotted) if available
- *   - COOLDOWN zone shading (grey)
- *   - WATCHING zone shading (blue tint)
- *   - Verdict icon at end of chart
+ * Shows:
+ *   - Price line (green=LONG, red=SHORT) with subtle area fill
+ *   - COOLDOWN zone (grey) + WATCHING zone (blue tint)
+ *   - Trigger price (white dashed)
+ *   - Smart Level (orange dashed)
+ *   - 5m EMA200 (blue dotted) if available
+ *   - Verdict dot at resolved time
  */
+
+// Dynamic decimal precision based on price magnitude
+function smartFmt(price) {
+    if (price == null || isNaN(price) || price === 0) return '0';
+    if (price >= 1000)  return price.toFixed(2);
+    if (price >= 1)     return price.toFixed(4);
+    if (price >= 0.01)  return price.toFixed(5);
+    if (price >= 0.001) return price.toFixed(6);
+    return price.toFixed(8);
+}
+
+function fmtTime(ms) {
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export function TrialMiniChart({ trial }) {
     const [ohlc, setOhlc] = useState(null);
     const fetchedRef = useRef(false);
@@ -24,187 +43,144 @@ export function TrialMiniChart({ trial }) {
         fetchedRef.current = true;
         fetch(`/api/validator/trial/${encodeURIComponent(trial.trial_id)}/ohlc?interval=5`)
             .then(r => r.ok ? r.json() : null)
-            .then(d => d && setOhlc(d))
+            .then(d => { if (d && !d.error) setOhlc(d); })
             .catch(() => {});
     }, [trial.trial_id]);
 
-    if (!ohlc || ohlc.candle_count === 0) {
-        // Fallback: simple placeholder while loading or no data
+    if (!ohlc) {
         return (
             <div style={{
-                height: 80, marginTop: 8,
-                background: 'rgba(255,255,255,0.02)',
-                border: '1px dashed rgba(255,255,255,0.08)',
-                borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                height: 72, marginTop: 8,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(255,255,255,0.02)', borderRadius: 6,
+                border: '1px dashed rgba(255,255,255,0.06)',
                 fontSize: 10, color: '#4a5568',
             }}>
-                {ohlc === null ? 'Loading chart…' : 'No price data yet'}
+                Loading chart…
             </div>
         );
     }
 
-    return <CandleCanvas ohlc={ohlc} height={120} />;
-}
+    if (!ohlc.candles || ohlc.candle_count === 0) {
+        return (
+            <div style={{
+                height: 72, marginTop: 8,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(255,255,255,0.02)', borderRadius: 6,
+                border: '1px dashed rgba(255,255,255,0.06)',
+                fontSize: 10, color: '#4a5568',
+            }}>
+                No price data yet
+            </div>
+        );
+    }
 
-function CandleCanvas({ ohlc, height }) {
-    const W = 420; // viewBox width (responsive via preserveAspectRatio)
-    const H = height;
-    const PAD = { top: 6, right: 40, bottom: 16, left: 52 };
-    const chartW = W - PAD.left - PAD.right;
-    const chartH = H - PAD.top - PAD.bottom;
+    const isLong = trial.direction === 'LONG';
+    const lineColor = isLong ? '#68d391' : '#fc8181';
+    const fillColor = isLong ? 'rgba(104,211,145,0.12)' : 'rgba(252,129,129,0.12)';
 
-    const { candles, levels, phases, direction } = ohlc;
-    const isLong = direction === 'LONG';
+    const { candles, levels, phases } = ohlc;
 
-    // Price range across candles + level lines
+    // Build series: use close price per candle, tagged with the mid-bucket timestamp
+    const series = candles.map(c => ({
+        t: c.ts,
+        price: c.close,
+    }));
+
+    // Phase boundaries as timestamps
+    const cooldownStart = phases.detected_ms;
+    const cooldownEnd   = phases.cooldown_until_ms;
+    const watchStart    = phases.cooldown_until_ms || phases.detected_ms;
+    const watchEnd      = phases.resolved_ms || (candles.at(-1)?.ts + ohlc.interval_min * 60000);
+
+    // Price domain with padding
     const allPrices = [
-        ...candles.flatMap(c => [c.high, c.low]),
-        levels.trigger, levels.smart_level,
-        levels.ema200_5m, levels.ema200_15m,
-    ].filter(Boolean);
-    const rawMin = Math.min(...allPrices);
-    const rawMax = Math.max(...allPrices);
-    const pad5 = (rawMax - rawMin) * 0.08 || rawMin * 0.002;
-    const priceMin = rawMin - pad5;
-    const priceMax = rawMax + pad5;
-    const priceRange = priceMax - priceMin;
-
-    const py = (price) => PAD.top + chartH - ((price - priceMin) / priceRange) * chartH;
-
-    // Time range
-    const timeMin = candles[0].ts;
-    const timeMax = candles[candles.length - 1].ts + ohlc.interval_min * 60 * 1000;
-    const timeRange = timeMax - timeMin || 1;
-    const tx = (ms) => PAD.left + ((ms - timeMin) / timeRange) * chartW;
-
-    const candleW = Math.max(3, (chartW / candles.length) * 0.6);
-
-    // Phase boundaries → x coords
-    const cooldownX1 = phases.detected_ms    != null ? tx(phases.detected_ms)    : null;
-    const cooldownX2 = phases.cooldown_until_ms != null ? tx(phases.cooldown_until_ms) : null;
-    const watchX1   = phases.cooldown_until_ms != null ? tx(phases.cooldown_until_ms) : cooldownX1;
-    const watchX2   = phases.resolved_ms != null ? tx(phases.resolved_ms) : tx(timeMax);
-
-    const fmtPrice = (p) => p == null ? '' : Number(p).toFixed(4);
-    const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    const verdictColor = ohlc.verdict === 'CONFIRMED' ? '#68d391'
-        : ohlc.verdict === 'FAILED' ? '#fc8181'
-        : '#a0aec0';
+        ...series.map(s => s.price),
+        levels.trigger, levels.smart_level, levels.ema200_5m,
+    ].filter(p => p != null && p > 0);
+    const pMin = Math.min(...allPrices);
+    const pMax = Math.max(...allPrices);
+    const pPad = (pMax - pMin) * 0.12 || pMin * 0.01;
 
     return (
-        <svg
-            viewBox={`0 0 ${W} ${H}`}
-            width="100%" height={H}
-            style={{ display: 'block', marginTop: 8 }}
-            preserveAspectRatio="none"
-        >
-            {/* COOLDOWN zone shading */}
-            {cooldownX1 != null && cooldownX2 != null && (
-                <rect
-                    x={Math.min(cooldownX1, cooldownX2)} y={PAD.top}
-                    width={Math.abs(cooldownX2 - cooldownX1)} height={chartH}
-                    fill="rgba(160,174,192,0.08)"
-                />
-            )}
-            {/* WATCHING zone shading */}
-            {watchX1 != null && (
-                <rect
-                    x={watchX1} y={PAD.top}
-                    width={Math.max(0, watchX2 - watchX1)} height={chartH}
-                    fill="rgba(99,179,237,0.07)"
-                />
-            )}
+        <div style={{ height: 110, marginTop: 8 }}>
+            <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={series} margin={{ top: 6, right: 48, left: 0, bottom: 0 }}>
+                    <XAxis
+                        dataKey="t" type="number" scale="time"
+                        domain={['dataMin', 'dataMax']}
+                        tickFormatter={fmtTime}
+                        tick={{ fontSize: 9, fill: '#4a5568' }}
+                        tickCount={3}
+                    />
+                    <YAxis
+                        domain={[pMin - pPad, pMax + pPad]}
+                        tick={{ fontSize: 9, fill: '#4a5568' }}
+                        tickFormatter={smartFmt}
+                        width={55}
+                        tickCount={4}
+                    />
+                    <Tooltip
+                        contentStyle={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 10 }}
+                        labelFormatter={(v) => fmtTime(v)}
+                        formatter={(v) => [smartFmt(v), 'Price']}
+                    />
 
-            {/* EMA200 5m line (blue dotted) */}
-            {levels.ema200_5m && (
-                <>
-                    <line x1={PAD.left} x2={W - PAD.right} y1={py(levels.ema200_5m)} y2={py(levels.ema200_5m)}
-                        stroke="#4299e1" strokeWidth={1} strokeDasharray="2 4" opacity={0.7} />
-                    <text x={W - PAD.right + 2} y={py(levels.ema200_5m) + 3} fontSize={8} fill="#4299e1" opacity={0.9}>5m</text>
-                </>
-            )}
-            {/* EMA200 15m line */}
-            {levels.ema200_15m && (
-                <line x1={PAD.left} x2={W - PAD.right} y1={py(levels.ema200_15m)} y2={py(levels.ema200_15m)}
-                    stroke="#3182ce" strokeWidth={1} strokeDasharray="1 5" opacity={0.5} />
-            )}
-
-            {/* Smart level line (orange) */}
-            {levels.smart_level && levels.smart_level !== levels.trigger && (
-                <>
-                    <line x1={PAD.left} x2={W - PAD.right} y1={py(levels.smart_level)} y2={py(levels.smart_level)}
-                        stroke="#f6ad55" strokeWidth={1.5} strokeDasharray="4 3" />
-                    <text x={W - PAD.right + 2} y={py(levels.smart_level) + 3} fontSize={8} fill="#f6ad55">
-                        {ohlc.level_type ? ohlc.level_type.replace('EMA200_', '').replace('_', '') : 'Lvl'}
-                    </text>
-                </>
-            )}
-
-            {/* Trigger price line (white dashed) */}
-            <line x1={PAD.left} x2={W - PAD.right} y1={py(levels.trigger)} y2={py(levels.trigger)}
-                stroke="rgba(255,255,255,0.5)" strokeWidth={1} strokeDasharray="3 3" />
-            <text x={W - PAD.right + 2} y={py(levels.trigger) + 3} fontSize={8} fill="rgba(255,255,255,0.6)">T</text>
-
-            {/* Candlesticks */}
-            {candles.map((c, i) => {
-                const cx = tx(c.ts + (ohlc.interval_min * 60 * 1000) / 2);
-                const bodyTop    = py(Math.max(c.open, c.close));
-                const bodyBottom = py(Math.min(c.open, c.close));
-                const bodyH = Math.max(1.5, bodyBottom - bodyTop);
-                const color = c.bullish ? '#68d391' : '#fc8181';
-                return (
-                    <g key={c.ts}>
-                        {/* Wick */}
-                        <line x1={cx} x2={cx} y1={py(c.high)} y2={py(c.low)}
-                            stroke={color} strokeWidth={1} />
-                        {/* Body */}
-                        <rect x={cx - candleW / 2} y={bodyTop} width={candleW} height={bodyH}
-                            fill={c.bullish ? 'rgba(104,211,145,0.85)' : 'rgba(252,129,129,0.85)'}
-                            stroke={color} strokeWidth={0.5}
+                    {/* Phase zones */}
+                    {cooldownStart != null && cooldownEnd != null && (
+                        <ReferenceArea x1={cooldownStart} x2={cooldownEnd}
+                            fill="rgba(160,174,192,0.08)" stroke="none"
+                            label={{ value: 'COOLDOWN', fill: 'rgba(160,174,192,0.5)', fontSize: 8, position: 'insideTopLeft' }}
                         />
-                    </g>
-                );
-            })}
+                    )}
+                    {watchStart != null && watchEnd != null && watchEnd > watchStart && (
+                        <ReferenceArea x1={watchStart} x2={watchEnd}
+                            fill="rgba(99,179,237,0.07)" stroke="none"
+                            label={{ value: 'WATCHING', fill: 'rgba(99,179,237,0.5)', fontSize: 8, position: 'insideTopLeft' }}
+                        />
+                    )}
 
-            {/* Detection vertical line */}
-            {cooldownX1 != null && (
-                <line x1={cooldownX1} x2={cooldownX1} y1={PAD.top} y2={H - PAD.bottom}
-                    stroke="#9f7aea" strokeWidth={1.5} strokeDasharray="3 2" opacity={0.8} />
-            )}
+                    {/* Key price levels */}
+                    {levels.ema200_5m > 0 && (
+                        <ReferenceLine y={levels.ema200_5m} stroke="#4299e1" strokeDasharray="2 4" strokeWidth={1}
+                            label={{ value: '5m EMA', fill: '#4299e1', fontSize: 8, position: 'right' }}
+                        />
+                    )}
+                    {levels.smart_level > 0 && levels.smart_level !== levels.trigger && (
+                        <ReferenceLine y={levels.smart_level} stroke="#f6ad55" strokeDasharray="5 3" strokeWidth={1.5}
+                            label={{ value: ohlc.level_type?.replace('EMA200_', '') || 'Level', fill: '#f6ad55', fontSize: 8, position: 'right' }}
+                        />
+                    )}
+                    {levels.trigger > 0 && (
+                        <ReferenceLine y={levels.trigger} stroke="rgba(255,255,255,0.4)" strokeDasharray="3 3" strokeWidth={1}
+                            label={{ value: 'T', fill: 'rgba(255,255,255,0.4)', fontSize: 8, position: 'right' }}
+                        />
+                    )}
 
-            {/* Verdict dot at resolved_ms */}
-            {phases.resolved_ms != null && ohlc.verdict && (
-                <circle cx={tx(phases.resolved_ms)} cy={H - PAD.bottom - 4}
-                    r={5} fill={verdictColor} opacity={0.9} />
-            )}
+                    {/* Trigger vertical */}
+                    {cooldownStart != null && (
+                        <ReferenceLine x={cooldownStart} stroke="#9f7aea" strokeDasharray="3 2" strokeWidth={1.5} />
+                    )}
+                    {/* Verdict vertical */}
+                    {phases.resolved_ms != null && (
+                        <ReferenceLine x={phases.resolved_ms}
+                            stroke={ohlc.verdict === 'CONFIRMED' ? '#68d391' : '#fc8181'}
+                            strokeDasharray="3 2" strokeWidth={1.5}
+                        />
+                    )}
 
-            {/* Y-axis price labels */}
-            {[priceMin + priceRange * 0.1, priceMin + priceRange * 0.5, priceMin + priceRange * 0.9].map((p, i) => (
-                <text key={i} x={PAD.left - 4} y={py(p) + 3} fontSize={8} fill="#718096" textAnchor="end">
-                    {fmtPrice(p)}
-                </text>
-            ))}
-
-            {/* X-axis time labels */}
-            {candles.length > 0 && [candles[0], candles[Math.floor(candles.length / 2)], candles[candles.length - 1]]
-                .filter((c, i, a) => a.indexOf(c) === i)
-                .map((c, i) => (
-                    <text key={i} x={tx(c.ts)} y={H - 2} fontSize={8} fill="#718096" textAnchor="middle">
-                        {fmtTime(c.ts)}
-                    </text>
-                ))
-            }
-
-            {/* Phase labels */}
-            {cooldownX1 != null && cooldownX2 != null && (
-                <text x={(cooldownX1 + Math.min(cooldownX2, W - PAD.right)) / 2} y={PAD.top + 10}
-                    fontSize={8} fill="rgba(160,174,192,0.6)" textAnchor="middle">COOLDOWN</text>
-            )}
-            {watchX1 != null && (watchX2 - watchX1 > 30) && (
-                <text x={watchX1 + (watchX2 - watchX1) / 2} y={PAD.top + 10}
-                    fontSize={8} fill="rgba(99,179,237,0.6)" textAnchor="middle">WATCHING</text>
-            )}
-        </svg>
+                    {/* Price area + line */}
+                    <Area
+                        type="monotone"
+                        dataKey="price"
+                        stroke={lineColor}
+                        strokeWidth={2}
+                        fill={fillColor}
+                        dot={false}
+                        isAnimationActive={false}
+                    />
+                </ComposedChart>
+            </ResponsiveContainer>
+        </div>
     );
 }

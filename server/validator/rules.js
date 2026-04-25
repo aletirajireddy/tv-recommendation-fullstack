@@ -36,7 +36,7 @@ function evaluateAll(trial, features, scanData, cfg, currentPrice) {
     };
 
     // Rule 2 — 5m EMA200 hold (GATE)
-    const ema5m = features.ema200_5m_price;
+    const ema5m = features.ema200_5m_price ? Number(features.ema200_5m_price) : null;
     if (ema5m && currentPrice) {
         const dist = (currentPrice - ema5m) / ema5m * 100;
         const passed = isLong ? dist > -0.1 : dist < 0.1;
@@ -51,7 +51,7 @@ function evaluateAll(trial, features, scanData, cfg, currentPrice) {
     }
 
     // Rule 3 — 15m EMA200 sustain (GATE)
-    const ema15m = features.ema200_15m_price;
+    const ema15m = features.ema200_15m_price ? Number(features.ema200_15m_price) : null;
     if (ema15m && currentPrice) {
         const dist = (currentPrice - ema15m) / ema15m * 100;
         const passed = isLong ? dist > -0.15 : dist < 0.15;
@@ -66,7 +66,7 @@ function evaluateAll(trial, features, scanData, cfg, currentPrice) {
     }
 
     // Rule 4 — 1h EMA200 align (MINOR weight)
-    const ema1h = features.ema200_1h_price;
+    const ema1h = features.ema200_1h_price ? Number(features.ema200_1h_price) : null;
     if (ema1h && currentPrice) {
         const dist = (currentPrice - ema1h) / ema1h * 100;
         const passed = isLong ? dist > 0 : dist < 0;
@@ -80,7 +80,7 @@ function evaluateAll(trial, features, scanData, cfg, currentPrice) {
     }
 
     // Rule 5 — 4h EMA200 align (MAJOR — can veto verdict)
-    const ema4h = features.ema200_4h_price;
+    const ema4h = features.ema200_4h_price ? Number(features.ema200_4h_price) : null;
     if (ema4h && currentPrice) {
         const dist = (currentPrice - ema4h) / ema4h * 100;
         const passed = isLong ? dist > 0 : dist < 0;

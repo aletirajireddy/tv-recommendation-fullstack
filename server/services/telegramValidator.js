@@ -96,10 +96,9 @@ function buildVerdictMessage(trial, ruleSnapshot, priceMovePct, prefix) {
         ? `🎯 Next target: $${nextLevel.price} (${nextLevel.label})\n`
         : '';
 
-    // Invalidation price
-    const invalidation = dir === 'LONG'
-        ? (features.ema200_5m_price ? `$${features.ema200_5m_price.toFixed(4)} (5m EMA200)` : null)
-        : (features.ema200_5m_price ? `$${features.ema200_5m_price.toFixed(4)} (5m EMA200)` : null);
+    // Invalidation price — ema200_5m_price may be stored as a string, coerce to Number
+    const ema5mInval = features.ema200_5m_price ? Number(features.ema200_5m_price) : null;
+    const invalidation = ema5mInval ? `$${ema5mInval.toFixed(4)} (5m EMA200)` : null;
     const invalidStr = invalidation ? `🚫 Invalidation: ${invalidation}\n` : '';
 
     // Market mood
