@@ -10,6 +10,7 @@ const TelegramService = require('./services/telegram');
 const RSIEngine = require('./services/RSIEngine');
 const UmpireEngine = require('./validator/UmpireEngine');
 const telegramValidator = require('./services/telegramValidator');
+const MasterStoreService = require('./services/MasterStoreService');
 
 const app = express();
 const server = http.createServer(app);
@@ -131,6 +132,18 @@ app.post('/scan-report', (req, res) => {
         // B. Insert Scan Results (Sanitized JSON Blob)
         db.prepare('INSERT INTO scan_results (scan_id, raw_data) VALUES (?, ?)')
             .run(scanId, JSON.stringify(payload));
+
+        // [V4 MASTER STORE INGESTION] - Fire and forget
+        if (payload.results && Array.isArray(payload.results)) {
+            setImmediate(() => {
+                payload.results.forEach(item => {
+                    const d = item.data || item;
+                    const ticker = item.datakey ? item.datakey.replace('BINANCE:', '') : item.ticker;
+                    const price = d.close || 0;
+                    MasterStoreService.ingestStreamA(ticker, d, price).catch(err => console.error(err));
+                });
+            });
+        }
 
         // C. Process Buffered Alerts (if any)
         // [DEPRECATED - Phase 10]: HTML sidebar scraping is gone. Alerts are now handled exclusively
@@ -595,6 +608,11 @@ app.post('/qualified-pick', (req, res) => {
             VALUES (?, ?, ?, ?, ?, ?, ?)
         `).run(ticker, exchange, price, saveType, now, volChange, JSON.stringify(req.body));
 
+        // [V4 MASTER STORE INGESTION] - Stream B
+        setImmediate(() => {
+            MasterStoreService.ingestStreamB(ticker, req.body, price).catch(e => console.error(e));
+        });
+
         // [LIFECYCLE TRACKING - Birth Capture]
         if (type === 'STABLE') {
             const existing = db.prepare("SELECT * FROM coin_lifecycles WHERE ticker = ?").get(ticker);
@@ -657,6 +675,18 @@ app.post('/api/market-context', (req, res) => {
         const feedback = generateScannerFeedback(payload.watchlist_count);
 
         io.emit('market-context-update', { timestamp: now, counts: { screener: payload.screener_total_count, watchlist: payload.watchlist_count } });
+
+        // [V4 MASTER STORE INGESTION] - Stream B
+        setImmediate(() => {
+            const watchlistSnaps = payload.watchlist_active_snapshot || [];
+            watchlistSnaps.forEach(w => {
+                if (w.full) {
+                    const ticker = w.full.replace('BINANCE:', '');
+                    const price = w.price || 0;
+                    MasterStoreService.ingestStreamB(ticker, w, price).catch(e => console.error(e));
+                }
+            });
+        });
 
         res.json({
             success: true,
@@ -1674,6 +1704,11 @@ app.post('/api/webhook/smart-levels', (req, res) => {
             console.log(`[SMART-LEVELS] 🧠 Alert Received @ ${parsedTimestamp} | Ticker: ${ticker} | Payload Time: ${payload.timestamp || 'N/A'}`);
             io.emit('smart-level-update', { ticker, direction, timestamp: parsedTimestamp });
         }
+
+        // [V4 MASTER STORE INGESTION] - Stream C
+        setImmediate(() => {
+            MasterStoreService.ingestStreamC(ticker, payload, price).catch(e => console.error(e));
+        });
 
         // 3rd UMPIRE VALIDATOR (passive, fire-and-forget — Step 1 skeleton)
         setImmediate(() => {

@@ -530,6 +530,40 @@ async function getPatternStats({ direction, trigger_type, min_samples = 3, min_w
     }
 }
 
+async function queryMasterCoinStore(ticker, limit = 10) {
+    if (!ticker) return { error: "Ticker string required (e.g. BTCUSDT.P)" };
+    const cleanTicker = ticker.replace('BINANCE:', '');
+    
+    try {
+        const rows = db.prepare(`
+            SELECT timestamp, trigger_source, price, stream_a_state, stream_b_state, stream_c_state, merged_state
+            FROM master_coin_store
+            WHERE ticker = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        `).all(cleanTicker, limit);
+
+        const parsedRows = rows.map(r => ({
+            timestamp: r.timestamp,
+            trigger_source: r.trigger_source,
+            price: r.price,
+            stream_a: r.stream_a_state ? JSON.parse(r.stream_a_state) : null,
+            stream_b: r.stream_b_state ? JSON.parse(r.stream_b_state) : null,
+            stream_c: r.stream_c_state ? JSON.parse(r.stream_c_state) : null,
+            merged_context: r.merged_state ? JSON.parse(r.merged_state) : null
+        }));
+
+        return {
+            description: "Historical event-sourced timeline from Master Coin Store",
+            ticker: cleanTicker,
+            snapshot_count: parsedRows.length,
+            timeline: parsedRows
+        };
+    } catch(e) {
+        return { error: e.message };
+    }
+}
+
 module.exports = {
     getMarketSentiment,
     getMasterWatchlist,
@@ -545,5 +579,6 @@ module.exports = {
     getPatternStats,
     getTrialDetails,
     getCoinLifecycles,
-    getGhostApprovalQueue
+    getGhostApprovalQueue,
+    queryMasterCoinStore
 };

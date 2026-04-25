@@ -211,6 +211,18 @@ function createMcpServer() {
                 name: "get_ghost_approval_queue",
                 description: "Returns the list of coins currently awaiting manual approval to be designated as 'GHOST' (pruned).",
                 inputSchema: { type: "object", properties: {} }
+            },
+            {
+                name: "query_master_coin_store",
+                description: "Retrieves the materialized timeline (V4) for a specific coin. Returns a unified state blending Stream A (Macro Metrics), Stream B (Watchlist status), and Stream C (Alerts/Smart Levels) across time.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        ticker: { type: "string", description: "The symbol to analyze, e.g. BTCUSDT.P" },
+                        limit: { type: "number", description: "Number of historical snapshots to retrieve (default 10)" }
+                    },
+                    required: ["ticker"]
+                }
             }
         ]
     }));
@@ -306,6 +318,9 @@ function createMcpServer() {
                     break;
                 case 'get_ghost_approval_queue':
                     result = await tools.getGhostApprovalQueue();
+                    break;
+                case 'query_master_coin_store':
+                    result = await tools.queryMasterCoinStore(args.ticker, args.limit);
                     break;
                 default:
                     throw new Error(`Unknown tool: ${name}`);

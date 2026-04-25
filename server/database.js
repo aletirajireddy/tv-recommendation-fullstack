@@ -271,6 +271,30 @@ db.exec(`
     );
 `);
 
-console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles, validation_trials, validation_state_log, pattern_statistics');
+// ============================================================================
+// 15. MASTER COIN STORE (V4 Materialized Timeline)
+// ============================================================================
+// A unified event-sourcing store aggregating Stream A, B, and C.
+// Enables deep forensic analysis of price action relative to key levels.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS master_coin_store (
+        snapshot_id TEXT PRIMARY KEY,
+        ticker TEXT NOT NULL,
+        timestamp TEXT NOT NULL,          -- ISO 8601 UTC
+        trigger_source TEXT NOT NULL,     -- 'STREAM_A' | 'STREAM_B' | 'STREAM_C'
+        price REAL NOT NULL,
+        
+        -- Sub-States
+        stream_a_state JSON,
+        stream_b_state JSON,
+        stream_c_state JSON,
+        
+        -- Unified Full Context
+        merged_state JSON NOT NULL
+    );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_master_ticker_time ON master_coin_store(ticker, timestamp);`);
+
+console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles, validation_trials, validation_state_log, pattern_statistics, master_coin_store');
 
 module.exports = db;
