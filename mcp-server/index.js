@@ -223,6 +223,17 @@ function createMcpServer() {
                     },
                     required: ["ticker"]
                 }
+            },
+            {
+                name: "get_trial_full_context",
+                description: "Returns a complete forensic dossier for a single 3rd-Umpire validation trial: the trial row + every state transition with rule snapshots + the master_coin_store snapshot AT trigger time + a windowed master timeline (-30m before detection through resolved_at +30m). Use this to ask 'why did this trial fail?' or 'what was the market doing around this trigger?' in one call.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        trial_id: { type: "string", description: "Trial identifier from validation_trials, e.g. trial_BTCUSDT.P_1745580000000" }
+                    },
+                    required: ["trial_id"]
+                }
             }
         ]
     }));
@@ -321,6 +332,9 @@ function createMcpServer() {
                     break;
                 case 'query_master_coin_store':
                     result = await tools.queryMasterCoinStore(args.ticker, args.limit);
+                    break;
+                case 'get_trial_full_context':
+                    result = await tools.getTrialFullContext(args.trial_id);
                     break;
                 default:
                     throw new Error(`Unknown tool: ${name}`);

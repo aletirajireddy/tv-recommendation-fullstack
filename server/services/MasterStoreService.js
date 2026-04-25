@@ -1,48 +1,72 @@
 const db = require('../database');
 const crypto = require('crypto');
+const TimestampResolver = require('./TimestampResolver');
 
+/**
+ * MasterStoreService — Unified V4 event timeline.
+ *
+ * IMPORTANT (Timestamp Policy, locked 2026-04-25):
+ *   - The canonical timestamp is ALWAYS supplied by the caller (resolved upstream
+ *     via TimestampResolver). This service NEVER invents `new Date()` for the row.
+ *   - Callers must also pass `ingestion_source` ('WEBHOOK' | 'EMAIL' | 'SCAN_A' | 'SCOUT_B').
+ *   - When ingesting a backfilled record (source='EMAIL'), the merge uses the
+ *     point-in-time stream states AS OF that historical timestamp — NOT current
+ *     latest state — to avoid corrupting the timeline with future data.
+ */
 class MasterStoreService {
     constructor() {
         this.lastPruneTime = 0;
         this.PRUNE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
     }
 
-    _getLastState(ticker) {
+    /**
+     * Get the most recent stream states AS OF a given timestamp.
+     * For live (WEBHOOK / SCAN_A / SCOUT_B) ingestion this is "latest known".
+     * For backfilled (EMAIL) ingestion this is "latest known up to and including asOfISO".
+     */
+    _getStateAsOf(ticker, asOfISO) {
         const stmt = db.prepare(`
-            SELECT stream_a_state, stream_b_state, stream_c_state 
-            FROM master_coin_store 
-            WHERE ticker = ? 
-            ORDER BY timestamp DESC 
+            SELECT stream_a_state, stream_b_state, stream_c_state
+            FROM master_coin_store
+            WHERE ticker = ? AND timestamp <= ?
+            ORDER BY timestamp DESC
             LIMIT 1
         `);
-        return stmt.get(ticker) || {
+        return stmt.get(ticker, asOfISO) || {
             stream_a_state: null,
             stream_b_state: null,
             stream_c_state: null
         };
     }
 
-    _mergeAndSave(ticker, source, price, newSliceKey, newSliceData) {
+    _mergeAndSave({ ticker, source, sliceKey, sliceData, price, resolvedTimestampISO, ingestionSource, payloadHash }) {
         try {
-            const lastState = this._getLastState(ticker);
-            
-            // Parse existing JSONs
+            // 1. Hash dedup — skip if this exact payload was already stored.
+            if (payloadHash) {
+                const existing = db.prepare(
+                    'SELECT snapshot_id FROM master_coin_store WHERE payload_hash = ? LIMIT 1'
+                ).get(payloadHash);
+                if (existing) {
+                    return { skipped: true, reason: 'duplicate_payload_hash' };
+                }
+            }
+
+            // 2. Point-in-time merge — snapshot states AS OF resolvedTimestamp.
+            const lastState = this._getStateAsOf(ticker, resolvedTimestampISO);
             const stateA = lastState.stream_a_state ? JSON.parse(lastState.stream_a_state) : {};
             const stateB = lastState.stream_b_state ? JSON.parse(lastState.stream_b_state) : {};
             const stateC = lastState.stream_c_state ? JSON.parse(lastState.stream_c_state) : {};
 
-            // We completely replace the specific slice to reflect current reality
-            const finalStateA = newSliceKey === 'A' ? newSliceData : stateA;
-            const finalStateB = newSliceKey === 'B' ? newSliceData : stateB;
-            const finalStateC = newSliceKey === 'C' ? newSliceData : stateC;
-
-            const nowISO = new Date().toISOString();
+            const finalStateA = sliceKey === 'A' ? sliceData : stateA;
+            const finalStateB = sliceKey === 'B' ? sliceData : stateB;
+            const finalStateC = sliceKey === 'C' ? sliceData : stateC;
 
             const mergedState = {
                 ticker,
                 price,
-                last_updated: nowISO,
+                last_updated: resolvedTimestampISO,
                 trigger_source: source,
+                ingestion_source: ingestionSource,
                 stream_a: finalStateA,
                 stream_b: finalStateB,
                 stream_c: finalStateC
@@ -51,43 +75,109 @@ class MasterStoreService {
             const stmt = db.prepare(`
                 INSERT INTO master_coin_store (
                     snapshot_id, ticker, timestamp, trigger_source, price,
-                    stream_a_state, stream_b_state, stream_c_state, merged_state
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    stream_a_state, stream_b_state, stream_c_state, merged_state,
+                    payload_hash, ingestion_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
             stmt.run(
                 crypto.randomUUID(),
                 ticker,
-                nowISO,
+                resolvedTimestampISO,
                 source,
                 price || 0,
                 JSON.stringify(finalStateA),
                 JSON.stringify(finalStateB),
                 JSON.stringify(finalStateC),
-                JSON.stringify(mergedState)
+                JSON.stringify(mergedState),
+                payloadHash || null,
+                ingestionSource || 'WEBHOOK'
             );
 
-            // Run prune engine occasionally
             this._runPruneEngine();
-
+            return { skipped: false };
         } catch (error) {
             console.error(`[MasterStore] Error merging state for ${ticker}:`, error.message);
+            return { skipped: true, reason: 'error', error: error.message };
         }
     }
 
-    async ingestStreamA(ticker, data, price) {
-        // Stream A: Macro & Micro Indicators (From Scanner)
-        this._mergeAndSave(ticker, 'STREAM_A', price, 'A', data);
+    /**
+     * Stream A: Macro & Micro Indicators (Tampermonkey scanner).
+     * @param {string} ticker
+     * @param {object} data - Per-coin slice from scan payload
+     * @param {number} price
+     * @param {object} [opts]
+     * @param {string} [opts.timestampISO] - Pre-resolved timestamp. If omitted, resolver is called here.
+     * @param {string} [opts.ingestionSource='SCAN_A']
+     */
+    async ingestStreamA(ticker, data, price, opts = {}) {
+        const resolved = opts.timestampISO
+            ? { timestampISO: opts.timestampISO }
+            : TimestampResolver.resolve({ stream: 'STREAM_A', source: 'SCAN_A', payload: data });
+        const payloadHash = TimestampResolver.computePayloadHash({ ticker, price, ...data });
+        this._mergeAndSave({
+            ticker,
+            source: 'STREAM_A',
+            sliceKey: 'A',
+            sliceData: data,
+            price,
+            resolvedTimestampISO: resolved.timestampISO,
+            ingestionSource: opts.ingestionSource || 'SCAN_A',
+            payloadHash,
+        });
     }
 
-    async ingestStreamB(ticker, data, price) {
-        // Stream B: Watchlist Context (From Scout)
-        this._mergeAndSave(ticker, 'STREAM_B', price, 'B', data);
+    /**
+     * Stream B: Watchlist Context (Coin Scout).
+     */
+    async ingestStreamB(ticker, data, price, opts = {}) {
+        const resolved = opts.timestampISO
+            ? { timestampISO: opts.timestampISO }
+            : TimestampResolver.resolve({ stream: 'STREAM_B', source: 'SCOUT_B', payload: data });
+        const payloadHash = TimestampResolver.computePayloadHash({ ticker, price, ...data });
+        this._mergeAndSave({
+            ticker,
+            source: 'STREAM_B',
+            sliceKey: 'B',
+            sliceData: data,
+            price,
+            resolvedTimestampISO: resolved.timestampISO,
+            ingestionSource: opts.ingestionSource || 'SCOUT_B',
+            payloadHash,
+        });
     }
 
-    async ingestStreamC(ticker, data, price) {
-        // Stream C: Alerts / Smart Levels
-        this._mergeAndSave(ticker, 'STREAM_C', price, 'C', data);
+    /**
+     * Stream C: Smart Levels / Alerts (TradingView).
+     * @param {string} ticker
+     * @param {object} data - Raw alert payload
+     * @param {number} price
+     * @param {object} [opts]
+     * @param {string} [opts.timestampISO] - REQUIRED: pre-resolved timestamp from caller.
+     * @param {'WEBHOOK'|'EMAIL'} [opts.ingestionSource='WEBHOOK']
+     * @param {string} [opts.payloadHash] - Optional pre-computed hash for cross-table dedup.
+     */
+    async ingestStreamC(ticker, data, price, opts = {}) {
+        const resolved = opts.timestampISO
+            ? { timestampISO: opts.timestampISO }
+            : TimestampResolver.resolve({
+                stream: 'STREAM_C',
+                source: opts.ingestionSource || 'WEBHOOK',
+                payload: data,
+                emailReceivedMs: opts.emailReceivedMs,
+            });
+        const payloadHash = opts.payloadHash || TimestampResolver.computePayloadHash(data);
+        this._mergeAndSave({
+            ticker,
+            source: 'STREAM_C',
+            sliceKey: 'C',
+            sliceData: data,
+            price,
+            resolvedTimestampISO: resolved.timestampISO,
+            ingestionSource: opts.ingestionSource || 'WEBHOOK',
+            payloadHash,
+        });
     }
 
     _runPruneEngine() {
@@ -95,9 +185,8 @@ class MasterStoreService {
         if (now - this.lastPruneTime > this.PRUNE_INTERVAL_MS) {
             this.lastPruneTime = now;
             try {
-                // Delete rows older than 30 days
                 const stmt = db.prepare(`
-                    DELETE FROM master_coin_store 
+                    DELETE FROM master_coin_store
                     WHERE timestamp < datetime('now', '-30 days')
                 `);
                 const result = stmt.run();

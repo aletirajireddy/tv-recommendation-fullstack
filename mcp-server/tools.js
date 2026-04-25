@@ -564,6 +564,89 @@ async function queryMasterCoinStore(ticker, limit = 10) {
     }
 }
 
+/**
+ * get_trial_full_context — Full forensic dossier for a single validation trial.
+ *
+ * Joins three sources:
+ *   1. validation_trials (the trial row itself + feature_snapshot + raw_trigger)
+ *   2. validation_state_log (every state transition with rule_snapshot + price)
+ *   3. master_coin_store (point-in-time market context AT the trigger moment +
+ *      a windowed timeline from -30m before detection → resolved_at +30m)
+ *
+ * Use this when you need to ask Claude "why did this trial fail?" or "what was
+ * the market doing around this trigger?" — single round-trip, all context.
+ */
+async function getTrialFullContext(trialId) {
+    if (!trialId) return { error: "trial_id required (e.g. trial_BTCUSDT.P_1745580000000)" };
+
+    try {
+        const trial = db.prepare('SELECT * FROM validation_trials WHERE trial_id = ?').get(trialId);
+        if (!trial) return { error: `Trial not found: ${trialId}` };
+
+        // Parse JSON columns for readability
+        const parseJson = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
+        trial.feature_snapshot = parseJson(trial.feature_snapshot);
+        trial.config_snapshot = parseJson(trial.config_snapshot);
+        trial.raw_trigger_blob = parseJson(trial.raw_trigger_blob);
+
+        const stateLog = db.prepare(`
+            SELECT log_id, changed_at, state, rule_snapshot, current_price, unrealized_move_pct
+            FROM validation_state_log
+            WHERE trial_id = ? ORDER BY changed_at ASC
+        `).all(trialId).map(row => ({ ...row, rule_snapshot: parseJson(row.rule_snapshot) }));
+
+        // Master snapshot AT trigger time (point-in-time)
+        const triggerSnap = db.prepare(`
+            SELECT timestamp, price, ingestion_source, merged_state
+            FROM master_coin_store
+            WHERE ticker = ? AND timestamp <= ?
+            ORDER BY timestamp DESC LIMIT 1
+        `).get(trial.ticker, trial.detected_at);
+
+        const triggerContext = triggerSnap ? {
+            snapshot_at: triggerSnap.timestamp,
+            snapshot_price: triggerSnap.price,
+            ingestion_source: triggerSnap.ingestion_source,
+            ...parseJson(triggerSnap.merged_state),
+        } : null;
+
+        // Windowed timeline (-30m → resolved_at +30m or now)
+        const startISO = new Date(new Date(trial.detected_at).getTime() - 30 * 60 * 1000).toISOString();
+        const endISO = trial.resolved_at
+            ? new Date(new Date(trial.resolved_at).getTime() + 30 * 60 * 1000).toISOString()
+            : new Date().toISOString();
+
+        const timeline = db.prepare(`
+            SELECT timestamp, trigger_source, ingestion_source, price, merged_state
+            FROM master_coin_store
+            WHERE ticker = ? AND timestamp BETWEEN ? AND ?
+            ORDER BY timestamp ASC
+        `).all(trial.ticker, startISO, endISO).map(r => {
+            const m = parseJson(r.merged_state);
+            return {
+                timestamp: r.timestamp,
+                trigger_source: r.trigger_source,
+                ingestion_source: r.ingestion_source,
+                price: r.price,
+                stream_a: m?.stream_a || null,
+                stream_b: m?.stream_b || null,
+                stream_c: m?.stream_c || null,
+            };
+        });
+
+        return {
+            description: "Complete forensic dossier for a single validation trial",
+            trial,
+            state_transitions: stateLog,
+            trigger_context: triggerContext,
+            master_timeline: timeline,
+            window: { from: startISO, to: endISO },
+        };
+    } catch (e) {
+        return { error: e.message };
+    }
+}
+
 module.exports = {
     getMarketSentiment,
     getMasterWatchlist,
@@ -580,5 +663,6 @@ module.exports = {
     getTrialDetails,
     getCoinLifecycles,
     getGhostApprovalQueue,
-    queryMasterCoinStore
+    queryMasterCoinStore,
+    getTrialFullContext
 };

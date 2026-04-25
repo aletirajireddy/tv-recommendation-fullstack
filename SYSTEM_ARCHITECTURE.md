@@ -165,6 +165,61 @@ An event-driven trial state machine that judges Stream C smart-level events agai
 
 ---
 
+## Pillar 1 Extension: Timestamp Policy & Single Source of Truth
+
+**Version**: 1.0 (Locked 2026-04-25)
+**Module**: `server/services/TimestampResolver.js`
+
+### Why this exists
+Every record across `smart_level_events`, `institutional_interest_events`, and `master_coin_store` carries a `timestamp` column. Historically each ingest path computed its own — leading to three discrepancies:
+1.  `MasterStoreService` invented its own `new Date()` instead of using the webhook's receive time.
+2.  `UmpireEngine` used `payload.timestamp` (TradingView's bar-open time, lags 3–5 min).
+3.  `email_rehydrator` used Gmail `internalDate` for everything (no late-arrival adjustment).
+
+This caused the validator widget, calendar widget, and MCP queries to disagree on "what time did X happen?". **The fix is single-source resolution before insert.**
+
+### The Resolver (`TimestampResolver.resolve`)
+| Stream | Source | Canonical Timestamp |
+|---|---|---|
+| **A** (Tampermonkey scanner) | `SCAN_A` | `payload.timestamp` (browser is ground truth) |
+| **B** (Coin scout) | `SCOUT_B` | `payload.timestamp` |
+| **C** | `WEBHOOK` | Server receive time (`new Date()`). NOT `payload.timestamp`. |
+| **C** | `EMAIL` (rehydrator) | Bar-close pivot logic — see below |
+
+### Stream C Email Rehydration — Bar-Close Pivot
+For each email-rehydrated alert:
+
+```
+bar_open       = payload.timestamp                    (TradingView {{time}})
+bar_size       = derived from payload.interval/timeframe (default: 5m)
+bar_close      = bar_open + bar_size
+email_received = Gmail internalDate
+
+IF email_received > bar_close + 5 min   → use bar_close   (email arrived LATE)
+ELSE IF email_received in (bar_open, bar_close + 5m]  → use email_received
+ELSE (clock skew)                       → fallback to bar_close
+```
+
+Supported bar sizes: `1m, 3m, 5m, 15m, 30m, 1h, 4h, 1d`. Default when undetectable: **5m**.
+
+### Hash-Based Deduplication
+- `payload_hash = SHA256(canonical_json(payload, minus_volatile_fields))` is computed at every ingest.
+- Volatile fields stripped before hashing: `timestamp, time, fire_time, received_at, server_time, id, alert_id, message_id`.
+- **Behavior on dup**: SKIP entirely (no insert, no update). Webhook beats email if it arrives first; email beats webhook only when webhook is missing.
+- Unique indexes on `smart_level_events.payload_hash` and `institutional_interest_events.payload_hash` enforce this at the DB level.
+
+### Provenance Flag (`ingestion_source`)
+Every row in the three tables now carries one of: `WEBHOOK | EMAIL | SCAN_A | SCOUT_B`. Widgets can filter or visually mark "this trial was backfilled from email" vs "live webhook".
+
+### Architectural Rules (binding for all future widgets / endpoints)
+1.  **NEVER** call `new Date()` inside `MasterStoreService` — always pass `timestampISO` from caller.
+2.  **NEVER** use `payload.timestamp` directly in `UmpireEngine` or any consumer — always pass `resolvedTimestampISO` through `opts`.
+3.  **NEVER** recompute timestamps in the frontend — trust the `timestamp` column.
+4.  **ALWAYS** call `TimestampResolver.resolve(...)` once at the ingestion boundary (webhook handler / rehydrator loop / scan handler) and propagate the result to every downstream sink.
+5.  **ALWAYS** compute `payload_hash` once per ingest and pass it through to all sinks for cross-table dedup.
+
+---
+
 ## Pillar 1 Extension: Master Coin Store V4
 
 **Version**: 1.0 (Live)  
@@ -175,7 +230,7 @@ A centralized, event-sourced materialized timeline that unifies all asynchronous
 
 ### Key Components
 *   **Database Table**: `master_coin_store` (stores full JSON state slices and a merged_context).
-*   **Engine**: `server/services/MasterStoreService.js`. Implements a "last known state" merge strategy.
+*   **Engine**: `server/services/MasterStoreService.js`. Implements a **point-in-time** merge strategy: when a backfilled email-rehydrated event is ingested, the merge uses stream states `WHERE timestamp <= resolved_timestamp` — not "latest known" — so historical inserts do not corrupt the timeline with future data.
 *   **Pruning**: Built-in 30-day automated rolling prune engine to bound database growth.
 *   **Ingestion Hooks**: Fire-and-forget `setImmediate` injections in `server/index.js` ensuring zero impact on live data flows.
 *   **MCP Integration**: `query_master_coin_store` tool for LLM consumption.

@@ -11,6 +11,8 @@ const RSIEngine = require('./services/RSIEngine');
 const UmpireEngine = require('./validator/UmpireEngine');
 const telegramValidator = require('./services/telegramValidator');
 const MasterStoreService = require('./services/MasterStoreService');
+const TimestampResolver = require('./services/TimestampResolver');
+const GhostScoringEngine = require('./services/GhostScoringEngine');
 
 const app = express();
 const server = http.createServer(app);
@@ -134,13 +136,17 @@ app.post('/scan-report', (req, res) => {
             .run(scanId, JSON.stringify(payload));
 
         // [V4 MASTER STORE INGESTION] - Fire and forget
+        // Stream A: trust payload.timestamp (browser is ground truth).
         if (payload.results && Array.isArray(payload.results)) {
             setImmediate(() => {
                 payload.results.forEach(item => {
                     const d = item.data || item;
                     const ticker = item.datakey ? item.datakey.replace('BINANCE:', '') : item.ticker;
                     const price = d.close || 0;
-                    MasterStoreService.ingestStreamA(ticker, d, price).catch(err => console.error(err));
+                    MasterStoreService.ingestStreamA(ticker, d, price, {
+                        timestampISO: timestamp,           // payload.timestamp from scan
+                        ingestionSource: 'SCAN_A',
+                    }).catch(err => console.error(err));
                 });
             });
         }
@@ -609,8 +615,12 @@ app.post('/qualified-pick', (req, res) => {
         `).run(ticker, exchange, price, saveType, now, volChange, JSON.stringify(req.body));
 
         // [V4 MASTER STORE INGESTION] - Stream B
+        // Trust payload.timestamp if present (scout reads live prices).
         setImmediate(() => {
-            MasterStoreService.ingestStreamB(ticker, req.body, price).catch(e => console.error(e));
+            MasterStoreService.ingestStreamB(ticker, req.body, price, {
+                timestampISO: req.body?.timestamp || now,
+                ingestionSource: 'SCOUT_B',
+            }).catch(e => console.error(e));
         });
 
         // [LIFECYCLE TRACKING - Birth Capture]
@@ -676,14 +686,17 @@ app.post('/api/market-context', (req, res) => {
 
         io.emit('market-context-update', { timestamp: now, counts: { screener: payload.screener_total_count, watchlist: payload.watchlist_count } });
 
-        // [V4 MASTER STORE INGESTION] - Stream B
+        // [V4 MASTER STORE INGESTION] - Stream B (market context)
         setImmediate(() => {
             const watchlistSnaps = payload.watchlist_active_snapshot || [];
             watchlistSnaps.forEach(w => {
                 if (w.full) {
                     const ticker = w.full.replace('BINANCE:', '');
                     const price = w.price || 0;
-                    MasterStoreService.ingestStreamB(ticker, w, price).catch(e => console.error(e));
+                    MasterStoreService.ingestStreamB(ticker, w, price, {
+                        timestampISO: w.timestamp || payload.timestamp || now,
+                        ingestionSource: 'SCOUT_B',
+                    }).catch(e => console.error(e));
                 }
             });
         });
@@ -927,7 +940,20 @@ app.get('/api/ghosts/queue', (req, res) => {
     try {
         const autoApproveSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'ghost_auto_approve'").get();
         const autoApprove = autoApproveSetting ? autoApproveSetting.value === '1' : false;
-        const queue = db.prepare("SELECT * FROM ghost_approval_queue WHERE is_approved = 0 ORDER BY queued_at DESC").all();
+
+        // Re-score all pending ghosts (fast — runs in transaction, typically <5ms)
+        GhostScoringEngine.scoreAllGhosts();
+
+        const queue = db.prepare(`
+            SELECT ticker, reason, queued_at, confidence_score, score_breakdown
+            FROM ghost_approval_queue
+            WHERE is_approved = 0
+            ORDER BY confidence_score DESC NULLS LAST, queued_at DESC
+        `).all().map(row => ({
+            ...row,
+            score_breakdown: row.score_breakdown ? JSON.parse(row.score_breakdown) : null,
+        }));
+
         res.json({ auto_approve: autoApprove, queue });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -1011,6 +1037,38 @@ app.get('/api/validator/trials', (req, res) => {
             ORDER BY t.resolved_at DESC LIMIT ?
         `).all(refTime, refTime, limit);
 
+        // ─── Enrich every trial with master_coin_store snapshot at trigger time ───
+        // Single point-in-time read per trial. Uses the (ticker, timestamp) index.
+        // Returns a compact `master_state` field so the inline mini-chart card has
+        // EMA/vol/mood without N+1 fetches. Full timeline lives at /trial/:id/timeline.
+        const masterStmt = db.prepare(`
+            SELECT timestamp, price, ingestion_source, merged_state
+            FROM master_coin_store
+            WHERE ticker = ? AND timestamp <= ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+        `);
+
+        const enrich = (trial) => {
+            try {
+                const snap = masterStmt.get(trial.ticker, trial.detected_at);
+                if (!snap) return { ...trial, master_state: null };
+                let merged = null;
+                try { merged = snap.merged_state ? JSON.parse(snap.merged_state) : null; } catch {}
+                return {
+                    ...trial,
+                    master_state: merged ? {
+                        snapshot_at: snap.timestamp,
+                        snapshot_price: snap.price,
+                        ingestion_source: snap.ingestion_source,
+                        stream_a: merged.stream_a || null,
+                        stream_b: merged.stream_b || null,
+                        stream_c: merged.stream_c || null,
+                    } : null,
+                };
+            } catch { return { ...trial, master_state: null }; }
+        };
+
         // Replay mode: recompute state from state_log if trial was still active at refTime
         const replayActive = [];
         for (const t of active) {
@@ -1019,12 +1077,233 @@ app.get('/api/validator/trials', (req, res) => {
                 WHERE trial_id = ? AND changed_at <= ?
                 ORDER BY changed_at DESC LIMIT 1
             `).get(t.trial_id, refTime);
-            replayActive.push({ ...t, replay_state: stateAtRef?.state || t.state });
+            replayActive.push(enrich({ ...t, replay_state: stateAtRef?.state || t.state }));
         }
 
-        res.json({ active: replayActive, resolved, refTime });
+        const enrichedResolved = resolved.map(enrich);
+
+        res.json({ active: replayActive, resolved: enrichedResolved, refTime });
     } catch (e) {
         console.error('Validator trials error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ============================================================================
+// DAILY PERFORMANCE CALENDAR
+// ============================================================================
+// GET /api/calendar/daily?days=7
+// Returns one row per day for the requested lookback. Each row aggregates:
+//   - market_mood: dominant raw_market_sentiment_log label of the day
+//   - market_score: avg moodScore across the day's scans
+//   - trials: { total, confirmed, failed, neutral, win_rate_pct }
+//   - top_movers: { gainers: [{ticker, change_pct}], losers: [...] } based on
+//     master_coin_store first→last close per ticker per day
+// Compact summary; full per-coin heatmap available at /api/calendar/day/:date.
+app.get('/api/calendar/daily', (req, res) => {
+    try {
+        const days = Math.min(parseInt(req.query.days) || 7, 30);
+        const now = new Date();
+        const result = [];
+
+        for (let i = 0; i < days; i++) {
+            const day = new Date(now);
+            day.setUTCDate(now.getUTCDate() - i);
+            const dateStr = day.toISOString().slice(0, 10);
+            const dayStart = `${dateStr}T00:00:00.000Z`;
+            const dayEnd = `${dateStr}T23:59:59.999Z`;
+
+            // Market mood — dominant label and avg score for the day
+            const mood = db.prepare(`
+                SELECT raw_label as label, COUNT(*) as c, AVG(raw_mood_score) as avg_score
+                FROM raw_market_sentiment_log
+                WHERE timestamp BETWEEN ? AND ?
+                GROUP BY raw_label
+                ORDER BY c DESC LIMIT 1
+            `).get(dayStart, dayEnd);
+
+            // Trial verdict counts for the day
+            const trialAgg = db.prepare(`
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN verdict = 'CONFIRMED' THEN 1 ELSE 0 END) as confirmed,
+                    SUM(CASE WHEN verdict = 'FAILED' THEN 1 ELSE 0 END) as failed,
+                    SUM(CASE WHEN verdict = 'NEUTRAL_TIMEOUT' THEN 1 ELSE 0 END) as neutral
+                FROM validation_trials
+                WHERE detected_at BETWEEN ? AND ?
+            `).get(dayStart, dayEnd);
+            const decisive = (trialAgg?.confirmed || 0) + (trialAgg?.failed || 0);
+            const winRate = decisive > 0 ? Math.round(((trialAgg.confirmed || 0) / decisive) * 100) : null;
+
+            // Top movers from master_coin_store: per-ticker first vs last price.
+            // (One pass per day; tiny rowcount expected.)
+            const dayPrices = db.prepare(`
+                SELECT ticker,
+                       (SELECT price FROM master_coin_store WHERE ticker = m.ticker AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC LIMIT 1) as first_price,
+                       (SELECT price FROM master_coin_store WHERE ticker = m.ticker AND timestamp BETWEEN ? AND ? ORDER BY timestamp DESC LIMIT 1) as last_price
+                FROM master_coin_store m
+                WHERE m.timestamp BETWEEN ? AND ?
+                GROUP BY m.ticker
+            `).all(dayStart, dayEnd, dayStart, dayEnd, dayStart, dayEnd);
+
+            const movers = dayPrices
+                .filter(r => r.first_price > 0 && r.last_price > 0)
+                .map(r => ({ ticker: r.ticker, change_pct: ((r.last_price - r.first_price) / r.first_price) * 100 }))
+                .sort((a, b) => b.change_pct - a.change_pct);
+
+            result.push({
+                date: dateStr,
+                market: {
+                    mood: mood?.label || 'UNKNOWN',
+                    score: mood ? Math.round(mood.avg_score) : null,
+                },
+                trials: {
+                    total: trialAgg?.total || 0,
+                    confirmed: trialAgg?.confirmed || 0,
+                    failed: trialAgg?.failed || 0,
+                    neutral: trialAgg?.neutral || 0,
+                    win_rate_pct: winRate,
+                },
+                top_gainers: movers.slice(0, 3),
+                top_losers: movers.slice(-3).reverse(),
+                coins_tracked: movers.length,
+            });
+        }
+
+        res.json({ days, generated_at: now.toISOString(), calendar: result });
+    } catch (e) {
+        console.error('Calendar daily error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/calendar/day/:date — full drill-down for a single day (YYYY-MM-DD UTC).
+// Returns the complete heatmap: every ticker tracked that day with day Δ%,
+// trial outcomes per ticker, intraday hi/lo, and market mood timeline.
+app.get('/api/calendar/day/:date', (req, res) => {
+    try {
+        const dateStr = req.params.date;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+        const dayStart = `${dateStr}T00:00:00.000Z`;
+        const dayEnd = `${dateStr}T23:59:59.999Z`;
+
+        // Per-ticker price stats from master_coin_store
+        const perTicker = db.prepare(`
+            SELECT ticker,
+                   COUNT(*) as samples,
+                   MIN(price) as low, MAX(price) as high,
+                   (SELECT price FROM master_coin_store WHERE ticker = m.ticker AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC LIMIT 1) as open,
+                   (SELECT price FROM master_coin_store WHERE ticker = m.ticker AND timestamp BETWEEN ? AND ? ORDER BY timestamp DESC LIMIT 1) as close
+            FROM master_coin_store m
+            WHERE m.timestamp BETWEEN ? AND ?
+            GROUP BY m.ticker
+        `).all(dayStart, dayEnd, dayStart, dayEnd, dayStart, dayEnd);
+
+        // Per-ticker trial outcomes
+        const trialsByTicker = db.prepare(`
+            SELECT ticker,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN verdict='CONFIRMED' THEN 1 ELSE 0 END) as confirmed,
+                   SUM(CASE WHEN verdict='FAILED' THEN 1 ELSE 0 END) as failed,
+                   SUM(CASE WHEN verdict='NEUTRAL_TIMEOUT' THEN 1 ELSE 0 END) as neutral,
+                   SUM(CASE WHEN direction='LONG' THEN 1 ELSE 0 END) as longs,
+                   SUM(CASE WHEN direction='SHORT' THEN 1 ELSE 0 END) as shorts
+            FROM validation_trials
+            WHERE detected_at BETWEEN ? AND ?
+            GROUP BY ticker
+        `).all(dayStart, dayEnd);
+        const trialMap = Object.fromEntries(trialsByTicker.map(r => [r.ticker, r]));
+
+        // Build heatmap rows
+        const heatmap = perTicker
+            .filter(r => r.open > 0 && r.close > 0)
+            .map(r => {
+                const change_pct = ((r.close - r.open) / r.open) * 100;
+                const range_pct = ((r.high - r.low) / r.low) * 100;
+                const trials = trialMap[r.ticker] || { total: 0, confirmed: 0, failed: 0, neutral: 0, longs: 0, shorts: 0 };
+                const decisive = trials.confirmed + trials.failed;
+                return {
+                    ticker: r.ticker,
+                    open: r.open, close: r.close, low: r.low, high: r.high,
+                    change_pct, range_pct, samples: r.samples,
+                    trials: {
+                        ...trials,
+                        win_rate_pct: decisive > 0 ? Math.round((trials.confirmed / decisive) * 100) : null,
+                    },
+                };
+            })
+            .sort((a, b) => b.change_pct - a.change_pct);
+
+        // Market mood progression through the day
+        const moodTimeline = db.prepare(`
+            SELECT timestamp, raw_label, raw_mood_score
+            FROM raw_market_sentiment_log
+            WHERE timestamp BETWEEN ? AND ?
+            ORDER BY timestamp ASC
+        `).all(dayStart, dayEnd);
+
+        res.json({
+            date: dateStr,
+            heatmap,
+            mood_timeline: moodTimeline,
+            coin_count: heatmap.length,
+        });
+    } catch (e) {
+        console.error('Calendar day error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/validator/trial/:trialId/timeline — full forensic timeline for click-expand modal.
+// Returns:
+//   trial          : full validation_trials row
+//   state_log      : every state transition with rule_snapshot + price + unrealized_move_pct
+//   master_timeline: all master_coin_store snapshots from detected_at → resolved_at (or now)
+//                    bounded to ±2h around the trial window for frontend perf
+app.get('/api/validator/trial/:trialId/timeline', (req, res) => {
+    try {
+        const trial = db.prepare('SELECT * FROM validation_trials WHERE trial_id = ?').get(req.params.trialId);
+        if (!trial) return res.status(404).json({ error: 'trial not found' });
+
+        const stateLog = db.prepare(`
+            SELECT log_id, changed_at, state, rule_snapshot, current_price, unrealized_move_pct
+            FROM validation_state_log
+            WHERE trial_id = ? ORDER BY changed_at ASC
+        `).all(req.params.trialId);
+
+        // Master timeline window: from 30m before detection to resolved_at (or now) + 30m buffer.
+        const startISO = new Date(new Date(trial.detected_at).getTime() - 30 * 60 * 1000).toISOString();
+        const endISO = trial.resolved_at
+            ? new Date(new Date(trial.resolved_at).getTime() + 30 * 60 * 1000).toISOString()
+            : new Date().toISOString();
+
+        const masterTimeline = db.prepare(`
+            SELECT timestamp, trigger_source, ingestion_source, price, merged_state
+            FROM master_coin_store
+            WHERE ticker = ? AND timestamp BETWEEN ? AND ?
+            ORDER BY timestamp ASC
+        `).all(trial.ticker, startISO, endISO).map(row => {
+            let merged = null;
+            try { merged = row.merged_state ? JSON.parse(row.merged_state) : null; } catch {}
+            return {
+                timestamp: row.timestamp,
+                trigger_source: row.trigger_source,
+                ingestion_source: row.ingestion_source,
+                price: row.price,
+                stream_a: merged?.stream_a || null,
+                stream_b: merged?.stream_b || null,
+                stream_c: merged?.stream_c || null,
+            };
+        });
+
+        res.json({
+            trial,
+            state_log: stateLog,
+            master_timeline: masterTimeline,
+            window: { from: startISO, to: endISO },
+        });
+    } catch (e) {
+        console.error('Trial timeline error:', e);
         res.status(500).json({ error: e.message });
     }
 });
@@ -1664,10 +1943,16 @@ app.post('/api/webhook/smart-levels', (req, res) => {
         const ticker = payload.ticker;
         const price = parseFloat(payload.price || 0);
 
-        // TradingView's {{time}} placeholder outputs the BAR OPEN time (e.g. 09:35 for a 5m bar).
-        // If the alert triggers at 09:38, the UI sees it as "3 minutes ago" instantly. 
-        // To fix this discrepancy, we force the timestamp to the exact Server Receive Time for all live webhooks.
-        const parsedTimestamp = new Date().toISOString();
+        // ─── TIMESTAMP POLICY (Stream C — WEBHOOK) ────────────────────────────
+        // Single source of truth: TimestampResolver.
+        // Webhook path = server receive time. payload.timestamp is BAR-OPEN time
+        // from TradingView and lags 3–5 min — explicitly NOT used here.
+        const resolved = TimestampResolver.resolve({
+            stream: 'STREAM_C', source: 'WEBHOOK', payload
+        });
+        const parsedTimestamp = resolved.timestampISO;
+        const payloadHash = TimestampResolver.computePayloadHash(payload);
+        const ingestionSource = 'WEBHOOK';
 
         // Phase 9: Ingestion Routing Switch
         if (typeof payload.bar_move_pct !== 'undefined') {
@@ -1677,42 +1962,55 @@ app.post('/api/webhook/smart-levels', (req, res) => {
             const today_change_pct = parseFloat(payload.today_change_pct || 0);
             const today_volume = parseFloat(payload.today_volume || 0);
 
-            db.prepare(`
-                INSERT OR IGNORE INTO institutional_interest_events (ticker, timestamp, price, direction, bar_move_pct, today_change_pct, today_volume, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(ticker, parsedTimestamp, price, direction, bar_move_pct, today_change_pct, today_volume, JSON.stringify(payload));
-
-            console.log(`[INST-INTEREST] 🏦 Institutional Webhook: ${ticker} | Dir: ${direction} | BarMove: ${bar_move_pct.toFixed(2)}%`);
-            io.emit('institutional-interest-update', { ticker, direction, timestamp: parsedTimestamp });
+            // Hash-dedup: skip if rehydrator already wrote this exact payload.
+            const dup = payloadHash
+                ? db.prepare('SELECT id FROM institutional_interest_events WHERE payload_hash = ? LIMIT 1').get(payloadHash)
+                : null;
+            if (dup) {
+                console.log(`[INST-INTEREST] ⏭️  Hash-dup skip: ${ticker} (already in DB via email)`);
+            } else {
+                db.prepare(`
+                    INSERT OR IGNORE INTO institutional_interest_events
+                    (ticker, timestamp, price, direction, bar_move_pct, today_change_pct, today_volume, raw_data, payload_hash, ingestion_source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(ticker, parsedTimestamp, price, direction, bar_move_pct, today_change_pct, today_volume, JSON.stringify(payload), payloadHash, ingestionSource);
+                console.log(`[INST-INTEREST] 🏦 Institutional Webhook: ${ticker} | Dir: ${direction} | BarMove: ${bar_move_pct.toFixed(2)}%`);
+                io.emit('institutional-interest-update', { ticker, direction, timestamp: parsedTimestamp });
+            }
         } else {
             // Path B: Legacy Smart Levels (default fallback)
             const direction = payload.momentum?.direction !== undefined ? parseInt(payload.momentum.direction, 10) : (payload.direction || 0);
             const roc_pct = payload.momentum?.roc_pct !== undefined ? parseFloat(payload.momentum.roc_pct) : 0.0;
 
-            db.prepare(`
-                INSERT OR IGNORE INTO smart_level_events (ticker, timestamp, price, direction, roc_pct, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?)
-            `).run(
-                ticker,
-                parsedTimestamp,
-                price,
-                direction,
-                roc_pct,
-                JSON.stringify(payload)
-            );
-
-            console.log(`[SMART-LEVELS] 🧠 Alert Received @ ${parsedTimestamp} | Ticker: ${ticker} | Payload Time: ${payload.timestamp || 'N/A'}`);
-            io.emit('smart-level-update', { ticker, direction, timestamp: parsedTimestamp });
+            const dup = payloadHash
+                ? db.prepare('SELECT id FROM smart_level_events WHERE payload_hash = ? LIMIT 1').get(payloadHash)
+                : null;
+            if (dup) {
+                console.log(`[SMART-LEVELS] ⏭️  Hash-dup skip: ${ticker} (already in DB via email)`);
+            } else {
+                db.prepare(`
+                    INSERT OR IGNORE INTO smart_level_events
+                    (ticker, timestamp, price, direction, roc_pct, raw_data, payload_hash, ingestion_source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(ticker, parsedTimestamp, price, direction, roc_pct, JSON.stringify(payload), payloadHash, ingestionSource);
+                console.log(`[SMART-LEVELS] 🧠 Alert Received @ ${parsedTimestamp} | Ticker: ${ticker} | Payload Time: ${payload.timestamp || 'N/A'}`);
+                io.emit('smart-level-update', { ticker, direction, timestamp: parsedTimestamp });
+            }
         }
 
-        // [V4 MASTER STORE INGESTION] - Stream C
+        // [V4 MASTER STORE INGESTION] - Stream C — pass resolved timestamp + source.
         setImmediate(() => {
-            MasterStoreService.ingestStreamC(ticker, payload, price).catch(e => console.error(e));
+            MasterStoreService.ingestStreamC(ticker, payload, price, {
+                timestampISO: parsedTimestamp,
+                ingestionSource,
+                payloadHash,
+            }).catch(e => console.error(e));
         });
 
-        // 3rd UMPIRE VALIDATOR (passive, fire-and-forget — Step 1 skeleton)
+        // 3rd UMPIRE VALIDATOR — pass resolved timestamp (NEVER payload.timestamp).
         setImmediate(() => {
-            try { umpire.onStreamC(payload); } catch (err) { console.error('Umpire onStreamC error:', err); }
+            try { umpire.onStreamC(payload, { resolvedTimestampISO: parsedTimestamp }); }
+            catch (err) { console.error('Umpire onStreamC error:', err); }
         });
 
         res.json({ success: true, ticker });

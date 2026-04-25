@@ -19,6 +19,7 @@ import RSIDistributionWidget from './components/AnalyticsWidgets/RSIDistribution
 import { GhostCoinWidget } from './components/AnalyticsWidgets/GhostCoinWidget';
 import { CoinAgeWidget } from './components/AnalyticsWidgets/CoinAgeWidget';
 import { ValidatorTimelineWidget } from './components/AnalyticsWidgets/ValidatorTimelineWidget';
+import { DailyCalendarWidget } from './components/AnalyticsWidgets/DailyCalendarWidget';
 
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
@@ -46,6 +47,11 @@ function App() {
             {/* ROW 0: 3rd UMPIRE VALIDATOR (Top row — always visible) */}
             <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
                 <ValidatorTimelineWidget />
+            </div>
+
+            {/* ROW 0b: DAILY PERFORMANCE CALENDAR (7-day grid — opposite-direction spotter) */}
+            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
+                <DailyCalendarWidget />
             </div>
 
             {/* ROW 1: TIMELINE ANALYZERS (Moved to the very top!) */}

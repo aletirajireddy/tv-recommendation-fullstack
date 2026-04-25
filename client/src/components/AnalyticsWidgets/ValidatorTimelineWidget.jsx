@@ -3,6 +3,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
 import { ValidatorSettingsModal } from './ValidatorSettingsModal';
+import { TrialMiniChart } from './TrialMiniChart';
+import { TrialExpandedModal } from './TrialExpandedModal';
 import styles from './ValidatorTimelineWidget.module.css';
 
 const RULE_LABELS = {
@@ -54,6 +56,36 @@ function StateBadge({ state, verdict }) {
     return <span className={`${styles.badgeState} ${cls}`}>{icons[display] || ''} {display?.replace('_', ' ')}</span>;
 }
 
+// Compact context strip — pulls EMA stack / vol / mood from the master_coin_store
+// snapshot taken AT the trial's trigger moment. Shown inline (no click required)
+// so the user sees market context without expanding rules.
+function MasterContextStrip({ master }) {
+    if (!master) return null;
+    const a = master.stream_a || {};
+    const c = master.stream_c || {};
+    const items = [];
+    // EMA hierarchy distances (from feature snapshot in stream A)
+    const emaFmt = (v) => v == null ? '—' : `${v > 0 ? '+' : ''}${Number(v).toFixed(2)}%`;
+    if (a.ema200_5m_dist != null)  items.push({ k: '5m EMA',  v: emaFmt(a.ema200_5m_dist) });
+    if (a.ema200_15m_dist != null) items.push({ k: '15m EMA', v: emaFmt(a.ema200_15m_dist) });
+    if (a.ema200_1h_dist != null)  items.push({ k: '1h EMA',  v: emaFmt(a.ema200_1h_dist) });
+    if (a.ema200_4h_dist != null)  items.push({ k: '4h EMA',  v: emaFmt(a.ema200_4h_dist) });
+    if (a.rsi_h1 != null)          items.push({ k: 'RSI 1h',  v: Number(a.rsi_h1).toFixed(1) });
+    if (a.vol_spike != null)       items.push({ k: 'VolSpike', v: a.vol_spike ? '✓' : '·' });
+    if (a.market_mood)             items.push({ k: 'Mood',    v: a.market_mood });
+    if (!items.length) return null;
+    return (
+        <div className={styles.masterStrip}>
+            {items.map((i, idx) => (
+                <span key={idx} className={styles.masterChip}>
+                    <span className={styles.masterChipKey}>{i.k}</span>
+                    <span className={styles.masterChipVal}>{i.v}</span>
+                </span>
+            ))}
+        </div>
+    );
+}
+
 function RuleChecklist({ rulesJson }) {
     let rules = {};
     try { rules = typeof rulesJson === 'string' ? JSON.parse(rulesJson) : (rulesJson || {}); } catch {}
@@ -77,8 +109,8 @@ function RuleChecklist({ rulesJson }) {
     );
 }
 
-function TrialCard({ trial, isResolved }) {
-    const [expanded, setExpanded] = useState(false);
+function TrialCard({ trial, isResolved, onExpand }) {
+    const [rulesOpen, setRulesOpen] = useState(false);
     const isLong = trial.direction === 'LONG';
     const cardCls = `${styles.trialCard} ${isLong ? styles.trialCardLong : styles.trialCardShort}`;
     const stateDisplay = trial.replay_state || trial.state;
@@ -87,7 +119,12 @@ function TrialCard({ trial, isResolved }) {
         : null;
 
     return (
-        <div className={cardCls} onClick={() => setExpanded(e => !e)} style={{ cursor: 'pointer' }}>
+        <div className={cardCls} style={{ cursor: 'default' }}
+             onClick={(e) => {
+                 // Toggle inline rules; don't trigger when expand button clicked.
+                 if (e.target.closest('button')) return;
+                 setRulesOpen(o => !o);
+             }}>
             <div className={styles.trialHeader}>
                 <div className={styles.trialInfo}>
                     <span className={styles.ticker}>{trial.ticker}</span>
@@ -101,6 +138,15 @@ function TrialCard({ trial, isResolved }) {
                     {(trial.latest_move != null || trial.final_move != null) &&
                         <MoveTag pct={trial.final_move ?? trial.latest_move} />}
                     <StateBadge state={stateDisplay} verdict={isResolved ? trial.verdict : null} />
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onExpand(trial.trial_id); }}
+                        title="Expand full chart"
+                        style={{
+                            background: 'rgba(99,179,237,0.15)', color: '#63b3ed',
+                            border: '1px solid rgba(99,179,237,0.3)', borderRadius: 4,
+                            padding: '2px 8px', fontSize: 10, cursor: 'pointer',
+                        }}
+                    >⤢</button>
                 </div>
             </div>
 
@@ -119,7 +165,13 @@ function TrialCard({ trial, isResolved }) {
                 </div>
             )}
 
-            {expanded && (trial.latest_rules || (isResolved && trial.failure_reason)) && (
+            {/* Inline master_coin_store context — visible without expand */}
+            <MasterContextStrip master={trial.master_state} />
+
+            {/* Inline mini chart (120px) — always visible per Q2 */}
+            <TrialMiniChart trial={trial} />
+
+            {rulesOpen && (trial.latest_rules || (isResolved && trial.failure_reason)) && (
                 <RuleChecklist rulesJson={trial.latest_rules} />
             )}
         </div>
@@ -204,6 +256,7 @@ export function ValidatorTimelineWidget() {
     const [csvFrom, setCsvFrom] = useState('');
     const [csvTo, setCsvTo] = useState('');
     const [loading, setLoading] = useState(true);
+    const [expandedTrialId, setExpandedTrialId] = useState(null);
     const pollRef = useRef(null);
 
     const fetchTrials = useCallback(async () => {
@@ -295,7 +348,7 @@ export function ValidatorTimelineWidget() {
                     <div className={styles.emptyState}>No active trials — waiting for Stream C smart level events</div>
                 ) : (
                     <div className={styles.trialList}>
-                        {active.map(t => <TrialCard key={t.trial_id} trial={t} isResolved={false} />)}
+                        {active.map(t => <TrialCard key={t.trial_id} trial={t} isResolved={false} onExpand={setExpandedTrialId} />)}
                     </div>
                 )}
             </div>
@@ -336,13 +389,18 @@ export function ValidatorTimelineWidget() {
                     <div className={styles.emptyState}>No resolved trials in this window</div>
                 ) : (
                     <div className={styles.trialList}>
-                        {resolved.map(t => <TrialCard key={t.trial_id} trial={t} isResolved={true} />)}
+                        {resolved.map(t => <TrialCard key={t.trial_id} trial={t} isResolved={true} onExpand={setExpandedTrialId} />)}
                     </div>
                 )}
             </div>
 
             {/* SETTINGS MODAL */}
             {showSettings && <ValidatorSettingsModal onClose={() => setShowSettings(false)} />}
+
+            {/* TRIAL EXPANDED MODAL — full forensic chart */}
+            {expandedTrialId && (
+                <TrialExpandedModal trialId={expandedTrialId} onClose={() => setExpandedTrialId(null)} />
+            )}
 
             {/* CSV EXPORT MODAL */}
             {showCsvModal && (

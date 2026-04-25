@@ -222,3 +222,22 @@
 @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
 @keyframes slideIn { from { opacity:0; transform:translateX(-8px); } to { opacity:1; transform:translateX(0); } }
 @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+/* Master Coin Store context strip — inline market snapshot at trigger time */
+.masterStrip {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-top: 6px; padding-top: 6px;
+    border-top: 1px dashed rgba(255,255,255,0.07);
+}
+.masterChip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(99,179,237,0.06);
+    border: 1px solid rgba(99,179,237,0.15);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    line-height: 1.4;
+}
+.masterChipKey { color: #718096; font-weight: 500; }
+.masterChipVal { color: #cbd5e0; font-weight: 600; }
+

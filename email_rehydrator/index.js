@@ -5,6 +5,8 @@ const { authenticate } = require('@google-cloud/local-auth');
 const { google } = require('googleapis');
 const Database = require('better-sqlite3');
 const readline = require('readline');
+// Single-source timestamp + payload-hash resolver (mirrors live webhook policy).
+const TimestampResolver = require('../server/services/TimestampResolver');
 
 // --- CONFIGURATION ---
 const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
@@ -139,68 +141,91 @@ function parseJSONFromText(text) {
     return null;
 }
 
-// --- DEDUPLICATION ENGINE ---
-function isDuplicate(ticker, price, direction, isoTimestamp, isInstitutional) {
+// --- DEDUPLICATION ENGINE (Hash-based) ---
+//
+// Old behavior: fuzzy match on ticker+price+direction within ±5 min window.
+//   Problem: false positives across different alerts with similar prices.
+// New behavior: SHA256 over canonical payload (volatile fields stripped).
+//   The same hash is computed in the live webhook path, so cross-source dedup is reliable.
+function findExistingByHash(payloadHash, isInstitutional) {
+    if (!payloadHash) return null;
     const table = isInstitutional ? 'institutional_interest_events' : 'smart_level_events';
-    
-    // SQLite query looking for exact Ticker, Price, Direction within +/- 5 minutes (300 seconds)
-    const sql = `
-        SELECT id FROM ${table}
-        WHERE ticker = ? 
-          AND direction = ? 
-          AND ABS(price - ?) < 0.00001
-          AND ABS(strftime('%s', ?) - strftime('%s', timestamp)) <= 300
-        LIMIT 1
-    `;
-    
-    const row = db.prepare(sql).get(ticker, direction, price, isoTimestamp);
-    return !!row;
+    return db.prepare(`SELECT id FROM ${table} WHERE payload_hash = ? LIMIT 1`).get(payloadHash);
 }
 
 // --- DB INJECTION ENGINE ---
-function injectToDatabase(payload, messageDateISO) {
+//
+// Timestamp policy (mirrors server/services/TimestampResolver):
+//   For email rehydration, the canonical timestamp is computed via
+//   bar-close pivot logic. See TimestampResolver.resolve() for the full rules.
+function injectToDatabase(payload, msgDateMs) {
     const ticker = payload.ticker;
     const price = parseFloat(payload.price || 0);
-
     const isInstitutional = typeof payload.bar_move_pct !== 'undefined';
-    
-    // Extract shared logic similar to server/index.js (Stream C)
+
     let direction = 0;
     if (isInstitutional) {
         direction = payload.direction !== undefined ? parseInt(payload.direction, 10) : 0;
     } else {
         direction = payload.momentum?.direction !== undefined ? parseInt(payload.momentum.direction, 10) : (payload.direction || 0);
     }
-    
-    // 1. DEDUPLICATION CHECK
-    if (isDuplicate(ticker, price, direction, messageDateISO, isInstitutional)) {
-        console.log(`[SKIP] Safely verified ${ticker} arrived in DB via webhook already.`);
+
+    // 1. HASH DEDUPLICATION — skip entirely if this exact payload already exists.
+    const payloadHash = TimestampResolver.computePayloadHash(payload);
+    if (findExistingByHash(payloadHash, isInstitutional)) {
+        console.log(`[SKIP] Hash-dup: ${ticker} already in DB (webhook beat email).`);
         return { duplicates: 1, injected: 0 };
     }
 
-    // 2. INJECTION (MISSING DATA)
+    // 2. RESOLVE CANONICAL TIMESTAMP (single source of truth).
+    const resolved = TimestampResolver.resolve({
+        stream: 'STREAM_C',
+        source: 'EMAIL',
+        payload,
+        emailReceivedMs: msgDateMs,
+    });
+    const messageDateISO = resolved.timestampISO;
+    const ingestionSource = 'EMAIL';
+
+    // 3. INJECTION
     try {
         if (isInstitutional) {
             const bar_move_pct = parseFloat(payload.bar_move_pct);
             const today_change_pct = parseFloat(payload.today_change_pct || 0);
             const today_volume = parseFloat(payload.today_volume || 0);
-            
+
             db.prepare(`
-                INSERT OR IGNORE INTO institutional_interest_events (ticker, timestamp, price, direction, bar_move_pct, today_change_pct, today_volume, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(ticker, messageDateISO, price, direction, bar_move_pct, today_change_pct, today_volume, JSON.stringify(payload));
-            
-            console.log(`[INJECT] 💉 Restored Missing Institutional Alert: ${ticker} @ ${messageDateISO}`);
+                INSERT OR IGNORE INTO institutional_interest_events
+                (ticker, timestamp, price, direction, bar_move_pct, today_change_pct, today_volume, raw_data, payload_hash, ingestion_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(ticker, messageDateISO, price, direction, bar_move_pct, today_change_pct, today_volume, JSON.stringify(payload), payloadHash, ingestionSource);
+
+            console.log(`[INJECT] 💉 Institutional (EMAIL) ${ticker} @ ${messageDateISO} — ${resolved.reason}`);
         } else {
             const roc_pct = payload.momentum?.roc_pct !== undefined ? parseFloat(payload.momentum.roc_pct) : 0.0;
-            
+
             db.prepare(`
-                INSERT OR IGNORE INTO smart_level_events (ticker, timestamp, price, direction, roc_pct, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?)
-            `).run(ticker, messageDateISO, price, direction, roc_pct, JSON.stringify(payload));
-            
-            console.log(`[INJECT] 💉 Restored Missing Smart Levels Alert: ${ticker} @ ${messageDateISO}`);
+                INSERT OR IGNORE INTO smart_level_events
+                (ticker, timestamp, price, direction, roc_pct, raw_data, payload_hash, ingestion_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(ticker, messageDateISO, price, direction, roc_pct, JSON.stringify(payload), payloadHash, ingestionSource);
+
+            console.log(`[INJECT] 💉 Smart-Levels (EMAIL) ${ticker} @ ${messageDateISO} — ${resolved.reason}`);
         }
+
+        // 4. FEED MASTER_COIN_STORE — keeps the unified timeline complete with backfilled events.
+        // We require lazily to avoid coupling rehydrator startup to server-only modules.
+        try {
+            const MasterStoreService = require('../server/services/MasterStoreService');
+            MasterStoreService.ingestStreamC(ticker, payload, price, {
+                timestampISO: messageDateISO,
+                ingestionSource,
+                payloadHash,
+            }).catch(e => console.error('[MasterStore from rehydrator]', e.message));
+        } catch (e) {
+            console.error('[MasterStore require failed in rehydrator]', e.message);
+        }
+
         return { duplicates: 0, injected: 1 };
     } catch (e) {
         console.error(`💥 Failed to insert ${ticker}:`, e);
@@ -282,13 +307,10 @@ async function fetchEmails() {
             const jsonPayload = parseJSONFromText(bodyText);
 
             if (jsonPayload && jsonPayload.ticker) {
-                // Determine message timestamp in ISO correctly
-                // ARCHITECTURE NOTE: We explicitly use the underlying Gmail 'internalDate' (Email Received Time).
-                // Do NOT use jsonPayload.timestamp. TradingView's {{time}} placeholder outputs BAR OPEN time (e.g. 09:35 for a 5m bar).
-                // Using the email received time perfectly mirrors the "Server Receive Time" logic used in the live webhook endpoint.
-                const isoDate = new Date(msgDateMs).toISOString();
-                
-                const stats = injectToDatabase(jsonPayload, isoDate);
+                // ARCHITECTURE NOTE: Pass raw msgDateMs (Gmail internalDate). TimestampResolver
+                // applies the bar-close pivot logic to choose between email_received_time
+                // and bar_close_time as the canonical stored timestamp.
+                const stats = injectToDatabase(jsonPayload, msgDateMs);
                 totalInjected += stats.injected;
                 totalDuplicates += stats.duplicates;
             } else {

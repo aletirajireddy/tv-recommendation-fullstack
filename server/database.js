@@ -295,6 +295,46 @@ db.exec(`
 `);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_master_ticker_time ON master_coin_store(ticker, timestamp);`);
 
-console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles, validation_trials, validation_state_log, pattern_statistics, master_coin_store');
+// ============================================================================
+// 16. TIMESTAMP POLICY MIGRATION (Single Source of Truth)
+// ============================================================================
+// Adds:
+//   - payload_hash    : SHA256 of canonical payload (excluding volatile fields).
+//                       Used for true deduplication across webhook + email rehydration.
+//   - ingestion_source: 'WEBHOOK' | 'EMAIL' | 'SCAN_A' | 'SCOUT_B' — provenance flag
+//                       so widgets can distinguish live vs backfilled records.
+// Logic: TimestampResolver computes the canonical timestamp ONCE before insert.
+// All FE widgets read the `timestamp` column verbatim — no recalculation downstream.
+function _safeAddColumn(table, columnDef, columnName) {
+    try {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+        if (!cols.find(c => c.name === columnName)) {
+            db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`);
+            console.log(`   ↳ Added column ${columnName} to ${table}`);
+        }
+    } catch (e) {
+        console.error(`   ⚠️ Migration error on ${table}.${columnName}:`, e.message);
+    }
+}
+
+_safeAddColumn('smart_level_events', 'payload_hash TEXT', 'payload_hash');
+_safeAddColumn('smart_level_events', "ingestion_source TEXT DEFAULT 'WEBHOOK'", 'ingestion_source');
+_safeAddColumn('institutional_interest_events', 'payload_hash TEXT', 'payload_hash');
+_safeAddColumn('institutional_interest_events', "ingestion_source TEXT DEFAULT 'WEBHOOK'", 'ingestion_source');
+_safeAddColumn('master_coin_store', 'payload_hash TEXT', 'payload_hash');
+_safeAddColumn('master_coin_store', "ingestion_source TEXT DEFAULT 'WEBHOOK'", 'ingestion_source');
+
+// Ghost approval enrichment columns (Q5 — regime-aware confidence scoring)
+_safeAddColumn('ghost_approval_queue', 'confidence_score REAL', 'confidence_score');
+_safeAddColumn('ghost_approval_queue', 'score_breakdown TEXT', 'score_breakdown');
+_safeAddColumn('ghost_approval_queue', 'scored_at TEXT', 'scored_at');
+
+// Unique indexes on payload_hash (where present). NULLs allowed — legacy rows skipped.
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_smart_level_payload_hash ON smart_level_events(payload_hash) WHERE payload_hash IS NOT NULL;`);
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inst_interest_payload_hash ON institutional_interest_events(payload_hash) WHERE payload_hash IS NOT NULL;`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_master_payload_hash ON master_coin_store(payload_hash) WHERE payload_hash IS NOT NULL;`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_master_source ON master_coin_store(ingestion_source);`);
+
+console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles, validation_trials, validation_state_log, pattern_statistics, master_coin_store [+ timestamp policy migration]');
 
 module.exports = db;

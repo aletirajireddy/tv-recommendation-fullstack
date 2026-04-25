@@ -45,7 +45,14 @@ class UmpireEngine extends EventEmitter {
     // PUBLIC HOOKS (called from server/index.js)
     // ─────────────────────────────────────────────
 
-    onStreamC(payload) {
+    /**
+     * @param {object} payload - Raw alert payload
+     * @param {object} [opts]
+     * @param {string} [opts.resolvedTimestampISO] - Authoritative timestamp from TimestampResolver.
+     *   REQUIRED for live correctness — do NOT fall back to payload.timestamp (that is TradingView's
+     *   bar-open time and lags 3–5 min). If omitted, we use server "now" rather than payload.timestamp.
+     */
+    onStreamC(payload, opts = {}) {
         if (!payload || !payload.ticker || !payload.price) return;
         // Skip institutional interest payloads (bar_move_pct signals different handler)
         if (typeof payload.bar_move_pct !== 'undefined') return;
@@ -71,7 +78,12 @@ class UmpireEngine extends EventEmitter {
             'SELECT id FROM smart_level_events WHERE ticker = ? ORDER BY id DESC LIMIT 1'
         ).get(ticker);
 
-        const now = payload.timestamp ? new Date(payload.timestamp) : new Date();
+        // BUG FIX (timestamp policy): payload.timestamp from TradingView is BAR-OPEN time
+        // and lags the actual fire moment by 3–5 minutes. Always prefer the resolver-supplied
+        // canonical timestamp; fall back to server now() — never to payload.timestamp.
+        const now = opts.resolvedTimestampISO
+            ? new Date(opts.resolvedTimestampISO)
+            : new Date();
         const cooldownMs = (cfg['validator.cooldown_minutes'] || 15) * 60 * 1000;
         const watchMs = (cfg['validator.watch_window_minutes'] || 60) * 60 * 1000;
         const cooldownUntil = new Date(now.getTime() + cooldownMs);

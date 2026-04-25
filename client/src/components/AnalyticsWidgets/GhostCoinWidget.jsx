@@ -110,11 +110,38 @@ export function GhostCoinWidget() {
             <div className={styles.list}>
                 {queue.map(coin => {
                     const timeInQueue = Math.floor((Date.now() - new Date(coin.queued_at).getTime()) / 60000);
+                    const score = coin.confidence_score;
+                    const bd = coin.score_breakdown;
+                    const confLabel = bd?.confidence || null;
+                    const confColor = confLabel === 'HIGH' ? '#68d391' : confLabel === 'MEDIUM' ? '#f6ad55' : confLabel === 'LOW' ? '#fc8181' : '#718096';
+                    const barWidth = score != null ? `${Math.min(100, score)}%` : '0%';
+
                     return (
                         <div key={coin.ticker} className={styles.coinRow}>
                             <div className={styles.coinInfo}>
                                 <div className={styles.ticker}>{coin.ticker}</div>
                                 <div className={styles.reason}>{coin.reason} ({timeInQueue}m ago)</div>
+
+                                {/* Confidence score bar */}
+                                {score != null && (
+                                    <div style={{ marginTop: 5 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 2, color: '#a0aec0' }}>
+                                            <span>Confidence</span>
+                                            <span style={{ color: confColor, fontWeight: 600 }}>{score.toFixed(1)} — {confLabel}</span>
+                                        </div>
+                                        <div style={{ height: 4, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' }}>
+                                            <div style={{ height: '100%', width: barWidth, background: confColor, borderRadius: 2, transition: 'width 0.4s' }} />
+                                        </div>
+                                        {bd && (
+                                            <div style={{ fontSize: 9, color: '#718096', marginTop: 3, display: 'flex', gap: 8 }}>
+                                                <span>WR: {bd.base_win_rate}%</span>
+                                                <span>Regime: {bd.regime_mood} ×{bd.regime_multiplier}</span>
+                                                <span>Dir: {bd.direction_used || '?'}</span>
+                                                {bd.sample_count != null && <span>n={bd.sample_count}</span>}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             <button className={styles.approveBtn} onClick={() => approveCoin(coin.ticker)}>
                                 Prune
