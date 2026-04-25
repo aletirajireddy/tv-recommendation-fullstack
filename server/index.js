@@ -1254,6 +1254,98 @@ app.get('/api/calendar/day/:date', (req, res) => {
     }
 });
 
+// GET /api/validator/trial/:trialId/ohlc?interval=5 (minutes, default 5)
+// Groups master_coin_store price snapshots into real OHLC candles for the trial window.
+// Also returns trial meta (trigger, level, cooldown/watch boundaries) for overlay lines.
+app.get('/api/validator/trial/:trialId/ohlc', (req, res) => {
+    try {
+        const trial = db.prepare('SELECT * FROM validation_trials WHERE trial_id = ?').get(req.params.trialId);
+        if (!trial) return res.status(404).json({ error: 'trial not found' });
+
+        const intervalMin = Math.max(1, parseInt(req.query.interval) || 5);
+        const intervalMs  = intervalMin * 60 * 1000;
+
+        // Window: 1 bar before detection → resolved_at + 2 bars (or now + 2 bars)
+        const detectedMs = new Date(trial.detected_at).getTime();
+        const endMs = trial.resolved_at
+            ? new Date(trial.resolved_at).getTime() + 2 * intervalMs
+            : Date.now() + 2 * intervalMs;
+        const startMs = detectedMs - intervalMs; // one bar before trigger
+
+        const rows = db.prepare(`
+            SELECT timestamp, price FROM master_coin_store
+            WHERE ticker = ? AND timestamp BETWEEN ? AND ?
+            ORDER BY timestamp ASC
+        `).all(
+            trial.ticker,
+            new Date(startMs).toISOString(),
+            new Date(endMs).toISOString()
+        );
+
+        // Bucket into OHLC candles
+        const buckets = new Map();
+        for (const row of rows) {
+            const ms = new Date(row.timestamp).getTime();
+            const bucketMs = Math.floor(ms / intervalMs) * intervalMs;
+            if (!buckets.has(bucketMs)) {
+                buckets.set(bucketMs, { open: row.price, high: row.price, low: row.price, close: row.price, samples: 1 });
+            } else {
+                const b = buckets.get(bucketMs);
+                b.high = Math.max(b.high, row.price);
+                b.low  = Math.min(b.low,  row.price);
+                b.close = row.price;
+                b.samples++;
+            }
+        }
+
+        const candles = Array.from(buckets.entries())
+            .sort(([a], [b]) => a - b)
+            .map(([ts, b]) => ({
+                ts,
+                time: new Date(ts).toISOString(),
+                open: b.open, high: b.high, low: b.low, close: b.close,
+                samples: b.samples,
+                bullish: b.close >= b.open,
+            }));
+
+        const featureSnap = (() => { try { return JSON.parse(trial.feature_snapshot); } catch { return {}; } })();
+        const trig = Number(trial.trigger_price);
+        const lvl  = Number(trial.level_price) || trig;
+
+        const ema = (dist) => dist != null ? trig / (1 + dist / 100) : null;
+
+        res.json({
+            ticker: trial.ticker,
+            direction: trial.direction,
+            trigger_type: trial.trigger_type,
+            level_type: trial.level_type,
+            verdict: trial.verdict,
+            // Price levels for overlay
+            levels: {
+                trigger: trig,
+                smart_level: lvl,
+                ema200_5m:  ema(featureSnap.ema200_5m_dist),
+                ema200_15m: ema(featureSnap.ema200_15m_dist),
+                ema200_1h:  ema(featureSnap.ema200_1h_dist),
+                ema200_4h:  ema(featureSnap.ema200_4h_dist),
+            },
+            // Phase boundaries (ms) for vertical shading
+            phases: {
+                detected_ms:    detectedMs,
+                cooldown_until_ms: trial.cooldown_until ? new Date(trial.cooldown_until).getTime() : null,
+                watch_until_ms:    trial.watch_until    ? new Date(trial.watch_until).getTime()    : null,
+                resolved_ms:       trial.resolved_at    ? new Date(trial.resolved_at).getTime()    : null,
+            },
+            interval_min: intervalMin,
+            candle_count: candles.length,
+            candles,
+        });
+    } catch (e) {
+        console.error('Trial OHLC error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // GET /api/validator/trial/:trialId/timeline — full forensic timeline for click-expand modal.
 // Returns:
 //   trial          : full validation_trials row
