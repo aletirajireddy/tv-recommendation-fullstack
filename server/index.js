@@ -2338,6 +2338,245 @@ const umpire = new UmpireEngine({ io });
 telegramValidator.attach(umpire, TelegramService);
 umpire.start();
 
+// ============================================================================
+// LEVEL REACTION MONITOR — /api/level-reactions
+// ============================================================================
+//
+// For each coin in the latest scan that is within ±maxDist% of a structural
+// level (support or resistance), pulls master_coin_store price history and
+// returns the path normalized as % above/below the level.  Used by the new
+// LevelReactionWidget to draw swim-lane reaction charts.
+//
+// Query params:
+//   window_min  (default 60)  — how far back to pull history (max 360)
+//   interval    (default 5)   — bucket size in minutes (1/5/15/30)
+//   limit       (default 12)  — max coins to return
+//   max_dist    (default 5)   — max % distance from level to qualify
+
+app.get('/api/level-reactions', (req, res) => {
+    try {
+        const windowMin  = Math.min(360, Math.max(15, parseInt(req.query.window_min) || 60));
+        const intervalMin = Math.max(1, Math.min(30, parseInt(req.query.interval) || 5));
+        const limit      = Math.min(20, Math.max(1, parseInt(req.query.limit) || 12));
+        const maxDist    = Math.min(10, Math.max(0.5, parseFloat(req.query.max_dist) || 5));
+
+        // ── 1. Latest scan ──────────────────────────────────────────────────
+        const latestScanRow = db.prepare(
+            'SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1'
+        ).get();
+        if (!latestScanRow) return res.json({ coins: [], window_min: windowMin });
+
+        const scanData  = JSON.parse(latestScanRow.raw_data);
+        const results   = scanData.results || [];
+        const scanTs    = scanData.timestamp || new Date().toISOString();
+
+        // ── 2a. Build smart-level label map from recent Stream C events ────────
+        //  Gives us the real level type (EMA200_5M, FIB_618, DAILY_LOGIC …)
+        //  for coins that have recently fired a webhook.
+        const levelLabelMap = {};  // ticker → { supportLabel, resistLabel }
+        const smLvlRows = db.prepare(`
+            SELECT ticker, raw_data FROM smart_level_events
+            WHERE id IN (SELECT MAX(id) FROM smart_level_events GROUP BY ticker)
+        `).all();
+        smLvlRows.forEach(row => {
+            try {
+                const raw = JSON.parse(row.raw_data);
+                const sl  = raw.smart_levels || {};
+                const e200 = sl.emas_200 || {};
+                const labels = { support: [], resist: [] };
+
+                // EMA200 hierarchy
+                if (e200.m5?.p)  labels.support.push('EMA200_5M');
+                if (e200.m15?.p) labels.support.push('EMA200_15M');
+                if (e200.h1?.p)  labels.support.push('EMA200_1H');
+                if (e200.h4?.p)  labels.support.push('EMA200_4H');
+
+                // Mega spot
+                if (sl.mega_spot?.p)  labels.support.push('MEGA_SPOT');
+
+                // FIBs (resistance side)
+                if (sl.fibs_618?.h1?.p) labels.resist.push('FIB_618');
+
+                // Daily / hourly logic
+                if (sl.daily_logic?.base_res?.p)   labels.resist.push('DAILY_RES');
+                if (sl.daily_logic?.base_supp?.p)  labels.support.push('DAILY_SUPP');
+                if (sl.daily_logic?.neck_res?.p)   labels.resist.push('DAILY_NECK_R');
+                if (sl.hourly_logic?.base_res?.p)  labels.resist.push('HOURLY_RES');
+                if (sl.hourly_logic?.base_supp?.p) labels.support.push('HOURLY_SUPP');
+
+                levelLabelMap[row.ticker] = {
+                    supportLabel: labels.support[0] || null,
+                    resistLabel:  labels.resist[0]  || null,
+                };
+            } catch {}
+        });
+
+        // ── 2b. Compute level proximity for every coin ──────────────────────
+        const candidates = [];
+
+        results.forEach(r => {
+            const d      = r.data || r;
+            const ticker = (d.ticker || r.ticker || '').trim();
+            const close  = parseFloat(d.close || 0);
+            if (!ticker || !close) return;
+
+            // Signed % distance convention:
+            //   positive supportDist  → price is X% ABOVE support (healthy hold)
+            //   negative supportDist  → price is X% BELOW support (broke down)
+            //   positive resistDist   → price is X% BELOW resistance (approaching)
+            //   negative resistDist   → price is X% ABOVE resistance (broke out)
+            const hasLogicS = d.logicSupportDist != null;
+            const hasLogicR = d.logicResistDist  != null;
+            const sDist = parseFloat(hasLogicS ? d.logicSupportDist : (d.supportDist ?? 999));
+            const rDist = parseFloat(hasLogicR ? d.logicResistDist  : (d.resistDist  ?? 999));
+
+            const absS = Math.abs(sDist);
+            const absR = Math.abs(rDist);
+
+            if (absS > maxDist && absR > maxDist) return;
+
+            const smLabels = levelLabelMap[ticker] || {};
+
+            // Pick the level the coin is CLOSEST to (absolute dist)
+            let side, distPct, levelPrice, levelLabel;
+            if (absS <= absR) {
+                side       = 'SUPPORT';
+                distPct    = sDist;
+                levelPrice = close / (1 + distPct / 100);
+                // Label preference: Stream C type → logic vs structural hint
+                levelLabel = smLabels.supportLabel
+                    || (hasLogicS ? 'LOGIC_SUPP' : 'STRUCT_SUPP');
+            } else {
+                side       = 'RESISTANCE';
+                distPct    = rDist;
+                levelPrice = close * (1 + distPct / 100);
+                levelLabel = smLabels.resistLabel
+                    || (hasLogicR ? 'LOGIC_RES' : 'STRUCT_RES');
+            }
+
+            candidates.push({
+                ticker,
+                cleanTicker: (r.cleanTicker || ticker.replace(/USDT\.P$|USDT$/, '')).toUpperCase(),
+                close,
+                side,
+                distPct,
+                absDistPct: Math.min(absS, absR),
+                levelPrice,
+                levelLabel,
+                direction:  d.direction || 'NEUTRAL',
+                netTrend:   parseFloat(d.netTrend || 0),
+                volSpike:   d.volSpike === 1 || d.volSpike === '1' || d.volSpike === true,
+                momScore:   parseFloat(d.momScore || 0),
+                breakout:   d.breakout === 1,
+                sDist, rDist,
+                dailyRange: parseFloat(d.dailyRange || 0),
+            });
+        });
+
+        // Sort closest-to-level first
+        candidates.sort((a, b) => a.absDistPct - b.absDistPct);
+        const topCoins = candidates.slice(0, limit);
+
+        // ── 3. Pull master_coin_store history per coin ──────────────────────
+        const intervalMs = intervalMin * 60 * 1000;
+        const startISO   = new Date(Date.now() - windowMin * 60 * 1000).toISOString();
+
+        const coins = topCoins.map(coin => {
+            const rows = db.prepare(`
+                SELECT timestamp, price
+                FROM master_coin_store
+                WHERE ticker = ? AND timestamp >= ?
+                ORDER BY timestamp ASC
+            `).all(coin.ticker, startISO);
+
+            // Bucket into intervals (use candle close = last price in bucket)
+            const buckets = new Map();
+            for (const row of rows) {
+                const ms  = new Date(row.timestamp).getTime();
+                const key = Math.floor(ms / intervalMs) * intervalMs;
+                const b   = buckets.get(key);
+                if (!b) {
+                    buckets.set(key, { open: row.price, close: row.price, count: 1 });
+                } else {
+                    b.close = row.price;
+                    b.count++;
+                }
+            }
+
+            const history = Array.from(buckets.entries())
+                .sort(([a], [b]) => a - b)
+                .map(([ts, b]) => ({
+                    ts,
+                    price: b.close,
+                    // Normalize: % above/below the level price (0 = exactly at level)
+                    pct: ((b.close - coin.levelPrice) / coin.levelPrice) * 100,
+                }));
+
+            // ── 4. Classify reaction ────────────────────────────────────────
+            let reaction = 'APPROACHING';
+            if (history.length >= 2) {
+                const pcts      = history.map(h => h.pct);
+                const lastPct   = pcts[pcts.length - 1];
+                const firstPct  = pcts[0];
+                const minPct    = Math.min(...pcts);
+                const maxPct    = Math.max(...pcts);
+                const swing     = lastPct - firstPct;
+
+                if (coin.side === 'SUPPORT') {
+                    // distPct < 0 → price already broke below support
+                    if (coin.distPct < -0.8)                          reaction = 'BREAK_BEAR';
+                    else if (minPct < 0.2 && lastPct >  0.3)         reaction = 'BOUNCE';
+                    else if (Math.abs(lastPct) <= 0.5)                reaction = 'TESTING';
+                    else if (lastPct > 0.5 && swing > 0.15)          reaction = 'BOUNCE';
+                    else                                               reaction = 'APPROACHING';
+                } else {
+                    // RESISTANCE
+                    // distPct < 0 → price already broke above resistance
+                    if (coin.distPct < -0.8)                          reaction = 'BREAK_BULL';
+                    else if (maxPct > -0.2 && lastPct < -0.3)        reaction = 'REJECT';
+                    else if (Math.abs(lastPct) <= 0.5)                reaction = 'TESTING';
+                    else if (lastPct < -0.5 && swing < -0.15)        reaction = 'REJECT';
+                    else                                               reaction = 'APPROACHING';
+                }
+            } else if (Math.abs(coin.distPct) <= 0.3) {
+                reaction = 'TESTING';
+            }
+
+            return {
+                ticker:         coin.ticker,
+                cleanTicker:    coin.cleanTicker,
+                close:          coin.close,
+                side:           coin.side,
+                distPct:        coin.distPct,
+                levelPrice:     coin.levelPrice,
+                levelLabel:     coin.levelLabel,
+                direction:      coin.direction,
+                netTrend:       coin.netTrend,
+                volSpike:       coin.volSpike,
+                momScore:       coin.momScore,
+                breakout:       coin.breakout,
+                dailyRange:     coin.dailyRange,
+                sDist:          coin.sDist,
+                rDist:          coin.rDist,
+                reaction,
+                snapshot_count: rows.length,
+                history,
+            };
+        });
+
+        res.json({
+            coins,
+            window_min:   windowMin,
+            interval_min: intervalMin,
+            scan_ts:      scanTs,
+            total_in_scan: results.length,
+        });
+    } catch (e) {
+        console.error('[LevelReactions] error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 V3 Server running on port ${PORT} (All Interfaces)`);

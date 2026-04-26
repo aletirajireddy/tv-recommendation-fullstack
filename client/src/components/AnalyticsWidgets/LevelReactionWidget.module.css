@@ -1,0 +1,341 @@
+/* ─── Widget shell ─────────────────────────────────────────────────────────── */
+.widget {
+    background: #0d1117;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    min-height: 400px;
+    overflow: hidden;
+}
+
+/* ─── Header ───────────────────────────────────────────────────────────────── */
+.header {
+    padding: 12px 14px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    flex-shrink: 0;
+}
+
+.titleRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.titleIcon {
+    font-size: 15px;
+    color: #63b3ed;
+}
+
+.titleText {
+    font-size: 13px;
+    font-weight: 700;
+    color: #e2e8f0;
+    letter-spacing: 0.5px;
+}
+
+.titleSub {
+    font-size: 10px;
+    color: #4a5568;
+    font-weight: 400;
+    letter-spacing: 0.3px;
+}
+
+.refreshBtn {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 5px;
+    color: #718096;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 4px 9px;
+    transition: color 0.15s, background 0.15s;
+}
+.refreshBtn:hover {
+    color: #e2e8f0;
+    background: rgba(255,255,255,0.08);
+}
+
+/* ─── Controls ─────────────────────────────────────────────────────────────── */
+.controlsRow {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.controlGroup {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.controlLabel {
+    font-size: 9px;
+    color: #4a5568;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 2px;
+}
+
+.pill {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 4px;
+    color: #718096;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 3px 8px;
+    transition: all 0.15s;
+}
+.pill:hover {
+    background: rgba(255,255,255,0.08);
+    color: #a0aec0;
+}
+.pillActive {
+    background: rgba(99,179,237,0.15);
+    border-color: rgba(99,179,237,0.4);
+    color: #63b3ed;
+}
+
+.scanAge {
+    font-size: 10px;
+    color: #4a5568;
+    margin-left: auto;
+}
+
+/* ─── Filter row ───────────────────────────────────────────────────────────── */
+.filterRow {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.filterPill {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px;
+    color: #4a5568;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 2px 8px;
+    transition: all 0.15s;
+}
+.filterPill:hover {
+    color: #718096;
+    background: rgba(255,255,255,0.06);
+}
+.filterPillActive {
+    background: rgba(255,255,255,0.07);
+    color: #a0aec0;
+    border-color: rgba(255,255,255,0.15);
+}
+
+/* ─── Body ─────────────────────────────────────────────────────────────────── */
+.body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+}
+
+.lanes {
+    padding: 8px 0;
+}
+
+/* ─── Loading / empty ───────────────────────────────────────────────────────── */
+.loadingState,
+.emptyState,
+.errorState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 220px;
+    color: #4a5568;
+    font-size: 13px;
+}
+.errorState { color: #fc8181; }
+
+.spinner {
+    width: 22px;
+    height: 22px;
+    border: 2px solid rgba(255,255,255,0.08);
+    border-top-color: #63b3ed;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── Individual lane ───────────────────────────────────────────────────────── */
+.lane {
+    border-left: 3px solid transparent;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    padding: 8px 14px 6px 12px;
+    transition: background 0.15s;
+}
+.lane:hover {
+    background: rgba(255,255,255,0.015);
+}
+
+/* Lane header */
+.laneHeader {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 5px;
+    flex-wrap: wrap;
+}
+
+.laneLeft {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex: 0 0 auto;
+}
+
+.laneTicker {
+    font-size: 12px;
+    font-weight: 700;
+    color: #e2e8f0;
+    white-space: nowrap;
+}
+
+.laneSide {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+}
+
+.laneLevel {
+    font-size: 10px;
+    color: #718096;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.laneCenter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.lanePrice {
+    font-size: 11px;
+    color: #a0aec0;
+    font-variant-numeric: tabular-nums;
+}
+
+.laneDist {
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.laneDir {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.laneRight {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.volBadge {
+    font-size: 9px;
+    font-weight: 700;
+    color: #f6ad55;
+    background: rgba(246,173,85,0.12);
+    border: 1px solid rgba(246,173,85,0.3);
+    border-radius: 3px;
+    padding: 1px 5px;
+    letter-spacing: 0.5px;
+}
+
+.reactionBadge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid;
+    white-space: nowrap;
+}
+
+.snapshotCount {
+    font-size: 9px;
+    color: #4a5568;
+}
+
+.laneTrend {
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+}
+
+/* Lane chart */
+.laneChart {
+    height: 90px;
+    position: relative;
+}
+
+.laneLoading,
+.laneEmpty {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: 10px;
+    color: #4a5568;
+    background: rgba(255,255,255,0.01);
+    border-radius: 4px;
+    border: 1px dashed rgba(255,255,255,0.05);
+}
+
+/* ─── Legend ───────────────────────────────────────────────────────────────── */
+.legend {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    flex-wrap: wrap;
+    flex-shrink: 0;
+    background: rgba(255,255,255,0.01);
+}
+
+.legendItem {
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.legendSep {
+    width: 1px;
+    height: 12px;
+    background: rgba(255,255,255,0.08);
+}
