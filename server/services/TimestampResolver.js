@@ -118,7 +118,7 @@ function computePayloadHash(payload) {
  * Resolve canonical timestamp.
  *
  * @param {Object} args
- * @param {'STREAM_A'|'STREAM_B'|'STREAM_C'} args.stream
+ * @param {'STREAM_A'|'STREAM_B'|'STREAM_C'|'STREAM_D'} args.stream
  * @param {'WEBHOOK'|'EMAIL'|'SCAN_A'|'SCOUT_B'} args.source - Ingestion provenance
  * @param {Object} args.payload - The raw payload
  * @param {number} [args.emailReceivedMs] - Required when source='EMAIL' (Gmail internalDate)
@@ -127,8 +127,10 @@ function computePayloadHash(payload) {
 function resolve({ stream, source, payload, emailReceivedMs }) {
     const safe = (iso, reason) => ({ timestampISO: iso, source, reason });
 
-    // Stream A / B: trust payload.timestamp (browser truth).
-    if (stream === 'STREAM_A' || stream === 'STREAM_B') {
+    // Stream A / B / D: trust payload.timestamp (browser Tampermonkey = ground truth).
+    // Stream D is a Tampermonkey screener running in the browser — its timestamp
+    // reflects when the screen was read, which IS the authoritative data time.
+    if (stream === 'STREAM_A' || stream === 'STREAM_B' || stream === 'STREAM_D') {
         if (payload && payload.timestamp) {
             const t = new Date(payload.timestamp);
             if (!isNaN(t.getTime())) {

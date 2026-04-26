@@ -714,30 +714,104 @@ app.post('/api/market-context', (req, res) => {
     }
 });
 
-// 3D. TECHNICAL WATCHLIST (Stream D)
+// ============================================================================
+// STREAM D — TECHNICAL WATCHLIST (Tampermonkey → TradingView CEX Screener)
+// ============================================================================
+
+// POST /api/stream-d/technicals — ingest a full scan from the screener
 app.post('/api/stream-d/technicals', (req, res) => {
     try {
         const payload = req.body;
         const timestamp = payload.timestamp || new Date().toISOString();
 
-        if (payload.results && Array.isArray(payload.results)) {
-            setImmediate(() => {
-                payload.results.forEach(item => {
-                    const data = item.data || {};
-                    const ticker = item.ticker;
-                    const price = data.close || 0;
-                    
-                    MasterStoreService.ingestStreamD(ticker, data, price, {
-                        timestampISO: timestamp,
-                        ingestionSource: 'WATCHLIST_TECHNICALS'
-                    }).catch(err => console.error(`[Stream D] Ingest Error:`, err));
-                });
-            });
+        if (!payload.results || !Array.isArray(payload.results)) {
+            return res.status(400).json({ error: 'results array required' });
         }
 
-        res.json({ success: true, message: "Stream D Data Accepted" });
+        // Non-blocking: process after response is sent
+        setImmediate(() => {
+            let ingested = 0, skipped = 0;
+            payload.results.forEach(item => {
+                const data   = item.data || {};
+                const ticker = (item.ticker || data.ticker || '').trim();
+                const price  = parseFloat(data.close || data.price || 0);
+                if (!ticker) { skipped++; return; }
+
+                MasterStoreService.ingestStreamD(ticker, data, price, {
+                    timestampISO:    timestamp,
+                    ingestionSource: 'WATCHLIST_TECHNICALS',
+                }).then(() => ingested++)
+                  .catch(err => console.error(`[Stream D] ${ticker} ingest error:`, err.message));
+            });
+            console.log(`[Stream D] 📡 Scan processed: ${payload.results.length} coins | ts=${timestamp}`);
+        });
+
+        res.json({ success: true, accepted: payload.results.length });
     } catch (e) {
-        console.error("Stream D Ingest Error:", e);
+        console.error('[Stream D] Ingest Error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/stream-d/schema — dynamically discover all field names from stored data.
+// Frontend uses this to render technical chips without hardcoded column names.
+app.get('/api/stream-d/schema', (req, res) => {
+    try {
+        const fields = MasterStoreService.getStreamDSchema();
+        // Also return one sample row so the frontend can see real values
+        const sampleRow = db.prepare(
+            `SELECT ticker, stream_d_state, timestamp FROM master_coin_store
+             WHERE stream_d_state IS NOT NULL AND trigger_source = 'STREAM_D'
+             ORDER BY timestamp DESC LIMIT 1`
+        ).get();
+        const sample = sampleRow
+            ? { ticker: sampleRow.ticker, ts: sampleRow.timestamp, data: JSON.parse(sampleRow.stream_d_state) }
+            : null;
+
+        res.json({ fields, sample, field_count: fields.length });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/stream-d/latest — latest technical snapshot per ticker.
+// Returns all tickers that have Stream D data, with their most recent values.
+// Supports ?tickers=BTC,ETH,SOL to filter to specific coins.
+app.get('/api/stream-d/latest', (req, res) => {
+    try {
+        const filterTickers = req.query.tickers
+            ? req.query.tickers.split(',').map(t => t.trim().toUpperCase()).filter(Boolean)
+            : null;
+
+        // Get latest STREAM_D snapshot per ticker using GROUP BY
+        const rows = db.prepare(`
+            SELECT ticker, stream_d_state, timestamp
+            FROM master_coin_store
+            WHERE trigger_source = 'STREAM_D' AND stream_d_state IS NOT NULL
+              AND id IN (
+                SELECT MAX(id) FROM master_coin_store
+                WHERE trigger_source = 'STREAM_D' AND stream_d_state IS NOT NULL
+                GROUP BY ticker
+              )
+            ORDER BY timestamp DESC
+        `).all();
+
+        const result = {};
+        for (const row of rows) {
+            const cleanTicker = row.ticker.replace(/USDT\.P$|USDT$/, '').toUpperCase();
+            if (filterTickers && !filterTickers.includes(cleanTicker) && !filterTickers.includes(row.ticker)) continue;
+            try {
+                result[row.ticker] = {
+                    cleanTicker,
+                    ts:   row.timestamp,
+                    data: JSON.parse(row.stream_d_state),
+                };
+            } catch {}
+        }
+
+        res.json({ tickers: result, count: Object.keys(result).length });
+    } catch (e) {
+        console.error('[Stream D] latest error:', e);
         res.status(500).json({ error: e.message });
     }
 });
@@ -2570,6 +2644,9 @@ app.get('/api/level-reactions', (req, res) => {
                 reaction = 'TESTING';
             }
 
+            // ── 5. Attach latest Stream D snapshot (RSI / EMA / ATR / RelVol) ──────
+            const streamD = MasterStoreService.getLatestStreamD(coin.ticker);
+
             return {
                 ticker:         coin.ticker,
                 cleanTicker:    coin.cleanTicker,
@@ -2589,6 +2666,7 @@ app.get('/api/level-reactions', (req, res) => {
                 reaction,
                 snapshot_count: rows.length,
                 history,
+                stream_d:       streamD ? { data: streamD.data, ts: streamD.ts } : null,
             };
         });
 

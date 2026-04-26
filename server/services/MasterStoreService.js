@@ -186,13 +186,31 @@ class MasterStoreService {
     }
 
     /**
-     * Stream D: Technical Watchlist Scanner.
+     * Stream D: Technical Watchlist Scanner (Tampermonkey → TradingView CEX Screener).
+     *
+     * DEDUP POLICY: Stream D is a regular time-series feed (every 2 min).
+     * Technical indicator values change slowly — a content hash would deduplicate
+     * consecutive scans with identical RSI/EMA values, creating gaps.
+     * Instead we use a (ticker, 2-min-bucket) dedup key so we store exactly one
+     * snapshot per coin per scan cycle regardless of value changes.
      */
     async ingestStreamD(ticker, data, price, opts = {}) {
         const resolved = opts.timestampISO
             ? { timestampISO: opts.timestampISO }
             : TimestampResolver.resolve({ stream: 'STREAM_D', source: 'WATCHLIST_TECHNICALS', payload: data });
-        const payloadHash = TimestampResolver.computePayloadHash({ ticker, price, ...data });
+
+        // Bucket-based dedup: one row per (ticker, 2-min window).
+        // This replaces content-hash dedup which would skip unchanged indicator snapshots.
+        const tsBucketMs = Math.floor(new Date(resolved.timestampISO).getTime() / (2 * 60 * 1000)) * (2 * 60 * 1000);
+        const bucketISO  = new Date(tsBucketMs).toISOString();
+        const existing   = db.prepare(
+            `SELECT snapshot_id FROM master_coin_store
+             WHERE ticker = ? AND trigger_source = 'STREAM_D'
+             AND timestamp >= ? AND timestamp < datetime(?, '+2 minutes')
+             LIMIT 1`
+        ).get(ticker, bucketISO, bucketISO);
+        if (existing) return; // already have a D-snapshot for this 2-min window
+
         this._mergeAndSave({
             ticker,
             source: 'STREAM_D',
@@ -201,8 +219,44 @@ class MasterStoreService {
             price,
             resolvedTimestampISO: resolved.timestampISO,
             ingestionSource: opts.ingestionSource || 'WATCHLIST_TECHNICALS',
-            payloadHash,
+            payloadHash: null, // no content dedup — bucket dedup above handles it
         });
+    }
+
+    /**
+     * Return the latest stream_d_state for a given ticker.
+     * Used by API endpoints to attach technical context to coin data.
+     */
+    getLatestStreamD(ticker) {
+        const row = db.prepare(
+            `SELECT stream_d_state, timestamp FROM master_coin_store
+             WHERE ticker = ? AND stream_d_state IS NOT NULL AND trigger_source = 'STREAM_D'
+             ORDER BY timestamp DESC LIMIT 1`
+        ).get(ticker);
+        if (!row) return null;
+        try {
+            return { data: JSON.parse(row.stream_d_state), ts: row.timestamp };
+        } catch { return null; }
+    }
+
+    /**
+     * Discover all field names present in stream_d_state across all tickers.
+     * Returns a sorted, deduplicated list — used by frontend for dynamic rendering.
+     */
+    getStreamDSchema() {
+        const rows = db.prepare(
+            `SELECT stream_d_state FROM master_coin_store
+             WHERE stream_d_state IS NOT NULL AND trigger_source = 'STREAM_D'
+             ORDER BY timestamp DESC LIMIT 50`
+        ).all();
+        const fieldSet = new Set();
+        for (const row of rows) {
+            try {
+                const d = JSON.parse(row.stream_d_state);
+                Object.keys(d).forEach(k => fieldSet.add(k));
+            } catch {}
+        }
+        return Array.from(fieldSet).sort();
     }
 
     _runPruneEngine() {

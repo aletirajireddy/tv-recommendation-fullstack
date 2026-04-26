@@ -26,6 +26,156 @@ function timeAgo(isoStr) {
     return `${Math.floor(s / 3600)}h ago`;
 }
 
+// ─── Stream D chip helpers ───────────────────────────────────────────────────
+
+/**
+ * Returns { color, bg, label } for a known Stream D field and its value.
+ * RSI zones, EMA proximity, ATR, RelVol — all colour-coded by significance.
+ */
+function streamDChipStyle(key, value) {
+    const k = key.toLowerCase();
+    const v = parseFloat(value);
+    if (isNaN(v)) return null;
+
+    // RSI fields: rsi14_5m, rsi14_15m, rsi14_1h, rsi14_4h …
+    if (k.includes('rsi')) {
+        if (v <= 30)      return { color: '#68d391', bg: 'rgba(104,211,145,0.15)', label: `RSI ${v.toFixed(0)}` };
+        if (v <= 45)      return { color: '#9ae6b4', bg: 'rgba(154,230,180,0.10)', label: `RSI ${v.toFixed(0)}` };
+        if (v <= 55)      return { color: '#a0aec0', bg: 'rgba(160,174,192,0.08)', label: `RSI ${v.toFixed(0)}` };
+        if (v <= 70)      return { color: '#fbb6a2', bg: 'rgba(251,182,162,0.10)', label: `RSI ${v.toFixed(0)}` };
+        return             { color: '#fc8181', bg: 'rgba(252,129,129,0.15)', label: `RSI ${v.toFixed(0)}` };
+    }
+
+    // Relative volume: relVol, rel_volume, relativeVolume …
+    if (k.includes('relvol') || k.includes('rel_vol') || k.includes('relativevol')) {
+        if (v >= 2.5)     return { color: '#f6ad55', bg: 'rgba(246,173,85,0.15)',  label: `RVol ${v.toFixed(1)}×` };
+        if (v >= 1.5)     return { color: '#fefcbf', bg: 'rgba(254,252,191,0.10)', label: `RVol ${v.toFixed(1)}×` };
+        return             { color: '#718096', bg: 'rgba(113,128,150,0.08)',         label: `RVol ${v.toFixed(1)}×` };
+    }
+
+    // ATR / volatility
+    if (k.includes('atr') || k.includes('volatility')) {
+        if (v >= 5)       return { color: '#f6ad55', bg: 'rgba(246,173,85,0.12)',  label: `ATR ${v.toFixed(1)}%` };
+        if (v >= 2)       return { color: '#fefcbf', bg: 'rgba(254,252,191,0.08)', label: `ATR ${v.toFixed(1)}%` };
+        return             { color: '#718096', bg: 'rgba(113,128,150,0.07)',         label: `ATR ${v.toFixed(1)}%` };
+    }
+
+    // EMA200 distance (ema200dist_5m, ema200_5m_dist …)
+    if (k.includes('ema') && (k.includes('dist') || k.includes('200'))) {
+        const sign = v >= 0 ? '+' : '';
+        if (Math.abs(v) <= 1)  return { color: '#63b3ed', bg: 'rgba(99,179,237,0.12)', label: `EMA ${sign}${v.toFixed(1)}%` };
+        if (v < -2)             return { color: '#fc8181', bg: 'rgba(252,129,129,0.10)', label: `EMA ${sign}${v.toFixed(1)}%` };
+        if (v > 3)              return { color: '#68d391', bg: 'rgba(104,211,145,0.10)', label: `EMA ${sign}${v.toFixed(1)}%` };
+        return                  { color: '#a0aec0', bg: 'rgba(160,174,192,0.07)',         label: `EMA ${sign}${v.toFixed(1)}%` };
+    }
+
+    return null; // unknown / not renderable as chip
+}
+
+/**
+ * Pick the most meaningful Stream D fields to surface as chips.
+ * Priority: RSI, RelVol, ATR/Volatility, EMA200 distance.
+ * Handles both multi-TF keys (rsi14_5m) and single-TF keys (rsi_14, relVolume, ema_200).
+ * Returns max 4 chips to keep the lane header compact.
+ */
+function pickStreamDChips(data, schema) {
+    if (!data || !schema?.length) return [];
+
+    const chips = [];
+    const kl = k => k.toLowerCase();
+
+    // 1. RSI — prefer multi-TF keys by shortest timeframe, else fall back to any RSI key
+    const TF_PRIORITY = ['_5m', '5m', '_15m', '15m', '_1h', '1h', '_4h', '4h'];
+    let rsiAdded = false;
+    for (const tf of TF_PRIORITY) {
+        const key = schema.find(k => kl(k).includes('rsi') && kl(k).endsWith(tf));
+        if (key && data[key] != null) {
+            const s = streamDChipStyle(key, data[key]);
+            if (s) { chips.push({ key, ...s }); rsiAdded = true; break; }
+        }
+    }
+    if (!rsiAdded) {
+        // Fallback: any key that contains 'rsi' (handles rsi_14, rsi14, RSI(14), etc.)
+        const rsiKey = schema.find(k => kl(k).includes('rsi'));
+        if (rsiKey && data[rsiKey] != null) {
+            const s = streamDChipStyle(rsiKey, data[rsiKey]);
+            if (s) chips.push({ key: rsiKey, ...s });
+        }
+    }
+
+    // 2. Relative Volume — matches relVolume, rel_volume, relVol, relativevolume
+    const rvolKey = schema.find(k =>
+        kl(k).includes('relvol') ||
+        kl(k).includes('rel_vol') ||
+        kl(k).includes('relativevol')
+    );
+    if (rvolKey && data[rvolKey] != null) {
+        const s = streamDChipStyle(rvolKey, data[rvolKey]);
+        if (s) chips.push({ key: rvolKey, ...s });
+    }
+
+    // 3. ATR % or Volatility (prefer ATR, fall back to volatility)
+    const atrKey = schema.find(k => kl(k).includes('atr'))
+                || schema.find(k => kl(k).includes('volatility'));
+    if (atrKey && data[atrKey] != null) {
+        const s = streamDChipStyle(atrKey, data[atrKey]);
+        if (s) chips.push({ key: atrKey, ...s });
+    }
+
+    // 4. EMA200 distance — supports absolute ema_200 price (compute % from close)
+    //    OR pre-computed dist fields (ema200dist_5m, ema200_5m_dist, etc.)
+    if (chips.length < 4) {
+        // Check for pre-computed dist key first
+        const emaDistKey = schema.find(k => kl(k).includes('ema') && kl(k).includes('dist'));
+        if (emaDistKey && data[emaDistKey] != null) {
+            const s = streamDChipStyle(emaDistKey, data[emaDistKey]);
+            if (s) chips.push({ key: emaDistKey, ...s });
+        } else {
+            // Compute from absolute ema_200 / ema200 price and close
+            const emaAbsKey = schema.find(k => kl(k) === 'ema_200' || kl(k) === 'ema200' || (kl(k).includes('ema') && kl(k).includes('200')));
+            if (emaAbsKey && data[emaAbsKey] != null) {
+                const emaPrice  = parseFloat(data[emaAbsKey]);
+                const closePrice = parseFloat(data.close || data.price || 0);
+                if (!isNaN(emaPrice) && emaPrice > 0 && closePrice > 0) {
+                    const pct  = ((closePrice - emaPrice) / emaPrice) * 100;
+                    const sign = pct >= 0 ? '+' : '';
+                    let color, bg;
+                    if (Math.abs(pct) <= 1)  { color = '#63b3ed'; bg = 'rgba(99,179,237,0.12)'; }
+                    else if (pct < -2)        { color = '#fc8181'; bg = 'rgba(252,129,129,0.10)'; }
+                    else if (pct > 3)         { color = '#68d391'; bg = 'rgba(104,211,145,0.10)'; }
+                    else                      { color = '#a0aec0'; bg = 'rgba(160,174,192,0.07)'; }
+                    chips.push({ key: emaAbsKey, color, bg, label: `E200 ${sign}${pct.toFixed(1)}%` });
+                }
+            }
+        }
+    }
+
+    return chips.slice(0, 4);
+}
+
+// ─── Stream D chips component ────────────────────────────────────────────────
+
+function StreamDChips({ streamD, schema }) {
+    if (!streamD?.data || !schema?.length) return null;
+    const chips = pickStreamDChips(streamD.data, schema);
+    if (!chips.length) return null;
+
+    return (
+        <div className={styles.streamDChips} title={`Stream D · ${timeAgo(streamD.ts)}`}>
+            {chips.map(chip => (
+                <span
+                    key={chip.key}
+                    className={styles.streamDChip}
+                    style={{ color: chip.color, background: chip.bg, borderColor: chip.color + '40' }}
+                >
+                    {chip.label}
+                </span>
+            ))}
+            <span className={styles.streamDAge}>{timeAgo(streamD.ts)}</span>
+        </div>
+    );
+}
+
 // ─── Reaction meta ──────────────────────────────────────────────────────────
 
 const REACTION_META = {
@@ -75,7 +225,7 @@ function LaneTooltip({ active, payload, coin }) {
 
 // ─── Single swim lane ────────────────────────────────────────────────────────
 
-function ReactionLane({ coin, windowMin, loading }) {
+function ReactionLane({ coin, windowMin, loading, schema }) {
     const meta     = REACTION_META[coin.reaction]   || REACTION_META.APPROACHING;
     const sideCol  = SIDE_COLOR[coin.side]          || SIDE_COLOR.SUPPORT;
     const isSupport = coin.side === 'SUPPORT';
@@ -142,6 +292,8 @@ function ReactionLane({ coin, windowMin, loading }) {
                 </div>
 
                 <div className={styles.laneRight}>
+                    {/* Stream D technical chips — dynamic from schema */}
+                    <StreamDChips streamD={coin.stream_d} schema={schema} />
                     {coin.volSpike && (
                         <span className={styles.volBadge}>VOL</span>
                     )}
@@ -254,7 +406,16 @@ export function LevelReactionWidget() {
     const [maxDist,     setMaxDist]     = useState(5);
     const [filterSide,  setFilterSide]  = useState('ALL'); // ALL / SUPPORT / RESISTANCE
     const [filterReact, setFilterReact] = useState('ALL'); // ALL / BOUNCE / REJECT / TESTING / BREAK
+    const [streamDSchema, setStreamDSchema] = useState([]);
     const pollRef = useRef(null);
+
+    // Fetch Stream D schema once on mount (dynamic field discovery)
+    useEffect(() => {
+        fetch('/api/stream-d/schema')
+            .then(r => r.json())
+            .then(d => { if (d.fields?.length) setStreamDSchema(d.fields); })
+            .catch(() => {}); // non-critical — chips just won't render
+    }, []);
 
     const load = useCallback(async (wMin = windowMin, iMin = intervalMin, mDist = maxDist) => {
         setLoading(true);
@@ -425,6 +586,7 @@ export function LevelReactionWidget() {
                                 coin={coin}
                                 windowMin={windowMin}
                                 loading={false}
+                                schema={streamDSchema}
                             />
                         ))}
                     </div>

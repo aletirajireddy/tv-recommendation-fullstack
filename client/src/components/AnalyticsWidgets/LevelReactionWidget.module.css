@@ -339,3 +339,29 @@
     height: 12px;
     background: rgba(255,255,255,0.08);
 }
+
+/* ─── Stream D technical chips ──────────────────────────────────────────────── */
+.streamDChips {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.streamDChip {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.2px;
+}
+
+.streamDAge {
+    font-size: 8px;
+    color: #4a5568;
+    margin-left: 2px;
+    white-space: nowrap;
+}
