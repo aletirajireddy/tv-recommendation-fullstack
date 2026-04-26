@@ -714,6 +714,34 @@ app.post('/api/market-context', (req, res) => {
     }
 });
 
+// 3D. TECHNICAL WATCHLIST (Stream D)
+app.post('/api/stream-d/technicals', (req, res) => {
+    try {
+        const payload = req.body;
+        const timestamp = payload.timestamp || new Date().toISOString();
+
+        if (payload.results && Array.isArray(payload.results)) {
+            setImmediate(() => {
+                payload.results.forEach(item => {
+                    const data = item.data || {};
+                    const ticker = item.ticker;
+                    const price = data.close || 0;
+                    
+                    MasterStoreService.ingestStreamD(ticker, data, price, {
+                        timestampISO: timestamp,
+                        ingestionSource: 'WATCHLIST_TECHNICALS'
+                    }).catch(err => console.error(`[Stream D] Ingest Error:`, err));
+                });
+            });
+        }
+
+        res.json({ success: true, message: "Stream D Data Accepted" });
+    } catch (e) {
+        console.error("Stream D Ingest Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // 3C. PARTICIPATION PULSE (Analytics for Scout Screener)
 app.get('/api/analytics/participation-pulse', (req, res) => {
     try {

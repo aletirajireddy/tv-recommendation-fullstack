@@ -288,6 +288,7 @@ db.exec(`
         stream_a_state JSON,
         stream_b_state JSON,
         stream_c_state JSON,
+        stream_d_state JSON,
         
         -- Unified Full Context
         merged_state JSON NOT NULL
@@ -323,6 +324,7 @@ _safeAddColumn('institutional_interest_events', 'payload_hash TEXT', 'payload_ha
 _safeAddColumn('institutional_interest_events', "ingestion_source TEXT DEFAULT 'WEBHOOK'", 'ingestion_source');
 _safeAddColumn('master_coin_store', 'payload_hash TEXT', 'payload_hash');
 _safeAddColumn('master_coin_store', "ingestion_source TEXT DEFAULT 'WEBHOOK'", 'ingestion_source');
+_safeAddColumn('master_coin_store', 'stream_d_state JSON', 'stream_d_state');
 
 // Ghost approval enrichment columns (Q5 — regime-aware confidence scoring)
 _safeAddColumn('ghost_approval_queue', 'confidence_score REAL', 'confidence_score');

@@ -26,7 +26,7 @@ class MasterStoreService {
      */
     _getStateAsOf(ticker, asOfISO) {
         const stmt = db.prepare(`
-            SELECT stream_a_state, stream_b_state, stream_c_state
+            SELECT stream_a_state, stream_b_state, stream_c_state, stream_d_state
             FROM master_coin_store
             WHERE ticker = ? AND timestamp <= ?
             ORDER BY timestamp DESC
@@ -35,7 +35,8 @@ class MasterStoreService {
         return stmt.get(ticker, asOfISO) || {
             stream_a_state: null,
             stream_b_state: null,
-            stream_c_state: null
+            stream_c_state: null,
+            stream_d_state: null
         };
     }
 
@@ -56,10 +57,12 @@ class MasterStoreService {
             const stateA = lastState.stream_a_state ? JSON.parse(lastState.stream_a_state) : {};
             const stateB = lastState.stream_b_state ? JSON.parse(lastState.stream_b_state) : {};
             const stateC = lastState.stream_c_state ? JSON.parse(lastState.stream_c_state) : {};
+            const stateD = lastState.stream_d_state ? JSON.parse(lastState.stream_d_state) : {};
 
             const finalStateA = sliceKey === 'A' ? sliceData : stateA;
             const finalStateB = sliceKey === 'B' ? sliceData : stateB;
             const finalStateC = sliceKey === 'C' ? sliceData : stateC;
+            const finalStateD = sliceKey === 'D' ? sliceData : stateD;
 
             const mergedState = {
                 ticker,
@@ -69,15 +72,16 @@ class MasterStoreService {
                 ingestion_source: ingestionSource,
                 stream_a: finalStateA,
                 stream_b: finalStateB,
-                stream_c: finalStateC
+                stream_c: finalStateC,
+                stream_d: finalStateD
             };
 
             const stmt = db.prepare(`
                 INSERT INTO master_coin_store (
                     snapshot_id, ticker, timestamp, trigger_source, price,
-                    stream_a_state, stream_b_state, stream_c_state, merged_state,
+                    stream_a_state, stream_b_state, stream_c_state, stream_d_state, merged_state,
                     payload_hash, ingestion_source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
             stmt.run(
@@ -89,6 +93,7 @@ class MasterStoreService {
                 JSON.stringify(finalStateA),
                 JSON.stringify(finalStateB),
                 JSON.stringify(finalStateC),
+                JSON.stringify(finalStateD),
                 JSON.stringify(mergedState),
                 payloadHash || null,
                 ingestionSource || 'WEBHOOK'
@@ -176,6 +181,26 @@ class MasterStoreService {
             price,
             resolvedTimestampISO: resolved.timestampISO,
             ingestionSource: opts.ingestionSource || 'WEBHOOK',
+            payloadHash,
+        });
+    }
+
+    /**
+     * Stream D: Technical Watchlist Scanner.
+     */
+    async ingestStreamD(ticker, data, price, opts = {}) {
+        const resolved = opts.timestampISO
+            ? { timestampISO: opts.timestampISO }
+            : TimestampResolver.resolve({ stream: 'STREAM_D', source: 'WATCHLIST_TECHNICALS', payload: data });
+        const payloadHash = TimestampResolver.computePayloadHash({ ticker, price, ...data });
+        this._mergeAndSave({
+            ticker,
+            source: 'STREAM_D',
+            sliceKey: 'D',
+            sliceData: data,
+            price,
+            resolvedTimestampISO: resolved.timestampISO,
+            ingestionSource: opts.ingestionSource || 'WATCHLIST_TECHNICALS',
             payloadHash,
         });
     }
