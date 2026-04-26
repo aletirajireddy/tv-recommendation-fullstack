@@ -783,17 +783,19 @@ app.get('/api/stream-d/latest', (req, res) => {
             ? req.query.tickers.split(',').map(t => t.trim().toUpperCase()).filter(Boolean)
             : null;
 
-        // Get latest STREAM_D snapshot per ticker using GROUP BY
+        // Get latest STREAM_D snapshot per ticker — table uses snapshot_id (TEXT PK),
+        // not an integer id, so we group by ticker on MAX(timestamp).
         const rows = db.prepare(`
-            SELECT ticker, stream_d_state, timestamp
-            FROM master_coin_store
-            WHERE trigger_source = 'STREAM_D' AND stream_d_state IS NOT NULL
-              AND id IN (
-                SELECT MAX(id) FROM master_coin_store
+            SELECT m.ticker, m.stream_d_state, m.timestamp
+            FROM master_coin_store m
+            INNER JOIN (
+                SELECT ticker, MAX(timestamp) AS max_ts
+                FROM master_coin_store
                 WHERE trigger_source = 'STREAM_D' AND stream_d_state IS NOT NULL
                 GROUP BY ticker
-              )
-            ORDER BY timestamp DESC
+            ) latest ON m.ticker = latest.ticker AND m.timestamp = latest.max_ts
+            WHERE m.trigger_source = 'STREAM_D' AND m.stream_d_state IS NOT NULL
+            ORDER BY m.timestamp DESC
         `).all();
 
         const result = {};
@@ -812,6 +814,41 @@ app.get('/api/stream-d/latest', (req, res) => {
         res.json({ tickers: result, count: Object.keys(result).length });
     } catch (e) {
         console.error('[Stream D] latest error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ============================================================================
+// EMA200 STACK + SOURCE HEALTH — foundation endpoints for cascade widgets
+// ============================================================================
+
+// GET /api/ema-stack?ticker=BTC[&asOf=ISO]
+//   Returns merged EMA200 ladder for a ticker:
+//     m1   ← Stream D
+//     m5/m15/h1/h4 ← Stream C → Stream A (most recent wins)
+//   Each TF entry: { price, source, ts, ageMs, stale }
+app.get('/api/ema-stack', (req, res) => {
+    try {
+        const ticker = (req.query.ticker || '').trim();
+        if (!ticker) return res.status(400).json({ error: 'ticker required' });
+        const asOf = req.query.asOf || null;
+        res.json(MasterStoreService.getEMA200Stack(ticker, asOf));
+    } catch (e) {
+        console.error('[EMA Stack] error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/source-health[?ticker=BTC]
+//   Returns last-seen timestamps + staleness per ingestion stream. Used by
+//   widget headers to show "A: 0:42 ago · C: 12m ago · D: 1:58 ago" rows.
+app.get('/api/source-health', (req, res) => {
+    try {
+        const ticker = req.query.ticker ? req.query.ticker.trim() : null;
+        const heartbeats = MasterStoreService.getSourceHeartbeats(ticker);
+        res.json({ ticker: ticker || null, heartbeats, now: new Date().toISOString() });
+    } catch (e) {
+        console.error('[Source Health] error:', e);
         res.status(500).json({ error: e.message });
     }
 });
