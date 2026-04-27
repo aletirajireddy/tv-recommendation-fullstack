@@ -1,0 +1,277 @@
+/* ─── Widget shell ─────────────────────────────────────────────────────────── */
+.widget {
+    background: #0d1117;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    min-height: 520px;
+    overflow: hidden;
+}
+
+/* ─── Header ───────────────────────────────────────────────────────────────── */
+.header {
+    padding: 12px 14px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    flex-shrink: 0;
+}
+.titleRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.title { display: flex; align-items: center; gap: 8px; }
+.titleIcon { font-size: 15px; color: #f6ad55; }
+.titleText {
+    font-size: 13px;
+    font-weight: 700;
+    color: #e2e8f0;
+    letter-spacing: 0.5px;
+}
+.titleSub {
+    font-size: 10px;
+    color: #4a5568;
+    font-weight: 400;
+    letter-spacing: 0.3px;
+}
+.refreshBtn {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 5px;
+    color: #718096;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 4px 9px;
+    transition: color 0.15s, background 0.15s;
+}
+.refreshBtn:hover {
+    color: #e2e8f0;
+    background: rgba(255,255,255,0.08);
+}
+
+/* ─── Controls ─────────────────────────────────────────────────────────────── */
+.controlsRow {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.controlGroup {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.controlLabel {
+    font-size: 9px;
+    color: #4a5568;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 2px;
+}
+.tickerInput {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    color: #e2e8f0;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 8px;
+    width: 110px;
+    letter-spacing: 0.5px;
+}
+.tickerInput:focus {
+    outline: none;
+    border-color: rgba(99,179,237,0.5);
+}
+.pill {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 4px;
+    color: #718096;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 3px 8px;
+    transition: all 0.15s;
+}
+.pill:hover {
+    background: rgba(255,255,255,0.08);
+    color: #a0aec0;
+}
+.pillActive {
+    background: rgba(246,173,85,0.15);
+    border-color: rgba(246,173,85,0.4);
+    color: #f6ad55;
+}
+
+/* ─── State strip (regime + defense + last break) ─────────────────────────── */
+.stateStrip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 8px 14px;
+    background: rgba(255,255,255,0.015);
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    flex-shrink: 0;
+}
+.stateChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid;
+    letter-spacing: 0.5px;
+}
+.regimeBull { color: #68d391; background: rgba(104,211,145,0.10); border-color: rgba(104,211,145,0.3); }
+.regimeBear { color: #fc8181; background: rgba(252,129,129,0.10); border-color: rgba(252,129,129,0.3); }
+.regimeMixed { color: #fbd38d; background: rgba(251,211,141,0.10); border-color: rgba(251,211,141,0.3); }
+.stateLabel { font-size: 9px; color: #4a5568; text-transform: uppercase; letter-spacing: 0.5px; }
+.stateValue { font-size: 11px; color: #e2e8f0; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ─── Source health row ─────────────────────────────────────────────────────── */
+.healthRow {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-left: auto;
+}
+.healthChip {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.3px;
+}
+.healthOk { color: #68d391; background: rgba(104,211,145,0.08); border-color: rgba(104,211,145,0.25); }
+.healthStale { color: #fc8181; background: rgba(252,129,129,0.08); border-color: rgba(252,129,129,0.3); }
+.healthMissing { color: #4a5568; background: rgba(255,255,255,0.02); border-color: rgba(255,255,255,0.06); }
+
+/* ─── Body ─────────────────────────────────────────────────────────────────── */
+.body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.chartArea {
+    flex: 1;
+    min-height: 280px;
+    padding: 8px 4px 0 0;
+}
+
+/* ─── Cascade ladder ─────────────────────────────────────────────────────── */
+.ladderRow {
+    display: flex;
+    gap: 6px;
+    padding: 8px 14px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+    flex-wrap: wrap;
+}
+.tfBadge {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    border: 1px solid;
+    min-width: 78px;
+}
+.tfTop {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+}
+.tfLabel { font-size: 10px; font-weight: 700; letter-spacing: 0.4px; }
+.tfState {
+    font-size: 8px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 2px;
+    margin-left: auto;
+    letter-spacing: 0.3px;
+}
+.tfPrice {
+    font-size: 10px;
+    color: #a0aec0;
+    font-variant-numeric: tabular-nums;
+}
+.tfDist { font-size: 9px; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.tfSrc { font-size: 8px; color: #4a5568; letter-spacing: 0.3px; }
+
+.tfAbove   { background: rgba(104,211,145,0.07); border-color: rgba(104,211,145,0.25); color: #68d391; }
+.tfTesting { background: rgba(246,173,85,0.10);  border-color: rgba(246,173,85,0.35);  color: #f6ad55; }
+.tfBelow   { background: rgba(252,129,129,0.08); border-color: rgba(252,129,129,0.25); color: #fc8181; }
+.tfStale   { opacity: 0.5; filter: grayscale(0.4); }
+
+/* ─── Transitions list ──────────────────────────────────────────────────────── */
+.transitionsList {
+    max-height: 130px;
+    overflow-y: auto;
+    border-top: 1px solid rgba(255,255,255,0.04);
+    padding: 6px 14px;
+    flex-shrink: 0;
+}
+.transRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    padding: 3px 0;
+    border-bottom: 1px dashed rgba(255,255,255,0.03);
+    font-variant-numeric: tabular-nums;
+}
+.transTime { color: #4a5568; min-width: 52px; }
+.transTf {
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.05);
+    color: #a0aec0;
+    min-width: 28px;
+    text-align: center;
+}
+.transEvent {
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.3px;
+}
+.evBROKE          { color: #fc8181; background: rgba(252,129,129,0.15); }
+.evRECLAIM        { color: #68d391; background: rgba(104,211,145,0.15); }
+.evRESPECTED      { color: #68d391; background: rgba(104,211,145,0.10); }
+.evTOUCH          { color: #fbd38d; background: rgba(251,211,141,0.12); }
+.evPULLBACK_TOUCH { color: #f6ad55; background: rgba(246,173,85,0.12); }
+.evPULLBACK_HOLD  { color: #f6ad55; background: rgba(246,173,85,0.20); }
+.transPrice { color: #a0aec0; }
+
+/* ─── Loading / empty / error ───────────────────────────────────────────────── */
+.loadingState, .emptyState, .errorState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 240px;
+    color: #4a5568;
+    font-size: 13px;
+}
+.errorState { color: #fc8181; }
+.spinner {
+    width: 22px;
+    height: 22px;
+    border: 2px solid rgba(255,255,255,0.08);
+    border-top-color: #f6ad55;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

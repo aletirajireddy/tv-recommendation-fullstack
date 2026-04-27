@@ -21,6 +21,7 @@ import { CoinAgeWidget } from './components/AnalyticsWidgets/CoinAgeWidget';
 import { ValidatorTimelineWidget } from './components/AnalyticsWidgets/ValidatorTimelineWidget';
 import { DailyCalendarWidget } from './components/AnalyticsWidgets/DailyCalendarWidget';
 import { LevelReactionWidget } from './components/AnalyticsWidgets/LevelReactionWidget';
+import { EMACascadeMonitor } from './components/AnalyticsWidgets/EMACascadeMonitor';
 
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
@@ -58,6 +59,11 @@ function App() {
             {/* ROW 0c: LEVEL REACTION MONITOR (swim-lane price paths at structural levels) */}
             <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
                 <LevelReactionWidget />
+            </div>
+
+            {/* ROW 0d: EMA CASCADE MONITOR (200-EMA defense ladder 1m→4h, scalper view) */}
+            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
+                <EMACascadeMonitor />
             </div>
 
             {/* ROW 1: TIMELINE ANALYZERS (Moved to the very top!) */}
