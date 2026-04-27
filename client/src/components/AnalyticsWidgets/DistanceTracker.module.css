@@ -82,6 +82,7 @@
 .table thead th:first-child,
 .table thead th:nth-child(2) { text-align: left; }
 .table thead th.sortActive { color: #d6bcfa; }
+.thSub { font-size: 8px; color: #2d3748; text-transform: uppercase; letter-spacing: 0.3px; display: block; font-weight: 400; margin-top: 1px; }
 .table tbody tr {
     border-bottom: 1px solid rgba(255,255,255,0.03);
     transition: background 0.12s;

@@ -196,14 +196,15 @@ export function DistanceTracker() {
                                 <th>Price</th>
                                 <th onClick={() => handleSort('minAbsDist')}
                                     className={sortKey === 'minAbsDist' ? styles.sortActive : ''}
-                                    title="Closest TF distance">
-                                    Closest
+                                    title="% distance from the closest 200 EMA timeframe (positive = above EMA, negative = below)">
+                                    Closest<br /><span className={styles.thSub}>vs EMA200</span>
                                 </th>
                                 {TFS.map(tf => (
                                     <th key={tf}
                                         onClick={() => handleSort(tf)}
-                                        className={sortKey === tf ? styles.sortActive : ''}>
-                                        {TF_LABELS[tf]}
+                                        className={sortKey === tf ? styles.sortActive : ''}
+                                        title={`% distance from ${TF_LABELS[tf]} 200 EMA (+ = above, − = below)`}>
+                                        {TF_LABELS[tf]}<br /><span className={styles.thSub}>% vs EMA</span>
                                     </th>
                                 ))}
                             </tr>

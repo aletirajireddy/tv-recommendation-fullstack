@@ -1,46 +1,55 @@
 /**
  * GhostScoringEngine — Regime-aware confidence scoring for ghost approval queue.
  *
- * Score = base_win_rate × regime_multiplier
+ * Score = base_win_rate × regime_multiplier × sample_weight
  *
  * Components (all normalized 0–100):
  *
- *   1. base_win_rate (0–100)
- *      Pull best matching row from pattern_statistics for this ticker's most
- *      recent trial direction. If no trial history exists, fall back to the
- *      global average win rate for the current regime direction.
+ *   1. base_win_rate (0–100)  — PRIORITY ORDER:
+ *      a) Per-ticker recency-weighted win rate from actual resolved validation_trials
+ *         (used when ticker has ≥ 5 resolved trials — most accurate, coin-specific)
+ *      b) Best matching row from pattern_statistics for this ticker's last direction
+ *         (global feature-combo stats — used as fallback when per-ticker data is sparse)
+ *      c) Global average win rate (last resort when no stats at all)
  *
  *   2. regime_multiplier (0.5 – 1.5)
- *      Derived from latest market_sentiment mood + mood_score:
- *        EUPHORIC  → LONG +1.3,  SHORT ×0.6
- *        BULLISH   → LONG ×1.15, SHORT ×0.8
- *        NEUTRAL   → both ×1.0
- *        BEARISH   → LONG ×0.8,  SHORT ×1.15
- *        PANIC     → LONG ×0.6,  SHORT ×1.3
+ *      Derived from latest market_sentiment mood (normalized to key):
+ *        STRONGLY_BULLISH → LONG ×1.45, SHORT ×0.50
+ *        EUPHORIC         → LONG ×1.30, SHORT ×0.60
+ *        BULLISH          → LONG ×1.15, SHORT ×0.80
+ *        NEUTRAL/RANGING  → both ×1.00
+ *        BEARISH          → LONG ×0.80, SHORT ×1.15
+ *        STRONGLY_BEARISH → LONG ×0.55, SHORT ×1.45
+ *        PANIC            → LONG ×0.60, SHORT ×1.30
  *
  *   3. sample_confidence_weight (0.6 – 1.0)
- *      Scales down if sample_count < 10. Full weight at 20+ samples.
+ *      Scales down if sample_count < 20. Full weight at 20+ samples.
  *
  * Final score capped 0–100, rounded to 1dp.
  * score_breakdown JSON captures each component for FE display.
- *
- * Q5 choice: stats + current market regime (boost when aligned, penalty when opposed).
- * Future: add per-ticker trial track record weight (Q5-future).
  */
 
 const db = require('../database');
 
 const REGIME_MULTIPLIERS = {
-    EUPHORIC: { LONG: 1.30, SHORT: 0.60 },
-    BULLISH:  { LONG: 1.15, SHORT: 0.80 },
-    NEUTRAL:  { LONG: 1.00, SHORT: 1.00 },
-    RANGING:  { LONG: 1.00, SHORT: 1.00 },
-    BEARISH:  { LONG: 0.80, SHORT: 1.15 },
-    PANIC:    { LONG: 0.60, SHORT: 1.30 },
+    STRONGLY_BULLISH: { LONG: 1.45, SHORT: 0.50 },
+    EUPHORIC:         { LONG: 1.30, SHORT: 0.60 },
+    BULLISH:          { LONG: 1.15, SHORT: 0.80 },
+    NEUTRAL:          { LONG: 1.00, SHORT: 1.00 },
+    RANGING:          { LONG: 1.00, SHORT: 1.00 },
+    BEARISH:          { LONG: 0.80, SHORT: 1.15 },
+    STRONGLY_BEARISH: { LONG: 0.55, SHORT: 1.45 },
+    PANIC:            { LONG: 0.60, SHORT: 1.30 },
 };
 
 const CONFIDENCE_LABEL = (s) =>
     s >= 72 ? 'HIGH' : s >= 52 ? 'MEDIUM' : s >= 35 ? 'LOW' : 'VERY_LOW';
+
+/** Normalize raw_label strings like "STRONGLY BEARISH" → "STRONGLY_BEARISH" */
+function normalizeMood(raw) {
+    if (!raw) return 'NEUTRAL';
+    return raw.trim().toUpperCase().replace(/\s+/g, '_');
+}
 
 function getLatestRegime() {
     const row = db.prepare(`
@@ -51,8 +60,47 @@ function getLatestRegime() {
     return row || { raw_label: 'NEUTRAL', raw_mood_score: 0 };
 }
 
+/**
+ * Per-ticker recency-weighted win rate.
+ * Uses exponential decay (half-life 14d) so recent trials count more.
+ * Returns null if fewer than 5 resolved trials exist for this ticker.
+ */
+function getTickerWinRate(ticker) {
+    const trials = db.prepare(`
+        SELECT verdict, detected_at, direction
+        FROM validation_trials
+        WHERE ticker = ? AND state = 'RESOLVED' AND verdict IS NOT NULL
+        ORDER BY resolved_at DESC LIMIT 50
+    `).all(ticker);
+
+    if (trials.length < 5) return null;
+
+    const now = Date.now();
+    let weightedWins = 0, totalWeight = 0;
+    for (const t of trials) {
+        const ageMs   = now - new Date(t.detected_at).getTime();
+        const ageDays = ageMs / (1000 * 60 * 60 * 24);
+        const weight  = Math.exp(-ageDays / 14); // ~half-life 10 days
+        totalWeight  += weight;
+        if (t.verdict === 'CONFIRMED') weightedWins += weight;
+    }
+    const win_rate = totalWeight > 0 ? (weightedWins / totalWeight) * 100 : 50;
+
+    return {
+        win_rate,
+        sample_count: trials.length,
+        confidence:   trials.length >= 20 ? 'HIGH' : trials.length >= 10 ? 'MEDIUM' : 'LOW',
+        direction:    trials[0]?.direction || null,
+        stat_key:     `ticker_history(n=${trials.length})`,
+    };
+}
+
 function getBestWinRate(ticker) {
-    // Try: most recent resolved trial direction for this ticker → best matching pattern_stat
+    // ── Priority 1: per-ticker actual track record ─────────────────────────
+    const tickerData = getTickerWinRate(ticker);
+    if (tickerData) return tickerData;
+
+    // ── Priority 2: pattern_statistics (direction-level feature combos) ────
     const lastTrial = db.prepare(`
         SELECT direction FROM validation_trials
         WHERE ticker = ? AND state = 'RESOLVED'
@@ -61,7 +109,6 @@ function getBestWinRate(ticker) {
 
     const direction = lastTrial?.direction || null;
 
-    // Pull best win rate from pattern_statistics (highest confidence first, then win rate)
     const statQuery = direction
         ? db.prepare(`
             SELECT win_rate_30m, sample_count, confidence, stat_key
@@ -78,18 +125,18 @@ function getBestWinRate(ticker) {
         return { win_rate: statQuery.win_rate_30m, sample_count: statQuery.sample_count, confidence: statQuery.confidence, direction, stat_key: statQuery.stat_key };
     }
 
-    // Fallback: global average for any direction
+    // ── Priority 3: global fallback ────────────────────────────────────────
     const global = db.prepare(`
         SELECT AVG(win_rate_30m) as avg_wr, SUM(sample_count) as total_samples
         FROM pattern_statistics
     `).get();
 
     return {
-        win_rate: global?.avg_wr || 50,
+        win_rate:     global?.avg_wr || 50,
         sample_count: global?.total_samples || 0,
-        confidence: 'LOW',
-        direction: direction || 'UNKNOWN',
-        stat_key: 'global_fallback',
+        confidence:   'LOW',
+        direction:    direction || 'UNKNOWN',
+        stat_key:     'global_fallback',
     };
 }
 
@@ -102,8 +149,8 @@ function scoreGhost(ticker) {
     const regime = getLatestRegime();
     const statData = getBestWinRate(ticker);
 
-    const mood = regime.raw_label || 'NEUTRAL';
-    const dir = statData.direction;
+    const mood  = normalizeMood(regime.raw_label);
+    const dir   = statData.direction;
     const mults = REGIME_MULTIPLIERS[mood] || REGIME_MULTIPLIERS.NEUTRAL;
     const regimeMult = dir && (dir === 'LONG' || dir === 'SHORT')
         ? mults[dir]

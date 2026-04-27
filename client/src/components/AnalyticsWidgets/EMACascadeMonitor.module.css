@@ -205,7 +205,8 @@
     color: #a0aec0;
     font-variant-numeric: tabular-nums;
 }
-.tfDist { font-size: 9px; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.tfDist { font-size: 9px; font-variant-numeric: tabular-nums; opacity: 0.85; display: flex; flex-direction: column; align-items: center; gap: 1px; cursor: help; }
+.tfDistLabel { font-size: 7px; color: #4a5568; letter-spacing: 0.4px; text-transform: uppercase; opacity: 0.8; }
 .tfSrc { font-size: 8px; color: #4a5568; letter-spacing: 0.3px; }
 
 .tfAbove   { background: rgba(104,211,145,0.07); border-color: rgba(104,211,145,0.25); color: #68d391; }

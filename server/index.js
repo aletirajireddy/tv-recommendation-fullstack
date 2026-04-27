@@ -1153,13 +1153,28 @@ app.get('/api/ema-cascade', (req, res) => {
         // 7. Volume events in window — try all ticker variants so BTCUSDT.P / BTC / BTCUSDT
         //    all resolve correctly regardless of how the stream stored the ticker.
         let volEventsRaw = [];
+        let resolvedVolTicker = null;
         for (const v of _expandTickerVariants(ticker)) {
             volEventsRaw = VolumeEventService.getEvents(v, sinceISO, 500);
-            if (volEventsRaw.length) break;
+            if (volEventsRaw.length) { resolvedVolTicker = v; break; }
         }
         const volEvents = volEventsRaw
             .map(e => ({ ts: new Date(e.ts).getTime(), source: e.source, strength: e.strength, meta: e.meta }))
             .sort((a, b) => a.ts - b.ts);
+
+        // 7b. If no events in window, look up the most recent event EVER for this ticker
+        //     so the FE can show "last vol spike was Xh ago" even when nothing is on-chart.
+        let lastVolEventMs = volEvents.length ? volEvents[volEvents.length - 1].ts : null;
+        if (!lastVolEventMs) {
+            const sinceAllTime = new Date(0).toISOString();
+            for (const v of _expandTickerVariants(ticker)) {
+                const recent = VolumeEventService.getEvents(v, sinceAllTime, 1);
+                if (recent.length) {
+                    lastVolEventMs = new Date(recent[0].ts).getTime();
+                    break;
+                }
+            }
+        }
 
         // 8. Build the slim history array for FE
         const history = sortedBuckets.map(b => ({
@@ -1187,6 +1202,7 @@ app.get('/api/ema-cascade', (req, res) => {
             interval_min: intervalMin,
             history,
             volEvents,
+            lastVolEventMs,  // most recent event ever (may be outside window) — for "last vol Xh ago" badge
             transitions,
             defenseLevelNow: last
                 ? { bull: last.bullDefense, bear: last.bearDefense, regime: last.regime }

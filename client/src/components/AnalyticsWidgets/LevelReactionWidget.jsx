@@ -287,10 +287,12 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading
 
                 <div className={styles.laneCenter}>
                     <span className={styles.lanePrice}>{smartFmt(coin.close)}</span>
-                    {/* Distance from level — core signal */}
+                    {/* Distance from level — core signal. Tooltip explains the reference. */}
                     <span className={styles.laneDist}
-                        style={{ color: coin.distPct >= 0 ? '#68d391' : '#fc8181' }}>
+                        style={{ color: coin.distPct >= 0 ? '#68d391' : '#fc8181' }}
+                        title={`${coin.distPct >= 0 ? 'Price is ' + coin.distPct.toFixed(2) + '% ABOVE' : 'Price is ' + Math.abs(coin.distPct).toFixed(2) + '% BELOW'} the ${coin.levelLabel?.replace('EMA200_', '') || coin.side.toLowerCase()} level (${smartFmt(coin.levelPrice)})`}>
                         {coin.distPct > 0 ? '+' : ''}{coin.distPct.toFixed(2)}%
+                        <span className={styles.distContext}>vs level</span>
                     </span>
                     {/* Direction badge */}
                     <span className={styles.laneDir}

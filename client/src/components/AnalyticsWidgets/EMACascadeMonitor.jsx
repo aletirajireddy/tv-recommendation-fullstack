@@ -207,11 +207,12 @@ export function EMACascadeMonitor() {
         [data]
     );
 
-    const stackNow    = data?.stackNow    || {};
-    const sourceHealth= data?.sourceHealth || {};
-    const defense     = data?.defenseLevelNow || {};
-    const lastBreak   = data?.lastBreak;
-    const regime      = defense.regime || 'NEUTRAL';
+    const stackNow       = data?.stackNow       || {};
+    const sourceHealth   = data?.sourceHealth   || {};
+    const defense        = data?.defenseLevelNow || {};
+    const lastBreak      = data?.lastBreak;
+    const lastVolEventMs = data?.lastVolEventMs  || null;
+    const regime         = defense.regime || 'NEUTRAL';
 
     const regimeClass = regime === 'BULL'
         ? styles.regimeBull
@@ -316,6 +317,17 @@ export function EMACascadeMonitor() {
                             </span>
                         );
                     })}
+                    {/* Last vol spike time — shows even when no events are in current chart window */}
+                    {lastVolEventMs && (
+                        <span className={styles.healthChip}
+                            style={{
+                                color: volEvents.length ? '#f6ad55' : '#4a5568',
+                                borderColor: volEvents.length ? 'rgba(246,173,85,0.3)' : 'rgba(255,255,255,0.06)',
+                            }}
+                            title={`Last volume spike: ${new Date(lastVolEventMs).toLocaleTimeString()}`}>
+                            ▾vol·{ageStr(Date.now() - lastVolEventMs)}{volEvents.length ? ` (${volEvents.length})` : ' ago'}
+                        </span>
+                    )}
                 </div>
             </div>
 
@@ -461,8 +473,10 @@ export function EMACascadeMonitor() {
                                         </div>
                                         <span className={styles.tfPrice}>{smartFmt(s.price)}</span>
                                         {distPct != null && (
-                                            <span className={styles.tfDist}>
+                                            <span className={styles.tfDist}
+                                                title={`${distPct >= 0 ? 'Price is ' + distPct.toFixed(2) + '% ABOVE' : 'Price is ' + Math.abs(distPct).toFixed(2) + '% BELOW'} the ${TF_LABELS[tf]} 200 EMA`}>
                                                 {distPct >= 0 ? '+' : ''}{distPct.toFixed(2)}%
+                                                <span className={styles.tfDistLabel}>vs EMA200</span>
                                             </span>
                                         )}
                                         <span className={styles.tfSrc}>
