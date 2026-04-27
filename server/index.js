@@ -32,6 +32,19 @@ app.use(express.json({ limit: '50mb' }));
 // V3 ROUTES
 // ============================================================================
 
+// ─── Price parsing helper ────────────────────────────────────────────────────
+// TradingView screeners and Tampermonkey sometimes send prices as formatted
+// strings with thousands-separator commas: "77,000.00", "1,234.5678".
+// Plain parseFloat("77,000.00") = 77  ← stops at the comma.
+// This strips ALL commas before parsing, handles numbers pass-through cleanly.
+function parsePrice(v) {
+    if (v == null || v === '') return 0;
+    if (typeof v === 'number') return isFinite(v) ? v : 0;
+    const cleaned = String(v).replace(/,/g, '');
+    const n = parseFloat(cleaned);
+    return isFinite(n) ? n : 0;
+}
+
 // 1. HEALTH CHECK
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', version: 'v3-fresh-start', timestamp: new Date() });
@@ -143,7 +156,7 @@ app.post('/scan-report', (req, res) => {
                 payload.results.forEach(item => {
                     const d = item.data || item;
                     const ticker = item.datakey ? item.datakey.replace('BINANCE:', '') : item.ticker;
-                    const price = d.close || 0;
+                    const price = parsePrice(d.close || d.price);
                     MasterStoreService.ingestStreamA(ticker, d, price, {
                         timestampISO: timestamp,           // payload.timestamp from scan
                         ingestionSource: 'SCAN_A',
@@ -703,7 +716,7 @@ app.post('/api/market-context', (req, res) => {
             watchlistSnaps.forEach(w => {
                 if (w.full) {
                     const ticker = w.full.replace('BINANCE:', '');
-                    const price = w.price || 0;
+                    const price = parsePrice(w.price || w.close);
                     MasterStoreService.ingestStreamB(ticker, w, price, {
                         timestampISO: w.timestamp || payload.timestamp || now,
                         ingestionSource: 'SCOUT_B',
@@ -745,7 +758,7 @@ app.post('/api/stream-d/technicals', (req, res) => {
             payload.results.forEach(item => {
                 const data   = item.data || {};
                 const ticker = (item.ticker || data.ticker || '').trim();
-                const price  = parseFloat(data.close || data.price || 0);
+                const price  = parsePrice(data.close || data.price);
                 if (!ticker) { skipped++; return; }
 
                 MasterStoreService.ingestStreamD(ticker, data, price, {
@@ -986,7 +999,7 @@ app.get('/api/ema-cascade', (req, res) => {
                 emaSrc: { m1: null, m5: null, m15: null, h1: null, h4: null },
                 lastSrc: null,
             };
-            b.price = parseFloat(row.price) || b.price;
+            b.price = parsePrice(row.price) || b.price;
             b.lastSrc = row.trigger_source;
 
             // Stream D: dynamic ema_200Timeresolution<N> keys
@@ -2714,7 +2727,7 @@ app.post('/api/webhook/smart-levels', (req, res) => {
         }
 
         const ticker = payload.ticker;
-        const price = parseFloat(payload.price || 0);
+        const price = parsePrice(payload.price || payload.close);
 
         // ─── TIMESTAMP POLICY (Stream C — WEBHOOK) ────────────────────────────
         // Single source of truth: TimestampResolver.
@@ -3103,7 +3116,7 @@ app.get('/api/level-reactions', (req, res) => {
         results.forEach(r => {
             const d      = r.data || r;
             const ticker = (d.ticker || r.ticker || '').trim();
-            const close  = parseFloat(d.close || 0);
+            const close  = parsePrice(d.close || d.price);
             if (!ticker || !close) return;
 
             // Signed % distance convention:
