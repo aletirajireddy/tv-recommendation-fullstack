@@ -1136,8 +1136,14 @@ app.get('/api/ema-cascade', (req, res) => {
             b.gapBefore = gapStartSet.has(b.ts);
         }
 
-        // 7. Volume events in window
-        const volEvents = VolumeEventService.getEvents(ticker, sinceISO, 500)
+        // 7. Volume events in window — try all ticker variants so BTCUSDT.P / BTC / BTCUSDT
+        //    all resolve correctly regardless of how the stream stored the ticker.
+        let volEventsRaw = [];
+        for (const v of _expandTickerVariants(ticker)) {
+            volEventsRaw = VolumeEventService.getEvents(v, sinceISO, 500);
+            if (volEventsRaw.length) break;
+        }
+        const volEvents = volEventsRaw
             .map(e => ({ ts: new Date(e.ts).getTime(), source: e.source, strength: e.strength, meta: e.meta }))
             .sort((a, b) => a.ts - b.ts);
 
@@ -1787,15 +1793,22 @@ app.get('/api/calendar/daily', (req, res) => {
             const winRate = decisive > 0 ? Math.round(((trialAgg.confirmed || 0) / decisive) * 100) : null;
 
             // Top movers from master_coin_store: per-ticker first vs last price.
-            // (One pass per day; tiny rowcount expected.)
+            // Single-pass CTE avoids N correlated subqueries (7 days × many tickers).
             const dayPrices = db.prepare(`
-                SELECT ticker,
-                       (SELECT price FROM master_coin_store WHERE ticker = m.ticker AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC LIMIT 1) as first_price,
-                       (SELECT price FROM master_coin_store WHERE ticker = m.ticker AND timestamp BETWEEN ? AND ? ORDER BY timestamp DESC LIMIT 1) as last_price
-                FROM master_coin_store m
-                WHERE m.timestamp BETWEEN ? AND ?
-                GROUP BY m.ticker
-            `).all(dayStart, dayEnd, dayStart, dayEnd, dayStart, dayEnd);
+                WITH ranked AS (
+                    SELECT ticker, price,
+                        ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp ASC)  AS rn_first,
+                        ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) AS rn_last
+                    FROM master_coin_store
+                    WHERE timestamp BETWEEN ? AND ?
+                )
+                SELECT
+                    ticker,
+                    MAX(CASE WHEN rn_first = 1 THEN price END) AS first_price,
+                    MAX(CASE WHEN rn_last  = 1 THEN price END) AS last_price
+                FROM ranked
+                GROUP BY ticker
+            `).all(dayStart, dayEnd);
 
             const movers = dayPrices
                 .filter(r => r.first_price > 0 && r.last_price > 0)
@@ -1838,17 +1851,27 @@ app.get('/api/calendar/day/:date', (req, res) => {
         const dayStart = `${dateStr}T00:00:00.000Z`;
         const dayEnd = `${dateStr}T23:59:59.999Z`;
 
-        // Per-ticker price stats from master_coin_store
+        // Per-ticker price stats from master_coin_store.
+        // Single-pass CTE with window functions avoids N correlated subqueries
+        // (critical for "today" which has the most rows; was timing out).
         const perTicker = db.prepare(`
-            SELECT ticker,
-                   COUNT(*) as samples,
-                   MIN(price) as low, MAX(price) as high,
-                   (SELECT price FROM master_coin_store WHERE ticker = m.ticker AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC LIMIT 1) as open,
-                   (SELECT price FROM master_coin_store WHERE ticker = m.ticker AND timestamp BETWEEN ? AND ? ORDER BY timestamp DESC LIMIT 1) as close
-            FROM master_coin_store m
-            WHERE m.timestamp BETWEEN ? AND ?
-            GROUP BY m.ticker
-        `).all(dayStart, dayEnd, dayStart, dayEnd, dayStart, dayEnd);
+            WITH ranked AS (
+                SELECT ticker, price, timestamp,
+                    ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp ASC)  AS rn_first,
+                    ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) AS rn_last
+                FROM master_coin_store
+                WHERE timestamp BETWEEN ? AND ?
+            )
+            SELECT
+                ticker,
+                COUNT(*) AS samples,
+                MIN(price) AS low,
+                MAX(price) AS high,
+                MAX(CASE WHEN rn_first = 1 THEN price END) AS open,
+                MAX(CASE WHEN rn_last  = 1 THEN price END) AS close
+            FROM ranked
+            GROUP BY ticker
+        `).all(dayStart, dayEnd);
 
         // Per-ticker trial outcomes
         const trialsByTicker = db.prepare(`

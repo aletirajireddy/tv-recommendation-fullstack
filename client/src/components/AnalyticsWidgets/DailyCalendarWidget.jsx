@@ -1,5 +1,26 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Component } from 'react';
 import styles from './DailyCalendarWidget.module.css';
+
+// Prevent a bad heatmap row from blanking the entire page.
+class DrillErrorBoundary extends Component {
+    constructor(props) { super(props); this.state = { err: null }; }
+    static getDerivedStateFromError(err) { return { err }; }
+    render() {
+        if (this.state.err) {
+            return (
+                <div style={{ padding: '20px 16px', color: '#fc8181', fontSize: 13 }}>
+                    ⚠ Failed to render drill-down: {this.state.err.message}
+                    <br />
+                    <button style={{ marginTop: 8, color: '#63b3ed', background: 'none', border: '1px solid #63b3ed', borderRadius: 4, padding: '4px 10px', cursor: 'pointer' }}
+                        onClick={() => this.setState({ err: null })}>
+                        Retry
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
 
 /**
  * DailyCalendarWidget — 7-day grid showing market mood + trial outcomes per day.
@@ -44,7 +65,11 @@ export function DailyCalendarWidget() {
                 </div>
             )}
 
-            {drillDate && <DayDrillModal date={drillDate} onClose={() => setDrillDate(null)} />}
+            {drillDate && (
+                <DrillErrorBoundary key={drillDate}>
+                    <DayDrillModal date={drillDate} onClose={() => setDrillDate(null)} />
+                </DrillErrorBoundary>
+            )}
         </div>
     );
 }
@@ -160,21 +185,23 @@ function DayDrillModal({ date, onClose }) {
 
 function HeatRow({ row }) {
     const chgCls = row.change_pct > 1 ? styles.gainStrong : row.change_pct > 0 ? styles.gain : row.change_pct < -1 ? styles.loseStrong : styles.lose;
-    const wr = row.trials.win_rate_pct;
+    // Null-guard: trials may be absent on very fresh rows before the endpoint builds it
+    const trials = row.trials || {};
+    const wr = trials.win_rate_pct;
     const wrCls = wr == null ? styles.muted : wr >= 60 ? styles.wrHigh : wr >= 45 ? styles.wrMed : styles.wrLow;
     return (
         <tr>
             <td><strong>{row.ticker}</strong></td>
-            <td className={styles.muted}>{Number(row.open).toFixed(4)} → {Number(row.close).toFixed(4)}</td>
+            <td className={styles.muted}>{Number(row.open || 0).toFixed(4)} → {Number(row.close || 0).toFixed(4)}</td>
             <td className={chgCls}>{fmtPct(row.change_pct)}</td>
-            <td className={styles.muted}>{row.range_pct.toFixed(2)}%</td>
-            <td>{row.trials.total}</td>
-            <td className={styles.muted}>{row.trials.longs}L / {row.trials.shorts}S</td>
+            <td className={styles.muted}>{(row.range_pct ?? 0).toFixed(2)}%</td>
+            <td>{trials.total ?? 0}</td>
+            <td className={styles.muted}>{trials.longs ?? 0}L / {trials.shorts ?? 0}S</td>
             <td className={wrCls}>{wr == null ? '—' : `${wr}%`}</td>
             <td className={styles.verdictMix}>
-                {row.trials.confirmed > 0 && <span className={styles.vConfirmed}>✓{row.trials.confirmed}</span>}
-                {row.trials.failed > 0 && <span className={styles.vFailed}>✗{row.trials.failed}</span>}
-                {row.trials.neutral > 0 && <span className={styles.vNeutral}>·{row.trials.neutral}</span>}
+                {(trials.confirmed > 0) && <span className={styles.vConfirmed}>✓{trials.confirmed}</span>}
+                {(trials.failed > 0) && <span className={styles.vFailed}>✗{trials.failed}</span>}
+                {(trials.neutral > 0) && <span className={styles.vNeutral}>·{trials.neutral}</span>}
             </td>
         </tr>
     );

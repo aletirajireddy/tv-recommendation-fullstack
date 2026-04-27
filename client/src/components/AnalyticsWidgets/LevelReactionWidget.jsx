@@ -473,7 +473,9 @@ export function LevelReactionWidget() {
                 { signal }
             );
             const d = await r.json();
-            if (d.error) throw new Error(d.error);
+            // Don't throw — return the error field so the hook's payload?.error check
+            // sets the error banner while preserving the previous data (stale-while-error).
+            if (d.error) return d;
 
             // Batch vol-events for all visible coins in the same poll tick
             const tickers = (d.coins || []).map(c => c.cleanTicker || c.ticker).filter(Boolean);
@@ -625,9 +627,13 @@ export function LevelReactionWidget() {
 
             {/* ── Body ── */}
             <div className={styles.body}>
-                {error ? (
-                    <div className={styles.errorState}>⚠ {error}</div>
-                ) : !data && loading ? (
+                {/* Error as non-blocking banner — stale lanes stay visible beneath */}
+                {error && (
+                    <div className={styles.errorBanner}>
+                        ⚠ {error} {data ? '— showing last data' : ''}
+                    </div>
+                )}
+                {!data && loading ? (
                     <div className={styles.loadingState}>
                         <div className={styles.spinner} />
                         <span>Loading reactions…</span>

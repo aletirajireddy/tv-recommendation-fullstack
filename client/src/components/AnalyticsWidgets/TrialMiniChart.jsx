@@ -34,18 +34,45 @@ function fmtTime(ms) {
     return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+const VOL_SRC_COLOR = {
+    STREAM_C_ALERT: '#f6ad55',
+    STREAM_A_EDGE:  '#63b3ed',
+    STREAM_D_RVOL:  '#d6bcfa',
+};
+const VOL_SRC_LABEL = {
+    STREAM_C_ALERT: 'C',
+    STREAM_A_EDGE:  'A',
+    STREAM_D_RVOL:  'D',
+};
+
 export function TrialMiniChart({ trial }) {
-    const [ohlc, setOhlc] = useState(null);
+    const [ohlc, setOhlc]         = useState(null);
+    const [volEvents, setVolEvents] = useState([]);
     const fetchedRef = useRef(false);
 
     useEffect(() => {
         if (fetchedRef.current) return;
         fetchedRef.current = true;
+
         fetch(`/api/validator/trial/${encodeURIComponent(trial.trial_id)}/ohlc?interval=5`)
             .then(r => r.ok ? r.json() : null)
-            .then(d => { if (d && !d.error) setOhlc(d); })
+            .then(d => {
+                if (d && !d.error) {
+                    setOhlc(d);
+                    // Fetch vol events for the chart's time window using the trial ticker.
+                    // since_min covers from detection up to now (+30m buffer).
+                    const since_min = Math.ceil((Date.now() - new Date(trial.detected_at).getTime()) / 60000) + 30;
+                    const cappedMin = Math.min(since_min, 1440); // max 24h
+                    fetch(`/api/volume-events?ticker=${encodeURIComponent(trial.ticker)}&since_min=${cappedMin}&limit=30`)
+                        .then(r2 => r2.ok ? r2.json() : null)
+                        .then(vd => {
+                            if (vd?.events?.length) setVolEvents(vd.events);
+                        })
+                        .catch(() => {});
+                }
+            })
             .catch(() => {});
-    }, [trial.trial_id]);
+    }, [trial.trial_id, trial.ticker, trial.detected_at]);
 
     if (!ohlc) {
         return (
@@ -161,6 +188,24 @@ export function TrialMiniChart({ trial }) {
                     {cooldownStart != null && (
                         <ReferenceLine x={cooldownStart} stroke="#9f7aea" strokeDasharray="3 2" strokeWidth={1.5} />
                     )}
+
+                    {/* Volume spike pins — truth-aware source coloring */}
+                    {volEvents
+                        .map(e => ({ t: new Date(e.ts).getTime(), src: e.source }))
+                        .filter(e => e.t >= (series[0]?.t ?? 0) && e.t <= (series.at(-1)?.t ?? Infinity))
+                        .map((e, i) => {
+                            const color = VOL_SRC_COLOR[e.src] || '#a0aec0';
+                            return (
+                                <ReferenceLine key={`vol-${i}`}
+                                    x={e.t}
+                                    stroke={color} strokeOpacity={0.6}
+                                    strokeDasharray="2 3" strokeWidth={1}
+                                    label={{ value: VOL_SRC_LABEL[e.src] || '▾', position: 'top', fill: color, fontSize: 8 }}
+                                />
+                            );
+                        })
+                    }
+
                     {/* Verdict vertical */}
                     {phases.resolved_ms != null && (
                         <ReferenceLine x={phases.resolved_ms}

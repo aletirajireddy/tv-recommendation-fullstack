@@ -168,6 +168,17 @@
 }
 .errorState { color: #fc8181; }
 
+/* Non-blocking error banner — sits above stale lanes instead of replacing them */
+.errorBanner {
+    margin: 0 0 8px 0;
+    padding: 6px 12px;
+    background: rgba(252,129,129,0.10);
+    border: 1px solid rgba(252,129,129,0.30);
+    border-radius: 6px;
+    color: #fc8181;
+    font-size: 11px;
+}
+
 .spinner {
     width: 22px;
     height: 22px;
