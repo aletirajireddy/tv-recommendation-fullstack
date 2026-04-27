@@ -101,7 +101,7 @@ function CascadeTooltip({ active, payload, label }) {
 
 /* ───────────── Main Widget ───────────── */
 
-const QUICK_TICKERS = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'];
+const FALLBACK_TICKERS = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'];
 const WINDOWS = [
     { label: '1h',  value: 60 },
     { label: '2h',  value: 120 },
@@ -126,6 +126,17 @@ export function EMACascadeMonitor() {
         () => `/api/ema-cascade?ticker=${encodeURIComponent(ticker)}&window_min=${windowMin}&interval=${intervalMin}`,
         { intervalMs: 60_000, deps: [ticker, windowMin, intervalMin] }
     );
+
+    // Fetch dynamic quick tickers from active board (limit to 12)
+    const { data: boardData } = usePolledFetch(
+        () => `/api/ema-distance-board?limit=12&max_dist=100&active_min=60`,
+        { intervalMs: 120_000, deps: [] }
+    );
+
+    const dynamicTickers = useMemo(() => {
+        if (!boardData?.board?.length) return FALLBACK_TICKERS;
+        return boardData.board.map(b => b.cleanTicker);
+    }, [boardData]);
 
     const handleSubmitTicker = (e) => {
         e.preventDefault();
@@ -231,7 +242,7 @@ export function EMACascadeMonitor() {
                         />
                     </form>
                     <div className={styles.controlGroup}>
-                        {QUICK_TICKERS.map(t => (
+                        {dynamicTickers.map(t => (
                             <button key={t}
                                 className={`${styles.pill} ${ticker === t ? styles.pillActive : ''}`}
                                 onClick={() => setQuickTicker(t)}>

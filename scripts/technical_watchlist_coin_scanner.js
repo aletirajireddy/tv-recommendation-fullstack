@@ -9,7 +9,7 @@
 // @connect      localhost
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
     const CONFIG = {
@@ -47,7 +47,7 @@
             .replace(/,/g, '')
             .replace(/[A-Za-z]/g, '') // remove "B", "M", "K" etc. (Note: standard TV doesn't convert B/M to numeric here, but we'll try to just grab the raw number if possible. Actually, let's keep it as a string if it has text so we don't lose the magnitude, or just parsefloat and lose the magnitude? Better to keep the raw string if it has magnitude, but for now we'll just try parseFloat).
             .trim();
-        
+
         // Handle M/B/K magnitudes
         let multiplier = 1;
         const lastChar = text.trim().slice(-1).toUpperCase();
@@ -68,7 +68,7 @@
         if (link) {
             return link.innerText.trim();
         }
-        
+
         const rowKey = row.getAttribute('data-rowkey');
         if (rowKey) {
             const parts = rowKey.split(':');
@@ -79,49 +79,38 @@
 
     function scanAndPunchData() {
         console.log(`[Stream D] 🕵️‍♂️ Starting scan at ${new Date().toLocaleTimeString()}...`);
-        
-        const table = document.querySelector('table');
-        if (!table) {
-            console.warn("[Stream D] ❌ No table found on page.");
+
+        const headerCells = document.querySelectorAll('thead th[data-field]');
+        if (headerCells.length === 0) {
+            console.warn("[Stream D] ❌ No headers found (data-field missing).");
             return;
         }
 
-        const headers = Array.from(table.querySelectorAll('thead tr th'));
-        if (headers.length === 0) {
-            console.warn("[Stream D] ❌ No headers found.");
-            return;
-        }
-
-        // Dynamically map column index to normalized key
+        // Dynamically map column index to a stable key
         const columnMap = {};
-        headers.forEach((th, index) => {
-            const textDiv = th.querySelector('[class*="upperLine"]');
-            const text = textDiv ? textDiv.innerText.trim() : th.innerText.trim();
-            if (text) {
-                columnMap[index] = {
-                    key: normalizeHeaderKey(text),
-                    rawName: text
-                };
+        headerCells.forEach((th, index) => {
+            const field = th.getAttribute('data-field');
+            if (field) {
+                // We use the data-field as the base for the key, it's more stable
+                const key = normalizeHeaderKey(field);
+                
+                // Also capture the human name for logging/debugging
+                const textDiv = th.querySelector('[class*="upperLine"]');
+                const humanName = textDiv ? textDiv.innerText.trim() : th.innerText.trim();
+                
+                columnMap[index] = { key, field, humanName };
             }
         });
 
-        // Ensure we found at least a ticker or symbol column
-        const symbolColIndex = Object.keys(columnMap).find(idx => 
-            columnMap[idx].rawName.toLowerCase().includes('symbol') || 
-            columnMap[idx].rawName.toLowerCase().includes('ticker')
-        );
-
-        const rawRows = table.querySelectorAll('tbody tr');
-        const rows = Array.from(rawRows).filter(r => r.querySelectorAll('td').length > 0);
-        
-        if (rows.length === 0) {
-            console.warn("[Stream D] ⚠️ No data rows found.");
+        const rawRows = document.querySelectorAll('tbody tr[data-rowkey]');
+        if (rawRows.length === 0) {
+            console.warn("[Stream D] ⚠️ No data rows found (data-rowkey missing).");
             return;
         }
 
         const payloadResults = [];
 
-        rows.forEach(row => {
+        rawRows.forEach(row => {
             const cells = row.querySelectorAll('td');
             const rowKey = row.getAttribute('data-rowkey') || '';
             const ticker = extractTicker(row);
@@ -134,7 +123,7 @@
                 ticker: ticker,
                 exchange_symbol: rowKey,
                 datakey: rowKey,
-                close: null // We'll try to find price in the loop
+                close: null 
             };
 
             cells.forEach((cell, idx) => {
@@ -145,8 +134,8 @@
                     
                     coinData[mapInfo.key] = value;
 
-                    // Try to catch the primary price if the header has "price"
-                    if (mapInfo.rawName.toLowerCase() === 'price') {
+                    // Standardize the price column if found
+                    if (mapInfo.field.toLowerCase() === 'price' || mapInfo.humanName.toLowerCase() === 'price') {
                         coinData.close = value;
                     }
                 }
@@ -179,23 +168,24 @@
                     console.error(`[Stream D] ❌ Backend rejected payload (Status ${response.status}):`, response.responseText);
                 }
             },
-            onerror: function(err) {
+            onerror: function (err) {
                 console.error(`[Stream D] ❌ Network Error punching data:`, err);
             }
         });
     }
 
-    // Startup Delay
-    setTimeout(() => {
-        console.log(`[Stream D] 🚀 Stream D Data Punching Machine Initialized!`);
-        scanAndPunchData(); // Initial run
-        
-        // Cyclic Timer
-        setInterval(() => {
-            console.log(`[Stream D] ⏱️ Auto-timer triggered (${CONFIG.SCAN_INTERVAL_MS / 1000}s interval)`);
-            scanAndPunchData();
-        }, CONFIG.SCAN_INTERVAL_MS);
-        
-    }, 5000);
+    // Wait for full page load + additional delay for TradingView SPA stability
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            console.log(`[Stream D] 🚀 Stream D Data Punching Machine Initialized (Post-Load)!`);
+            scanAndPunchData(); // Initial run
 
+            // Cyclic Timer
+            setInterval(() => {
+                console.log(`[Stream D] ⏱️ Auto-timer triggered (${CONFIG.SCAN_INTERVAL_MS / 1000}s interval)`);
+                scanAndPunchData();
+            }, CONFIG.SCAN_INTERVAL_MS);
+
+        }, 10000); // 10 second safety buffer
+    });
 })();

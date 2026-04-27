@@ -772,6 +772,7 @@ app.post('/api/stream-d/technicals', (req, res) => {
                 } catch (e) { /* non-blocking */ }
             });
             console.log(`[Stream D] 📡 Scan processed: ${payload.results.length} coins | ts=${timestamp}`);
+            io.emit('scan-update', { source: 'STREAM_D', timestamp });
         });
 
         res.json({ success: true, accepted: payload.results.length });
@@ -1222,15 +1223,17 @@ app.get('/api/ema-distance-board', (req, res) => {
         // Q1 — latest snapshot per ticker (any source) in window: drives the
         //      ticker list + last price.
         const latestRows = db.prepare(`
-            SELECT m.ticker, m.timestamp AS last_ts, m.price AS last_price
-            FROM master_coin_store m
-            INNER JOIN (
+            SELECT t.ticker, t.mx AS last_ts,
+                   (SELECT price FROM master_coin_store p 
+                    WHERE p.ticker = t.ticker AND p.price IS NOT NULL 
+                    ORDER BY timestamp DESC LIMIT 1) AS last_price
+            FROM (
                 SELECT ticker, MAX(timestamp) AS mx
                 FROM master_coin_store
                 WHERE timestamp >= ?
                 GROUP BY ticker
-            ) t ON t.ticker = m.ticker AND t.mx = m.timestamp
-            ORDER BY m.timestamp DESC
+            ) t
+            ORDER BY t.mx DESC
             LIMIT ?
         `).all(sinceISO, Math.min(400, limit * 4));
 

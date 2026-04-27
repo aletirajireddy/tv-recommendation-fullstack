@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import socketService from '../../services/SocketService';
 import styles from './DistanceTracker.module.css';
 
 const TFS = ['m1', 'm5', 'm15', 'h1', 'h4'];
@@ -39,8 +40,11 @@ const MAX_DISTS = [
 // accidental parent re-renders).
 const DistRow = React.memo(function DistRow({ r }) {
     return (
-        <tr key={r.ticker} className={r.anyStale ? styles.staleRow : ''}>
-            <td className={styles.tickerCell}>{r.cleanTicker}</td>
+        <tr key={r.ticker} className={`${r.anyStale ? styles.staleRow : ''} ${r.isSqueezed ? styles.squeezedRow : ''}`}>
+            <td className={styles.tickerCell}>
+                {r.cleanTicker}
+                {r.isSqueezed && <span className={styles.squeezeBadge} title="2+ EMAs within 0.5% delta">SQUEEZE</span>}
+            </td>
             <td className={styles.priceCell}>{smartFmt(r.price)}</td>
             <td>
                 <span className={styles.tfCell}>{TF_LABELS[r.minTf]}</span>{' '}
@@ -80,6 +84,29 @@ export function DistanceTracker() {
         { intervalMs: 60_000, deps: [maxDist] }
     );
 
+    // Audit fix: Live socket updates
+    useEffect(() => {
+        const socket = socketService.connect();
+        
+        // Use a small debounce to prevent spamming from batch updates
+        let timeout;
+        const handler = () => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => reload(), 1000);
+        };
+        
+        socket.on('scan-update', handler);
+        socket.on('smart-level-update', handler);
+        socket.on('stream-d-update', handler);
+        
+        return () => {
+            clearTimeout(timeout);
+            socket.off('scan-update', handler);
+            socket.off('smart-level-update', handler);
+            socket.off('stream-d-update', handler);
+        };
+    }, [reload]);
+
     const handleSort = (key) => {
         if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
         else { setSortKey(key); setSortDir('asc'); }
@@ -87,7 +114,19 @@ export function DistanceTracker() {
 
     const rows = useMemo(() => {
         const board = data?.board || [];
-        return [...board].sort((a, b) => {
+        
+        const enhancedBoard = board.map(r => {
+            const dists = Object.values(r.dists || {}).map(Math.abs);
+            let isSqueezed = false;
+            if (dists.length >= 2) {
+                const max = Math.max(...dists);
+                const min = Math.min(...dists);
+                if (max - min <= 0.5) isSqueezed = true;
+            }
+            return { ...r, isSqueezed };
+        });
+        
+        return enhancedBoard.sort((a, b) => {
             let av, bv;
             if (sortKey === 'minAbsDist') {
                 av = a.minAbsDist; bv = b.minAbsDist;
