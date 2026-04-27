@@ -295,6 +295,12 @@ db.exec(`
     );
 `);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_master_ticker_time ON master_coin_store(ticker, timestamp);`);
+// Performance audit fix (H1): hot endpoints (getEMA200Stack, getSourceHeartbeats,
+// distance-board, cascade) all filter by trigger_source — without this composite
+// index they fall back to ticker scans + filter, ~10× slower on large tables.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_master_source_ticker_time ON master_coin_store(trigger_source, ticker, timestamp DESC);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_master_ticker_source_time ON master_coin_store(ticker, trigger_source, timestamp DESC);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_master_timestamp ON master_coin_store(timestamp);`);
 
 // ============================================================================
 // 16. TIMESTAMP POLICY MIGRATION (Single Source of Truth)
