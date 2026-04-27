@@ -22,6 +22,7 @@ import { ValidatorTimelineWidget } from './components/AnalyticsWidgets/Validator
 import { DailyCalendarWidget } from './components/AnalyticsWidgets/DailyCalendarWidget';
 import { LevelReactionWidget } from './components/AnalyticsWidgets/LevelReactionWidget';
 import { EMACascadeMonitor } from './components/AnalyticsWidgets/EMACascadeMonitor';
+import { DistanceTracker } from './components/AnalyticsWidgets/DistanceTracker';
 
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
@@ -64,6 +65,11 @@ function App() {
             {/* ROW 0d: EMA CASCADE MONITOR (200-EMA defense ladder 1m→4h, scalper view) */}
             <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
                 <EMACascadeMonitor />
+            </div>
+
+            {/* ROW 0e: DISTANCE TRACKER (cross-coin sortable distance-to-EMA board) */}
+            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
+                <DistanceTracker />
             </div>
 
             {/* ROW 1: TIMELINE ANALYZERS (Moved to the very top!) */}

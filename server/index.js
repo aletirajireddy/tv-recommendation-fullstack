@@ -1194,6 +1194,87 @@ app.get('/api/ema-cascade', (req, res) => {
     }
 });
 
+// GET /api/ema-distance-board?limit=40&max_dist=10[&active_min=60]
+//   Cross-coin board of distance to 200 EMA across m1/m5/m15/h1/h4.
+//   For every ticker active in master_coin_store within the last `active_min`
+//   minutes, computes the merged EMA stack (Stream D + Stream C) and returns
+//   distance % per TF along with a synthetic "minAbsDist" sort key.
+app.get('/api/ema-distance-board', (req, res) => {
+    try {
+        const limit     = Math.min(120, Math.max(5, parseInt(req.query.limit) || 40));
+        const maxDist   = Math.min(50, Math.max(0.5, parseFloat(req.query.max_dist) || 10));
+        const activeMin = Math.min(720, Math.max(5, parseInt(req.query.active_min) || 60));
+        const sinceISO  = new Date(Date.now() - activeMin * 60 * 1000).toISOString();
+
+        // Active tickers in the window — most recent timestamp first
+        const rows = db.prepare(`
+            SELECT m.ticker, m.timestamp AS last_ts, m.price AS last_price
+            FROM master_coin_store m
+            INNER JOIN (
+                SELECT ticker, MAX(timestamp) AS mx
+                FROM master_coin_store
+                WHERE timestamp >= ?
+                GROUP BY ticker
+            ) t ON t.ticker = m.ticker AND t.mx = m.timestamp
+            ORDER BY m.timestamp DESC
+            LIMIT ?
+        `).all(sinceISO, Math.min(400, limit * 4));
+
+        const TFS = ['m1','m5','m15','h1','h4'];
+        const board = [];
+        for (const r of rows) {
+            const stack = MasterStoreService.getEMA200Stack(r.ticker, null);
+            if (!stack) continue;
+            const px = stack.lastPrice ?? r.last_price;
+            if (px == null) continue;
+
+            const dists = {};
+            const sources = {};
+            const ages = {};
+            let minAbs = Infinity;
+            let minTf = null;
+            let stalest = false;
+            let liveTfCount = 0;
+            for (const tf of TFS) {
+                const e = stack[tf];
+                if (!e || e.price == null) continue;
+                const d = ((px - e.price) / e.price) * 100;
+                dists[tf]   = d;
+                sources[tf] = e.source;
+                ages[tf]    = e.ageMs;
+                if (e.stale) stalest = true; else liveTfCount++;
+                if (Math.abs(d) < minAbs) { minAbs = Math.abs(d); minTf = tf; }
+            }
+            if (!minTf || minAbs > maxDist) continue;
+
+            board.push({
+                ticker: r.ticker,
+                cleanTicker: r.ticker.replace(/USDT(\.P)?$/i, ''),
+                lastTs: r.last_ts,
+                price: px,
+                dists,
+                sources,
+                ages,
+                minAbsDist: minAbs,
+                minTf,
+                liveTfCount,
+                anyStale: stalest,
+            });
+        }
+
+        board.sort((a, b) => a.minAbsDist - b.minAbsDist);
+        res.json({
+            count: board.length,
+            limit, max_dist: maxDist, active_min: activeMin,
+            board: board.slice(0, limit),
+            generatedAt: new Date().toISOString(),
+        });
+    } catch (e) {
+        console.error('[EMA Distance Board] error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // GET /api/source-health[?ticker=BTC]
 //   Returns last-seen timestamps + staleness per ingestion stream. Used by
 //   widget headers to show "A: 0:42 ago · C: 12m ago · D: 1:58 ago" rows.
