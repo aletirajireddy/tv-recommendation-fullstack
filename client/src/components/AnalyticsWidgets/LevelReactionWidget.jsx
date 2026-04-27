@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
+import { usePolledFetch } from '../../hooks/usePolledFetch';
 import {
     ComposedChart, Area, Line, XAxis, YAxis, ReferenceLine,
     Tooltip, ResponsiveContainer,
@@ -234,33 +235,41 @@ const VOL_SRC_META = {
 // Source priority: C (truth) > D (live) > A (sticky-but-edge-detected)
 const VOL_SRC_PRIORITY = { STREAM_C_ALERT: 3, STREAM_D_RVOL: 2, STREAM_A_EDGE: 1 };
 
-function ReactionLane({ coin, windowMin, loading, schema, volEvents = [] }) {
+// Audit fix #1/#2: React.memo prevents re-render when parent filter state changes but
+// this lane's data (coin, volEvents, schema) is unchanged. useMemo inside avoids
+// rebuilding Recharts series on every render pass.
+const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading, schema, volEvents }) {
     const meta     = REACTION_META[coin.reaction]   || REACTION_META.APPROACHING;
     const sideCol  = SIDE_COLOR[coin.side]          || SIDE_COLOR.SUPPORT;
-    const isSupport = coin.side === 'SUPPORT';
 
-    // Split history into above/below sections for dual-color area
-    // We build two synthetic series — above (pct > 0) and below (pct < 0)
-    const series = coin.history.length
-        ? coin.history.map(h => ({
-            ts:     h.ts,
-            price:  h.price,
-            pct:    h.pct,
-            above:  Math.max(0, h.pct),  // green fill (above level)
-            below:  Math.min(0, h.pct),  // red fill (below level)
-        }))
-        // If no history: synthetic flat line at distPct to show current position
-        : [
-            { ts: Date.now() - windowMin * 60000, pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct) },
-            { ts: Date.now(),                     pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct) },
-        ];
+    // Audit fix #2: memoize series + Y domain — 16 lanes × map+minMax is hot path.
+    const series = useMemo(() => (
+        coin.history.length
+            ? coin.history.map(h => ({
+                ts:    h.ts,
+                price: h.price,
+                pct:   h.pct,
+                above: Math.max(0, h.pct),
+                below: Math.min(0, h.pct),
+            }))
+            : [
+                { ts: Date.now() - windowMin * 60000, pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct) },
+                { ts: Date.now(),                     pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct) },
+            ]
+    ), [coin.history, coin.distPct, coin.close, windowMin]);
 
-    const pcts  = series.map(s => s.pct);
-    const pMin  = Math.min(...pcts, -0.5);
-    const pMax  = Math.max(...pcts,  0.5);
-    const pad   = Math.max(0.2, (pMax - pMin) * 0.15);
-    const yMin  = pMin - pad;
-    const yMax  = pMax + pad;
+    const [yMin, yMax] = useMemo(() => {
+        let pMin = -0.5, pMax = 0.5;
+        for (const s of series) {
+            if (s.pct < pMin) pMin = s.pct;
+            if (s.pct > pMax) pMax = s.pct;
+        }
+        const pad = Math.max(0.2, (pMax - pMin) * 0.15);
+        return [pMin - pad, pMax + pad];
+    }, [series]);
+
+    // volEvents defaults handled via prop default in caller
+    const safeVolEvents = volEvents || [];
 
     const noHistory = coin.snapshot_count === 0;
 
@@ -306,8 +315,8 @@ function ReactionLane({ coin, windowMin, loading, schema, volEvents = [] }) {
                     {/* Volume badge: truth-aware (Stream C alert > Stream D RVol > Stream A edge).
                         Falls back to legacy sticky `volSpike` flag (greyed) when no recent event exists. */}
                     {(() => {
-                        const fresh = volEvents.length
-                            ? volEvents.slice().sort((a, b) =>
+                        const fresh = safeVolEvents.length
+                            ? safeVolEvents.slice().sort((a, b) =>
                                 (VOL_SRC_PRIORITY[b.source] || 0) - (VOL_SRC_PRIORITY[a.source] || 0)
                                 || new Date(b.ts) - new Date(a.ts)
                             )[0]
@@ -318,7 +327,7 @@ function ReactionLane({ coin, windowMin, loading, schema, volEvents = [] }) {
                             return (
                                 <span className={styles.volBadge}
                                     style={{ color: m.color, background: m.bg, borderColor: m.color + '60' }}
-                                    title={`${m.name} · ${ago}m ago${volEvents.length > 1 ? ` (+${volEvents.length - 1} more)` : ''}`}>
+                                    title={`${m.name} · ${ago}m ago${safeVolEvents.length > 1 ? ` (+${safeVolEvents.length - 1} more)` : ''}`}>
                                     VOL·{m.label} {ago}m
                                 </span>
                             );
@@ -389,7 +398,7 @@ function ReactionLane({ coin, windowMin, loading, schema, volEvents = [] }) {
                             <ReferenceLine y={-0.3} stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
 
                             {/* Volume-event pins — color-coded by source (truthful spike moments) */}
-                            {volEvents.map((e, idx) => {
+                            {safeVolEvents.map((e, idx) => {
                                 const m = VOL_SRC_META[e.source] || VOL_SRC_META.STREAM_A_EDGE;
                                 return (
                                     <ReferenceLine key={`vol-${idx}`}
@@ -431,7 +440,7 @@ function ReactionLane({ coin, windowMin, loading, schema, volEvents = [] }) {
             </div>
         </div>
     );
-}
+}); // React.memo — ReactionLane only re-renders when its own props change
 
 // ─── Main widget ─────────────────────────────────────────────────────────────
 
@@ -448,67 +457,55 @@ const INTERVALS = [
 ];
 
 export function LevelReactionWidget() {
-    const [data,        setData]        = useState(null);
-    const [loading,     setLoading]     = useState(true);
-    const [error,       setError]       = useState(null);
     const [windowMin,   setWindowMin]   = useState(60);
     const [intervalMin, setIntervalMin] = useState(5);
     const [maxDist,     setMaxDist]     = useState(5);
-    const [filterSide,  setFilterSide]  = useState('ALL'); // ALL / SUPPORT / RESISTANCE
-    const [filterReact, setFilterReact] = useState('ALL'); // ALL / BOUNCE / REJECT / TESTING / BREAK
-    const [streamDSchema, setStreamDSchema] = useState([]);
-    const [volEventsByTicker, setVolEventsByTicker] = useState({});
-    const pollRef = useRef(null);
+    const [filterSide,  setFilterSide]  = useState('ALL');
+    const [filterReact, setFilterReact] = useState('ALL');
 
-    // Fetch Stream D schema once on mount (dynamic field discovery)
-    useEffect(() => {
-        fetch('/api/stream-d/schema')
-            .then(r => r.json())
-            .then(d => { if (d.fields?.length) setStreamDSchema(d.fields); })
-            .catch(() => {}); // non-critical — chips just won't render
-    }, []);
-
-    const load = useCallback(async (wMin = windowMin, iMin = intervalMin, mDist = maxDist) => {
-        setLoading(true);
-        setError(null);
-        try {
+    // Audit fix #5/#3/#6: combined async fetcher — level-reactions then volume-events
+    // in one chained call so both share one AbortController. ref-pattern means the
+    // polling interval is created once; dep changes trigger reload via useEffect.
+    const { data, loading, error, reload } = usePolledFetch(
+        async (signal) => {
             const r = await fetch(
-                `/api/level-reactions?window_min=${wMin}&interval=${iMin}&limit=16&max_dist=${mDist}`
+                `/api/level-reactions?window_min=${windowMin}&interval=${intervalMin}&limit=16&max_dist=${maxDist}`,
+                { signal }
             );
             const d = await r.json();
-            if (d.error) { setError(d.error); return; }
-            setData(d);
+            if (d.error) throw new Error(d.error);
 
-            // Side-fetch truthful volume events for the visible coins (one batched call)
+            // Batch vol-events for all visible coins in the same poll tick
             const tickers = (d.coins || []).map(c => c.cleanTicker || c.ticker).filter(Boolean);
+            let volEventsByTicker = {};
             if (tickers.length) {
                 try {
                     const vr = await fetch(
-                        `/api/volume-events?tickers=${encodeURIComponent(tickers.join(','))}&since_min=${wMin}`
+                        `/api/volume-events?tickers=${encodeURIComponent(tickers.join(','))}&since_min=${windowMin}`,
+                        { signal }
                     );
                     const vd = await vr.json();
-                    setVolEventsByTicker(vd?.by_ticker || {});
-                } catch { /* non-critical */ }
-            } else {
-                setVolEventsByTicker({});
+                    volEventsByTicker = vd?.by_ticker || {};
+                } catch { /* vol-events is non-critical */ }
             }
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setLoading(false);
-        }
-    }, [windowMin, intervalMin, maxDist]);
+            return { ...d, volEventsByTicker };
+        },
+        { intervalMs: 90_000, deps: [windowMin, intervalMin, maxDist] }
+    );
 
-    useEffect(() => { load(); }, []);
+    // Stream D schema: fetched once on mount (intervalMs:0 = no polling).
+    const { data: schemaData } = usePolledFetch(
+        () => '/api/stream-d/schema',
+        { intervalMs: 0, deps: [] }
+    );
+    // Stable empty-array reference so React.memo on ReactionLane doesn't thrash.
+    const streamDSchema = useMemo(() => schemaData?.fields || [], [schemaData]);
 
-    // Auto-refresh every 90s
-    useEffect(() => {
-        pollRef.current = setInterval(() => load(), 90_000);
-        return () => clearInterval(pollRef.current);
-    }, [load]);
+    // Setting state is all that's needed — deps change triggers reload via hook.
+    const handleWindow   = (v) => setWindowMin(v);
+    const handleInterval = (v) => setIntervalMin(v);
 
-    const handleWindow = (v) => { setWindowMin(v); load(v, intervalMin, maxDist); };
-    const handleInterval = (v) => { setIntervalMin(v); load(windowMin, v, maxDist); };
+    const volEventsByTicker = data?.volEventsByTicker || {};
 
     // Filtered coins
     const coins = (data?.coins || []).filter(c => {
@@ -538,7 +535,7 @@ export function LevelReactionWidget() {
                     </div>
                     <button
                         className={styles.refreshBtn}
-                        onClick={() => load()}
+                        onClick={() => reload()}
                         title="Refresh"
                     >↺</button>
                 </div>
@@ -575,7 +572,7 @@ export function LevelReactionWidget() {
                         {[2, 3, 5].map(v => (
                             <button key={v}
                                 className={`${styles.pill} ${maxDist === v ? styles.pillActive : ''}`}
-                                onClick={() => { setMaxDist(v); load(windowMin, intervalMin, v); }}>
+                                onClick={() => setMaxDist(v)}>
                                 ±{v}%
                             </button>
                         ))}
@@ -652,7 +649,7 @@ export function LevelReactionWidget() {
                                 windowMin={windowMin}
                                 loading={false}
                                 schema={streamDSchema}
-                                volEvents={volEventsByTicker[coin.cleanTicker || coin.ticker] || []}
+                                volEvents={volEventsByTicker[coin.cleanTicker || coin.ticker]}
                             />
                         ))}
                     </div>

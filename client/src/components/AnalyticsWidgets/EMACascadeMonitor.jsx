@@ -1,9 +1,16 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
     ComposedChart, Line, XAxis, YAxis, ReferenceLine, ReferenceDot,
     Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import styles from './EMACascadeMonitor.module.css';
+import { usePolledFetch } from '../../hooks/usePolledFetch';
+
+// Audit fix #7: cap rendered Recharts ReferenceLine/ReferenceDot to avoid
+// the ~100-marker render cliff. Older events drop off; the most recent
+// always survive, which is what users care about.
+const MAX_VOL_PINS  = 40;
+const MAX_TR_DOTS   = 40;
 
 /* ───────────── Helpers ───────────── */
 
@@ -112,52 +119,28 @@ export function EMACascadeMonitor() {
     const [tickerInput,setTickerInput]= useState('BTC');
     const [windowMin,  setWindowMin]  = useState(120);
     const [intervalMin,setIntervalMin]= useState(2);
-    const [data,       setData]       = useState(null);
-    const [loading,    setLoading]    = useState(true);
-    const [error,      setError]      = useState(null);
-    const pollRef = useRef(null);
 
-    const load = useCallback(async (t = ticker, w = windowMin, i = intervalMin) => {
-        if (!t) return;
-        setLoading(true); setError(null);
-        try {
-            const r = await fetch(
-                `/api/ema-cascade?ticker=${encodeURIComponent(t)}&window_min=${w}&interval=${i}`
-            );
-            const d = await r.json();
-            if (d.error) setError(d.error);
-            else setData(d);
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setLoading(false);
-        }
-    }, [ticker, windowMin, intervalMin]);
-
-    useEffect(() => { load(); }, []); // initial
-
-    useEffect(() => {
-        pollRef.current = setInterval(() => load(), 60_000);
-        return () => clearInterval(pollRef.current);
-    }, [load]);
+    // Audit fixes #4: ref-pattern fetcher (no interval churn on dep changes),
+    // AbortController on every fetch (#3), pause when tab hidden (#6).
+    const { data, loading, error, reload } = usePolledFetch(
+        () => `/api/ema-cascade?ticker=${encodeURIComponent(ticker)}&window_min=${windowMin}&interval=${intervalMin}`,
+        { intervalMs: 60_000, deps: [ticker, windowMin, intervalMin] }
+    );
 
     const handleSubmitTicker = (e) => {
         e.preventDefault();
         const v = tickerInput.trim().toUpperCase();
-        if (v && v !== ticker) {
-            setTicker(v);
-            load(v, windowMin, intervalMin);
-        }
+        if (v && v !== ticker) setTicker(v);  // dep change triggers reload
     };
 
     const setQuickTicker = (t) => {
         setTickerInput(t);
         setTicker(t);
-        load(t, windowMin, intervalMin);
     };
 
-    const setWindow = (v) => { setWindowMin(v); load(ticker, v, intervalMin); };
-    const setInterval_ = (v) => { setIntervalMin(v); load(ticker, windowMin, v); };
+    const setWindow = (v) => setWindowMin(v);
+    const setInterval_ = (v) => setIntervalMin(v);
+    const load = reload;
 
     /* ─── Build chart series with gap handling ─── */
     const chartData = useMemo(() => {
@@ -197,8 +180,22 @@ export function EMACascadeMonitor() {
         return [lo - pad, hi + pad];
     }, [chartData]);
 
-    const transitions = data?.transitions || [];
-    const volEvents   = data?.volEvents   || [];
+    // Audit fix #7: cap reference markers to keep Recharts in fast path.
+    // Most-recent first slice — older events drop off rather than newer ones.
+    const transitions = useMemo(
+        () => (data?.transitions || []).slice(-MAX_TR_DOTS),
+        [data]
+    );
+    const volEvents = useMemo(
+        () => (data?.volEvents || []).slice(-MAX_VOL_PINS),
+        [data]
+    );
+    // Audit fix #13: memoize the reversed/sliced recent-transitions feed.
+    const recentTransitions = useMemo(
+        () => [...(data?.transitions || [])].reverse().slice(0, 12),
+        [data]
+    );
+
     const stackNow    = data?.stackNow    || {};
     const sourceHealth= data?.sourceHealth || {};
     const defense     = data?.defenseLevelNow || {};
@@ -468,7 +465,7 @@ export function EMACascadeMonitor() {
                         {/* Recent transitions (most recent first) */}
                         {transitions.length > 0 && (
                             <div className={styles.transitionsList}>
-                                {[...transitions].reverse().slice(0, 12).map((t, idx) => (
+                                {recentTransitions.map((t, idx) => (
                                     <div key={idx} className={styles.transRow}>
                                         <span className={styles.transTime}>{fmtTime(t.ts)}</span>
                                         <span className={styles.transTf}>{TF_LABELS[t.tf]}</span>
