@@ -337,6 +337,33 @@ db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inst_interest_payload_hash ON ins
 db.exec(`CREATE INDEX IF NOT EXISTS idx_master_payload_hash ON master_coin_store(payload_hash) WHERE payload_hash IS NOT NULL;`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_master_source ON master_coin_store(ingestion_source);`);
 
+// ============================================================================
+// 17. VOLUME EVENTS (Truth-source for "spike happened HERE")
+// ============================================================================
+// Stream A's volSpike flag persists ~15 min in scan payloads — useless for
+// answering "when did volume actually spike?". This table records discrete
+// events with provenance:
+//   STREAM_C_ALERT  — TradingView alert fired (=> exact spike moment, truth)
+//   STREAM_A_EDGE   — leading edge of a Stream A volSpike run (best-effort)
+//   STREAM_D_RVOL   — relative volume crossed threshold in Stream D scan
+// Widgets render these as discrete pins/dots instead of fat 15-min bars.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS volume_events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker      TEXT NOT NULL,
+        ts          TEXT NOT NULL,         -- ISO 8601 UTC, the spike moment
+        source      TEXT NOT NULL,         -- 'STREAM_C_ALERT' | 'STREAM_A_EDGE' | 'STREAM_D_RVOL'
+        strength    REAL DEFAULT 1.0,      -- 1.0 = standard, >1 = bigger spike (RelVol multiplier when known)
+        payload_hash TEXT,                 -- dedup across rehydration paths
+        meta        JSON,                  -- optional context (price, direction, etc.)
+        created_at  TEXT DEFAULT (datetime('now'))
+    );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_volume_events_ticker_ts ON volume_events(ticker, ts);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_volume_events_source ON volume_events(source);`);
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_volume_events_dedup
+         ON volume_events(ticker, ts, source);`);
+
 console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles, validation_trials, validation_state_log, pattern_statistics, master_coin_store [+ timestamp policy migration]');
 
 module.exports = db;

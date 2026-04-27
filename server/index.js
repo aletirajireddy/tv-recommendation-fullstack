@@ -13,6 +13,7 @@ const telegramValidator = require('./services/telegramValidator');
 const MasterStoreService = require('./services/MasterStoreService');
 const TimestampResolver = require('./services/TimestampResolver');
 const GhostScoringEngine = require('./services/GhostScoringEngine');
+const VolumeEventService = require('./services/VolumeEventService');
 
 const app = express();
 const server = http.createServer(app);
@@ -147,6 +148,16 @@ app.post('/scan-report', (req, res) => {
                         timestampISO: timestamp,           // payload.timestamp from scan
                         ingestionSource: 'SCAN_A',
                     }).catch(err => console.error(err));
+                    // Volume edge detection — fires once on rising edge of volSpike
+                    try {
+                        VolumeEventService.onStreamA({
+                            ticker,
+                            ts: timestamp,
+                            volSpike: d.volSpike,
+                            price,
+                            direction: d.direction,
+                        });
+                    } catch (e) { /* non-blocking */ }
                 });
             });
         }
@@ -742,6 +753,10 @@ app.post('/api/stream-d/technicals', (req, res) => {
                     ingestionSource: 'WATCHLIST_TECHNICALS',
                 }).then(() => ingested++)
                   .catch(err => console.error(`[Stream D] ${ticker} ingest error:`, err.message));
+                // Volume RelVol crossing detection
+                try {
+                    VolumeEventService.onStreamD({ ticker, ts: timestamp, data });
+                } catch (e) { /* non-blocking */ }
             });
             console.log(`[Stream D] 📡 Scan processed: ${payload.results.length} coins | ts=${timestamp}`);
         });
@@ -835,6 +850,54 @@ app.get('/api/ema-stack', (req, res) => {
         res.json(MasterStoreService.getEMA200Stack(ticker, asOf));
     } catch (e) {
         console.error('[EMA Stack] error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/volume-events?ticker=BTC&since_min=120[&limit=200]
+//   Returns discrete volume spike events (with provenance) for a ticker since
+//   N minutes ago. Used by widgets to render pins on time-series charts.
+//   Sources: STREAM_C_ALERT (truth), STREAM_A_EDGE (rising-edge of volSpike),
+//            STREAM_D_RVOL (relativevolume ≥ threshold).
+app.get('/api/volume-events', (req, res) => {
+    try {
+        const ticker  = req.query.ticker ? req.query.ticker.trim() : null;
+        const sinceMin = Math.min(1440, Math.max(5, parseInt(req.query.since_min) || 120));
+        const limit   = Math.min(500, Math.max(1, parseInt(req.query.limit) || 200));
+        const sinceISO = new Date(Date.now() - sinceMin * 60 * 1000).toISOString();
+
+        // Try ticker variants if a bare symbol is passed (BTC → BTCUSDT.P fallback)
+        let events = [];
+        let resolvedTicker = ticker;
+        if (ticker) {
+            const variants = Array.from(new Set([
+                ticker,
+                `${ticker}USDT.P`,
+                `${ticker}USDT`,
+                ticker.replace(/USDT\.P$|USDT$/, ''),
+            ].filter(Boolean)));
+            for (const v of variants) {
+                events = VolumeEventService.getEvents(v, sinceISO, limit);
+                if (events.length) { resolvedTicker = v; break; }
+            }
+        } else {
+            events = VolumeEventService.getEvents(null, sinceISO, limit);
+        }
+
+        const counts = ticker
+            ? VolumeEventService.countBySource(resolvedTicker, sinceISO)
+            : null;
+
+        res.json({
+            ticker: resolvedTicker,
+            since_min: sinceMin,
+            since: sinceISO,
+            count: events.length,
+            counts_by_source: counts,
+            events,
+        });
+    } catch (e) {
+        console.error('[VolumeEvents] error:', e);
         res.status(500).json({ error: e.message });
     }
 });
@@ -2245,6 +2308,18 @@ app.post('/api/webhook/smart-levels', (req, res) => {
             }).catch(e => console.error(e));
         });
 
+        // [VOLUME-TRUTH] - Stream C alert moment = authoritative spike event.
+        setImmediate(() => {
+            try {
+                VolumeEventService.onStreamC({
+                    ticker,
+                    ts: parsedTimestamp,
+                    payload,
+                    payloadHash,
+                });
+            } catch (e) { console.error('VolumeEvent C error:', e.message); }
+        });
+
         // 3rd UMPIRE VALIDATOR — pass resolved timestamp (NEVER payload.timestamp).
         setImmediate(() => {
             try { umpire.onStreamC(payload, { resolvedTimestampISO: parsedTimestamp }); }
@@ -2723,6 +2798,13 @@ app.get('/api/level-reactions', (req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 V3 Server running on port ${PORT} (All Interfaces)`);
+
+    // One-shot volume-events backfill from existing history.
+    // Idempotent (UNIQUE INDEX on ticker+ts+source dedupes), so safe on every boot.
+    setImmediate(() => {
+        try { VolumeEventService.backfill({ verbose: true }); }
+        catch (e) { console.error('VolumeEvent backfill error:', e.message); }
+    });
 });
 
 /**
