@@ -902,6 +902,265 @@ app.get('/api/volume-events', (req, res) => {
     }
 });
 
+// ============================================================================
+// EMA CASCADE — /api/ema-cascade
+// ============================================================================
+// For one ticker, returns a richly-typed time series for the EMA Cascade
+// Monitor widget:
+//   { ticker, history: [{ts, price, emas:{m1,m5,m15,h1,h4}, cascadeState,
+//                        transitions:[], gapBefore?:bool, dataSource}],
+//     volEvents:[{ts, source, strength, meta}],
+//     defenseLevelNow, lastBreak, gaps, sourceHealth }
+//
+// Cascade state per row, per TF:  ABOVE | TESTING | BELOW
+// Transitions emitted when state flips between adjacent rows.
+// "Active defense level" = lowest TF where state is ABOVE (bull)  /
+//                          lowest TF where state is BELOW (bear).
+// When that flips, we emit BREAK / RESPECT / PULLBACK_HOLD / PULLBACK_REJECT.
+
+app.get('/api/ema-cascade', (req, res) => {
+    try {
+        const tickerRaw = (req.query.ticker || '').trim();
+        if (!tickerRaw) return res.status(400).json({ error: 'ticker required' });
+        const windowMin = Math.min(720, Math.max(15, parseInt(req.query.window_min) || 120));
+        const intervalMin = Math.max(1, Math.min(15, parseInt(req.query.interval) || 2));
+        const sinceISO = new Date(Date.now() - windowMin * 60 * 1000).toISOString();
+
+        // Resolve ticker via stack endpoint logic (one canonical name)
+        const stackNow = MasterStoreService.getEMA200Stack(tickerRaw);
+        const ticker = stackNow.ticker || tickerRaw;
+
+        // 1. Pull all master_coin_store rows for ticker in window (any source)
+        const rows = db.prepare(`
+            SELECT timestamp, price, trigger_source, stream_a_state,
+                   stream_c_state, stream_d_state
+            FROM master_coin_store
+            WHERE ticker = ? AND timestamp >= ?
+            ORDER BY timestamp ASC
+        `).all(ticker, sinceISO);
+
+        if (!rows.length) {
+            return res.json({
+                ticker, window_min: windowMin, interval_min: intervalMin,
+                history: [], volEvents: [],
+                defenseLevelNow: null, lastBreak: null, gaps: [],
+                sourceHealth: MasterStoreService.getSourceHeartbeats(ticker),
+                stackNow,
+            });
+        }
+
+        // 2. Bucket by interval — within each bucket, take last price + merge
+        //    EMA slices from all source rows.
+        const intervalMs = intervalMin * 60 * 1000;
+        const TF_BY_RES = { 1: 'm1', 5: 'm5', 15: 'm15', 60: 'h1', 240: 'h4' };
+        const buckets = new Map();
+
+        for (const row of rows) {
+            const ms = new Date(row.timestamp).getTime();
+            const key = Math.floor(ms / intervalMs) * intervalMs;
+            const b = buckets.get(key) || {
+                ts: key,
+                price: null,
+                emas: { m1: null, m5: null, m15: null, h1: null, h4: null },
+                emaSrc: { m1: null, m5: null, m15: null, h1: null, h4: null },
+                lastSrc: null,
+            };
+            b.price = parseFloat(row.price) || b.price;
+            b.lastSrc = row.trigger_source;
+
+            // Stream D: dynamic ema_200Timeresolution<N> keys
+            if (row.stream_d_state) {
+                try {
+                    const d = JSON.parse(row.stream_d_state);
+                    for (const k of Object.keys(d)) {
+                        const m = k.match(/^ema_200Timeresolution(\d+)$/i);
+                        if (!m) continue;
+                        const tf = TF_BY_RES[parseInt(m[1], 10)];
+                        if (!tf) continue;
+                        const v = parseFloat(d[k]);
+                        if (!isNaN(v)) { b.emas[tf] = v; b.emaSrc[tf] = 'STREAM_D'; }
+                    }
+                    if (b.emas.m1 == null && d.ema_200 != null) {
+                        const v = parseFloat(d.ema_200);
+                        if (!isNaN(v)) { b.emas.m1 = v; b.emaSrc.m1 = 'STREAM_D'; }
+                    }
+                } catch {}
+            }
+            // Stream C: smart_levels.emas_200.{tf}.p
+            if (row.stream_c_state) {
+                try {
+                    const s = JSON.parse(row.stream_c_state);
+                    const e200 = s?.smart_levels?.emas_200 || null;
+                    if (e200) {
+                        for (const tf of ['m1', 'm5', 'm15', 'h1', 'h4']) {
+                            if (b.emas[tf] != null) continue;  // D already won
+                            const slot = e200[tf];
+                            if (!slot) continue;
+                            const v = parseFloat(slot.p ?? slot);
+                            if (!isNaN(v)) { b.emas[tf] = v; b.emaSrc[tf] = 'STREAM_C'; }
+                        }
+                    }
+                } catch {}
+            }
+            buckets.set(key, b);
+        }
+
+        // 3. Sort buckets, then LOCF: carry forward EMA values across buckets
+        //    when a bucket didn't get fresh data (browser glitch resilience).
+        const sortedBuckets = Array.from(buckets.values()).sort((a, b) => a.ts - b.ts);
+        const carry = { m1: null, m5: null, m15: null, h1: null, h4: null };
+        const carrySrc = { m1: null, m5: null, m15: null, h1: null, h4: null };
+        const carryAge = { m1: 0, m5: 0, m15: 0, h1: 0, h4: 0 };
+
+        for (const b of sortedBuckets) {
+            for (const tf of ['m1', 'm5', 'm15', 'h1', 'h4']) {
+                if (b.emas[tf] != null) {
+                    carry[tf] = b.emas[tf];
+                    carrySrc[tf] = b.emaSrc[tf];
+                    carryAge[tf] = b.ts;
+                } else if (carry[tf] != null) {
+                    b.emas[tf] = carry[tf];
+                    b.emaSrc[tf] = carrySrc[tf] + '_LOCF';
+                }
+            }
+            // Carry price too if a bucket somehow had only EMA data
+            if (b.price == null && sortedBuckets[0].price != null) {
+                // find prior price
+                const prior = sortedBuckets.filter(x => x.ts < b.ts && x.price != null).pop();
+                if (prior) b.price = prior.price;
+            }
+        }
+
+        // 4. Cascade state per bucket per TF
+        const TESTING_PCT = 0.15;  // ±0.15% = touching the EMA
+        const tfs = ['m1', 'm5', 'm15', 'h1', 'h4'];
+        const computeCascadeState = (price, ema) => {
+            if (price == null || ema == null) return 'UNKNOWN';
+            const pct = ((price - ema) / ema) * 100;
+            if (Math.abs(pct) <= TESTING_PCT) return 'TESTING';
+            return pct > 0 ? 'ABOVE' : 'BELOW';
+        };
+
+        // Compute baseline state + active defense per bucket
+        for (const b of sortedBuckets) {
+            b.cascadeState = {};
+            b.distPct = {};
+            for (const tf of tfs) {
+                b.cascadeState[tf] = computeCascadeState(b.price, b.emas[tf]);
+                b.distPct[tf] = b.emas[tf] && b.price
+                    ? ((b.price - b.emas[tf]) / b.emas[tf]) * 100
+                    : null;
+            }
+            // Active defense: lowest TF still ABOVE = bull defense level;
+            // lowest TF still BELOW = bear ceiling (resistance defense).
+            const aboveTfs = tfs.filter(tf => b.cascadeState[tf] === 'ABOVE');
+            const belowTfs = tfs.filter(tf => b.cascadeState[tf] === 'BELOW');
+            b.bullDefense = aboveTfs[0] || null;          // first TF where price is still above its EMA
+            b.bearDefense = belowTfs[0] || null;
+            b.regime = aboveTfs.length >= belowTfs.length ? 'BULL' : 'BEAR';
+        }
+
+        // 5. Transition detection
+        const transitions = [];
+        for (let i = 1; i < sortedBuckets.length; i++) {
+            const prev = sortedBuckets[i - 1];
+            const cur  = sortedBuckets[i];
+            cur.transitions = [];
+            for (const tf of tfs) {
+                const ps = prev.cascadeState[tf];
+                const cs = cur.cascadeState[tf];
+                if (ps === cs || ps === 'UNKNOWN' || cs === 'UNKNOWN') continue;
+
+                let evt = null;
+                if (ps === 'ABOVE' && cs === 'BELOW')         evt = 'BROKE';
+                else if (ps === 'TESTING' && cs === 'BELOW')  evt = 'BROKE';
+                else if (ps === 'TESTING' && cs === 'ABOVE')  evt = 'RESPECTED';
+                else if (ps === 'BELOW' && cs === 'ABOVE')    evt = 'RECLAIM';
+                else if (ps === 'ABOVE' && cs === 'TESTING')  evt = 'TOUCH';
+                else if (ps === 'BELOW' && cs === 'TESTING')  evt = 'PULLBACK_TOUCH';
+
+                if (evt) {
+                    const t = {
+                        ts: cur.ts, tf, event: evt,
+                        prevState: ps, newState: cs,
+                        price: cur.price, ema: cur.emas[tf],
+                    };
+                    cur.transitions.push(t);
+                    transitions.push(t);
+                }
+            }
+
+            // PULLBACK_HOLD detection: BROKE earlier in window, then RECLAIMED,
+            // then re-tested as support and held (TESTING → ABOVE again).
+            // Look back ≤30 buckets per TF.
+            for (const tf of tfs) {
+                if (cur.transitions.find(t => t.tf === tf && t.event === 'RESPECTED')) {
+                    const look = sortedBuckets.slice(Math.max(0, i - 30), i);
+                    const hadBreak = look.some(b =>
+                        b.transitions?.find(t => t.tf === tf && t.event === 'BROKE')
+                    );
+                    if (hadBreak) {
+                        const t = { ts: cur.ts, tf, event: 'PULLBACK_HOLD', price: cur.price, ema: cur.emas[tf] };
+                        cur.transitions.push(t);
+                        transitions.push(t);
+                    }
+                }
+            }
+        }
+
+        // 6. Gap detection — flag buckets that follow a break in cadence
+        const gaps = MasterStoreService.detectGaps(sortedBuckets, intervalMs, 2);
+        const gapStartSet = new Set(gaps.map(g => g.endTs));
+        for (const b of sortedBuckets) {
+            b.gapBefore = gapStartSet.has(b.ts);
+        }
+
+        // 7. Volume events in window
+        const volEvents = VolumeEventService.getEvents(ticker, sinceISO, 500)
+            .map(e => ({ ts: new Date(e.ts).getTime(), source: e.source, strength: e.strength, meta: e.meta }))
+            .sort((a, b) => a.ts - b.ts);
+
+        // 8. Build the slim history array for FE
+        const history = sortedBuckets.map(b => ({
+            ts: b.ts,
+            price: b.price,
+            emas: b.emas,
+            emaSrc: b.emaSrc,
+            cascadeState: b.cascadeState,
+            distPct: b.distPct,
+            bullDefense: b.bullDefense,
+            bearDefense: b.bearDefense,
+            regime: b.regime,
+            transitions: b.transitions || [],
+            gapBefore: b.gapBefore,
+            dataSource: b.lastSrc,
+        }));
+
+        // 9. Summary slots
+        const last = history[history.length - 1] || null;
+        const lastBreak = [...transitions].reverse().find(t => t.event === 'BROKE') || null;
+
+        res.json({
+            ticker,
+            window_min: windowMin,
+            interval_min: intervalMin,
+            history,
+            volEvents,
+            transitions,
+            defenseLevelNow: last
+                ? { bull: last.bullDefense, bear: last.bearDefense, regime: last.regime }
+                : null,
+            lastBreak,
+            gaps,
+            sourceHealth: MasterStoreService.getSourceHeartbeats(ticker),
+            stackNow,
+        });
+    } catch (e) {
+        console.error('[EMA Cascade] error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // GET /api/source-health[?ticker=BTC]
 //   Returns last-seen timestamps + staleness per ingestion stream. Used by
 //   widget headers to show "A: 0:42 ago · C: 12m ago · D: 1:58 ago" rows.
