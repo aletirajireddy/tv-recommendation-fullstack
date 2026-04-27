@@ -855,28 +855,61 @@ app.get('/api/ema-stack', (req, res) => {
 });
 
 // GET /api/volume-events?ticker=BTC&since_min=120[&limit=200]
-//   Returns discrete volume spike events (with provenance) for a ticker since
-//   N minutes ago. Used by widgets to render pins on time-series charts.
+//   Or:  /api/volume-events?tickers=BTC,ETH,SOL&since_min=60
+//   Returns discrete volume spike events (with provenance) since N minutes ago.
 //   Sources: STREAM_C_ALERT (truth), STREAM_A_EDGE (rising-edge of volSpike),
 //            STREAM_D_RVOL (relativevolume ≥ threshold).
+//   Multi-ticker mode returns { by_ticker: { TICKER: [events...] } } for
+//   efficient per-coin overlay in list widgets.
+function _expandTickerVariants(t) {
+    return Array.from(new Set([
+        t,
+        `${t}USDT.P`,
+        `${t}USDT`,
+        t.replace(/USDT\.P$|USDT$/, ''),
+    ].filter(Boolean)));
+}
+
 app.get('/api/volume-events', (req, res) => {
     try {
-        const ticker  = req.query.ticker ? req.query.ticker.trim() : null;
         const sinceMin = Math.min(1440, Math.max(5, parseInt(req.query.since_min) || 120));
         const limit   = Math.min(500, Math.max(1, parseInt(req.query.limit) || 200));
         const sinceISO = new Date(Date.now() - sinceMin * 60 * 1000).toISOString();
 
-        // Try ticker variants if a bare symbol is passed (BTC → BTCUSDT.P fallback)
+        // Multi-ticker batch mode
+        if (req.query.tickers) {
+            const tickers = String(req.query.tickers)
+                .split(',').map(s => s.trim()).filter(Boolean).slice(0, 64);
+            const by_ticker = {};
+            const counts_by_ticker = {};
+            for (const t of tickers) {
+                let events = [];
+                let resolved = t;
+                for (const v of _expandTickerVariants(t)) {
+                    events = VolumeEventService.getEvents(v, sinceISO, limit);
+                    if (events.length) { resolved = v; break; }
+                }
+                by_ticker[t] = events;
+                counts_by_ticker[t] = events.length
+                    ? VolumeEventService.countBySource(resolved, sinceISO)
+                    : { STREAM_C_ALERT: 0, STREAM_A_EDGE: 0, STREAM_D_RVOL: 0 };
+            }
+            return res.json({
+                multi: true,
+                since_min: sinceMin,
+                since: sinceISO,
+                tickers,
+                by_ticker,
+                counts_by_ticker,
+            });
+        }
+
+        // Single-ticker mode (backward compat)
+        const ticker = req.query.ticker ? req.query.ticker.trim() : null;
         let events = [];
         let resolvedTicker = ticker;
         if (ticker) {
-            const variants = Array.from(new Set([
-                ticker,
-                `${ticker}USDT.P`,
-                `${ticker}USDT`,
-                ticker.replace(/USDT\.P$|USDT$/, ''),
-            ].filter(Boolean)));
-            for (const v of variants) {
+            for (const v of _expandTickerVariants(ticker)) {
                 events = VolumeEventService.getEvents(v, sinceISO, limit);
                 if (events.length) { resolvedTicker = v; break; }
             }

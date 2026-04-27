@@ -225,7 +225,16 @@ function LaneTooltip({ active, payload, coin }) {
 
 // ─── Single swim lane ────────────────────────────────────────────────────────
 
-function ReactionLane({ coin, windowMin, loading, schema }) {
+// Volume-event source styling — truth-aware spike provenance
+const VOL_SRC_META = {
+    STREAM_C_ALERT: { label: 'C', color: '#f6ad55', bg: 'rgba(246,173,85,0.18)', name: 'Stream-C alert (truth)' },
+    STREAM_A_EDGE:  { label: 'A', color: '#63b3ed', bg: 'rgba(99,179,237,0.15)', name: 'Stream-A rising edge' },
+    STREAM_D_RVOL:  { label: 'D', color: '#d6bcfa', bg: 'rgba(214,188,250,0.15)', name: 'Stream-D RelVol ≥ 2×' },
+};
+// Source priority: C (truth) > D (live) > A (sticky-but-edge-detected)
+const VOL_SRC_PRIORITY = { STREAM_C_ALERT: 3, STREAM_D_RVOL: 2, STREAM_A_EDGE: 1 };
+
+function ReactionLane({ coin, windowMin, loading, schema, volEvents = [] }) {
     const meta     = REACTION_META[coin.reaction]   || REACTION_META.APPROACHING;
     const sideCol  = SIDE_COLOR[coin.side]          || SIDE_COLOR.SUPPORT;
     const isSupport = coin.side === 'SUPPORT';
@@ -294,9 +303,37 @@ function ReactionLane({ coin, windowMin, loading, schema }) {
                 <div className={styles.laneRight}>
                     {/* Stream D technical chips — dynamic from schema */}
                     <StreamDChips streamD={coin.stream_d} schema={schema} />
-                    {coin.volSpike && (
-                        <span className={styles.volBadge}>VOL</span>
-                    )}
+                    {/* Volume badge: truth-aware (Stream C alert > Stream D RVol > Stream A edge).
+                        Falls back to legacy sticky `volSpike` flag (greyed) when no recent event exists. */}
+                    {(() => {
+                        const fresh = volEvents.length
+                            ? volEvents.slice().sort((a, b) =>
+                                (VOL_SRC_PRIORITY[b.source] || 0) - (VOL_SRC_PRIORITY[a.source] || 0)
+                                || new Date(b.ts) - new Date(a.ts)
+                            )[0]
+                            : null;
+                        if (fresh) {
+                            const m = VOL_SRC_META[fresh.source] || VOL_SRC_META.STREAM_A_EDGE;
+                            const ago = Math.round((Date.now() - new Date(fresh.ts)) / 60000);
+                            return (
+                                <span className={styles.volBadge}
+                                    style={{ color: m.color, background: m.bg, borderColor: m.color + '60' }}
+                                    title={`${m.name} · ${ago}m ago${volEvents.length > 1 ? ` (+${volEvents.length - 1} more)` : ''}`}>
+                                    VOL·{m.label} {ago}m
+                                </span>
+                            );
+                        }
+                        if (coin.volSpike) {
+                            return (
+                                <span className={styles.volBadge}
+                                    style={{ opacity: 0.45 }}
+                                    title="Stream-A sticky flag (no recent rising-edge — likely stale)">
+                                    VOL·stale
+                                </span>
+                            );
+                        }
+                        return null;
+                    })()}
                     <span className={styles.reactionBadge}
                         style={{ color: meta.color, background: meta.bg, borderColor: meta.color + '40' }}>
                         {meta.label}
@@ -350,6 +387,19 @@ function ReactionLane({ coin, windowMin, loading, schema }) {
                             {/* Touch zone bands ±0.3% */}
                             <ReferenceLine y={0.3}  stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
                             <ReferenceLine y={-0.3} stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
+
+                            {/* Volume-event pins — color-coded by source (truthful spike moments) */}
+                            {volEvents.map((e, idx) => {
+                                const m = VOL_SRC_META[e.source] || VOL_SRC_META.STREAM_A_EDGE;
+                                return (
+                                    <ReferenceLine key={`vol-${idx}`}
+                                        x={new Date(e.ts).getTime()}
+                                        stroke={m.color} strokeOpacity={0.55}
+                                        strokeDasharray="2 3" strokeWidth={1}
+                                        label={{ value: m.label, position: 'top', fill: m.color, fontSize: 9 }}
+                                    />
+                                );
+                            })}
 
                             {/* Green area — price ABOVE level */}
                             <Area
@@ -407,6 +457,7 @@ export function LevelReactionWidget() {
     const [filterSide,  setFilterSide]  = useState('ALL'); // ALL / SUPPORT / RESISTANCE
     const [filterReact, setFilterReact] = useState('ALL'); // ALL / BOUNCE / REJECT / TESTING / BREAK
     const [streamDSchema, setStreamDSchema] = useState([]);
+    const [volEventsByTicker, setVolEventsByTicker] = useState({});
     const pollRef = useRef(null);
 
     // Fetch Stream D schema once on mount (dynamic field discovery)
@@ -425,8 +476,22 @@ export function LevelReactionWidget() {
                 `/api/level-reactions?window_min=${wMin}&interval=${iMin}&limit=16&max_dist=${mDist}`
             );
             const d = await r.json();
-            if (d.error) setError(d.error);
-            else setData(d);
+            if (d.error) { setError(d.error); return; }
+            setData(d);
+
+            // Side-fetch truthful volume events for the visible coins (one batched call)
+            const tickers = (d.coins || []).map(c => c.cleanTicker || c.ticker).filter(Boolean);
+            if (tickers.length) {
+                try {
+                    const vr = await fetch(
+                        `/api/volume-events?tickers=${encodeURIComponent(tickers.join(','))}&since_min=${wMin}`
+                    );
+                    const vd = await vr.json();
+                    setVolEventsByTicker(vd?.by_ticker || {});
+                } catch { /* non-critical */ }
+            } else {
+                setVolEventsByTicker({});
+            }
         } catch (e) {
             setError(e.message);
         } finally {
@@ -587,6 +652,7 @@ export function LevelReactionWidget() {
                                 windowMin={windowMin}
                                 loading={false}
                                 schema={streamDSchema}
+                                volEvents={volEventsByTicker[coin.cleanTicker || coin.ticker] || []}
                             />
                         ))}
                     </div>
