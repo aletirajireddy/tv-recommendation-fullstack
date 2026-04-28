@@ -19,14 +19,8 @@ export function AnalyticsDashboard() {
     // relying on 'researchData' subscription.
 
     if (!researchData) {
-        console.log('[AnalyticsDashboard] WAITING for researchData...');
         return <div className={styles.loading}>Loading Research Data...</div>;
     }
-
-    console.log('[AnalyticsDashboard] RENDER with data:', {
-        velocity: researchData.velocity?.length,
-        persistence: researchData.persistence?.length
-    });
 
     return (
         <div className={styles.container}>

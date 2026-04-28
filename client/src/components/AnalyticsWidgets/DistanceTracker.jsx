@@ -86,7 +86,7 @@ export function DistanceTracker({ filterTicker, compact }) {
     const [sortDir, setSortDir] = useState('asc');
 
     // Audit fix #4/#5/#6: ref-pattern poll
-    const { data, loading, error, reload } = usePolledFetch(
+    const { data, loading, error, reload, reloadSilent } = usePolledFetch(
         () => {
             const tParam = filterTicker ? `&ticker=${filterTicker}&max_dist=100` : `&max_dist=${maxDist}`;
             return `/api/ema-distance-board?limit=60${tParam}&active_min=60`;
@@ -94,28 +94,29 @@ export function DistanceTracker({ filterTicker, compact }) {
         { intervalMs: 60_000, deps: [maxDist, filterTicker] }
     );
 
-    // Audit fix: Live socket updates
+    // Live socket updates — use reloadSilent so stale rows stay visible
+    // during the background refresh instead of flashing a spinner.
     useEffect(() => {
         const socket = socketService.connect();
-        
-        // Use a small debounce to prevent spamming from batch updates
+
+        // Debounce: batch updates from a single scan tick collapse to 1 fetch
         let timeout;
         const handler = () => {
             clearTimeout(timeout);
-            timeout = setTimeout(() => reload(), 1000);
+            timeout = setTimeout(() => reloadSilent(), 1000);
         };
-        
+
         socket.on('scan-update', handler);
         socket.on('smart-level-update', handler);
         socket.on('stream-d-update', handler);
-        
+
         return () => {
             clearTimeout(timeout);
             socket.off('scan-update', handler);
             socket.off('smart-level-update', handler);
             socket.off('stream-d-update', handler);
         };
-    }, [reload]);
+    }, [reloadSilent]);
 
     const handleSort = (key) => {
         if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');

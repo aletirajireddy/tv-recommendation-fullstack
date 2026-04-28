@@ -1224,12 +1224,27 @@ app.get('/api/ema-cascade', (req, res) => {
 //   For every ticker active in master_coin_store within the last `active_min`
 //   minutes, computes the merged EMA stack (Stream D + Stream C) and returns
 //   distance % per TF along with a synthetic "minAbsDist" sort key.
+
+// Short-TTL response cache (15 s) — collapses burst requests from multiple
+// widgets polling the same endpoint (DistanceTracker + EMACascadeMonitor).
+// Key = serialised normalised params; value = { ts, payload }.
+const _distanceBoardCache = new Map();
+const DIST_BOARD_CACHE_TTL = 15_000; // 15 seconds
+
 app.get('/api/ema-distance-board', (req, res) => {
     try {
         const requestedTicker = req.query.ticker?.toUpperCase();
         const limit     = requestedTicker ? 1 : Math.min(120, Math.max(5, parseInt(req.query.limit) || 40));
         const maxDist   = requestedTicker ? 100 : Math.min(50, Math.max(0.5, parseFloat(req.query.max_dist) || 10));
         const activeMin = Math.min(720, Math.max(5, parseInt(req.query.active_min) || 60));
+
+        // Cache-hit check — key on normalised params (not raw query string)
+        const cacheKey = `${requestedTicker || ''}|${limit}|${maxDist}|${activeMin}`;
+        const cached = _distanceBoardCache.get(cacheKey);
+        if (cached && (Date.now() - cached.ts) < DIST_BOARD_CACHE_TTL) {
+            return res.json(cached.payload);
+        }
+
         const sinceISO  = new Date(Date.now() - activeMin * 60 * 1000).toISOString();
         const nowMs     = Date.now();
 
@@ -1238,39 +1253,47 @@ app.get('/api/ema-distance-board', (req, res) => {
         // queries total. With idx_master_source_ticker_time these are
         // index-only lookups; whole endpoint runs in ~30ms vs. ~1.5s before.
 
-        // Q1 — latest snapshot per ticker (any source) in window: drives the
-        //      ticker list + last price.
-        // Q1 — latest snapshot per ticker
-        const sql1 = `
-            SELECT t.ticker, t.mx AS last_ts,
-                   (SELECT price FROM master_coin_store p 
-                    WHERE p.ticker = t.ticker AND p.price IS NOT NULL 
-                    ORDER BY timestamp DESC LIMIT 1) AS last_price
-            FROM (
-                SELECT ticker, MAX(timestamp) AS mx
-                FROM master_coin_store
-                WHERE timestamp >= ?
-                ${requestedTicker ? 'AND (ticker = ? OR ticker = ? OR ticker = ?)' : ''}
-                GROUP BY ticker
-            ) t
-            ORDER BY t.mx DESC
+        // Q1a — active tickers in window (no correlated subquery for price)
+        const sql1a = `
+            SELECT ticker, MAX(timestamp) AS last_ts
+            FROM master_coin_store
+            WHERE timestamp >= ?
+            ${requestedTicker ? 'AND (ticker = ? OR ticker = ? OR ticker = ?)' : ''}
+            GROUP BY ticker
+            ORDER BY MAX(timestamp) DESC
             LIMIT ?
         `;
-        const params1 = requestedTicker 
+        const params1a = requestedTicker
             ? [sinceISO, requestedTicker, `${requestedTicker}USDT.P`, `${requestedTicker}USDT`, limit]
             : [sinceISO, Math.min(400, limit * 4)];
 
-        const latestRows = db.prepare(sql1).all(...params1);
+        const latestRows = db.prepare(sql1a).all(...params1a);
 
         if (latestRows.length === 0) {
-            return res.json({
+            const emptyPayload = {
                 count: 0, limit, max_dist: maxDist, active_min: activeMin,
                 board: [], generatedAt: new Date().toISOString(),
-            });
+            };
+            _distanceBoardCache.set(cacheKey, { ts: Date.now(), payload: emptyPayload });
+            return res.json(emptyPayload);
         }
 
         const tickers = latestRows.map(r => r.ticker);
         const placeholders = tickers.map(() => '?').join(',');
+
+        // Q1b — batch price lookup (replaces N correlated subqueries).
+        // Gets the latest non-null price for every ticker in one JOIN.
+        const priceRows = db.prepare(`
+            SELECT m.ticker, m.price
+            FROM master_coin_store m
+            INNER JOIN (
+                SELECT ticker, MAX(timestamp) AS mx
+                FROM master_coin_store
+                WHERE price IS NOT NULL AND ticker IN (${placeholders})
+                GROUP BY ticker
+            ) t ON m.ticker = t.ticker AND m.timestamp = t.mx
+        `).all(...tickers);
+        const priceByTicker = new Map(priceRows.map(r => [r.ticker, r.price]));
 
         // Q2 — latest STREAM_D row per ticker (carries m1/m5/m15 EMAs)
         const dRows = db.prepare(`
@@ -1357,7 +1380,8 @@ app.get('/api/ema-distance-board', (req, res) => {
                 }
             }
 
-            const px = r.last_price;
+            // Q1b result: batch price (eliminates correlated subquery)
+            const px = priceByTicker.get(r.ticker);
             if (px == null) continue;
 
             const dists = {}, sources = {}, ages = {};
@@ -1386,12 +1410,17 @@ app.get('/api/ema-distance-board', (req, res) => {
         }
 
         board.sort((a, b) => a.minAbsDist - b.minAbsDist);
-        res.json({
+        const responsePayload = {
             count: board.length,
             limit, max_dist: maxDist, active_min: activeMin,
             board: board.slice(0, limit),
             generatedAt: new Date().toISOString(),
-        });
+        };
+
+        // Cache the result for DIST_BOARD_CACHE_TTL ms
+        _distanceBoardCache.set(cacheKey, { ts: Date.now(), payload: responsePayload });
+
+        res.json(responsePayload);
     } catch (e) {
         console.error('[EMA Distance Board] error:', e);
         res.status(500).json({ error: e.message });

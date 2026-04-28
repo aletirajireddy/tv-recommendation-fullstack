@@ -10,15 +10,16 @@ import { useEffect, useRef, useState, useCallback } from 'react';
  *   • Auto-pause when document.hidden via Page Visibility API. Tabs in the
  *     background stop hammering the backend; resumes with an immediate
  *     refresh on visibility change.
+ *   • Silent reload mode: when `silent=true` the loading flag is NOT set to
+ *     true — existing stale data stays visible while the background refresh
+ *     completes. Used by socket-triggered reloads to prevent spinner flicker.
  *
  * Usage:
- *   const { data, loading, error, reload } = usePolledFetch(
- *     // build url(s) lazily so changing inputs don't recreate the fetcher
+ *   const { data, loading, error, reload, reloadSilent } = usePolledFetch(
  *     () => `/api/foo?ticker=${ticker}&window=${windowMin}`,
  *     { intervalMs: 60000, deps: [ticker, windowMin] }
  *   );
- *
- * Pass a function instead of a fetch result to keep the closure tight.
+ *   // call reloadSilent() from socket handlers — keeps stale data visible
  *
  * @param {() => string | string[] | Promise<any>} fetcher
  *        - if returns string: fetched as JSON
@@ -47,13 +48,15 @@ export function usePolledFetch(fetcher, {
     const abortRef    = useRef(null);
     const mountedRef  = useRef(true);
 
-    const reload = useCallback(async () => {
+    // Core fetch logic — silent=true skips the loading flag so stale data
+    // stays visible during a background refresh (e.g. socket-triggered reload).
+    const doFetch = useCallback(async (silent = false) => {
         // Cancel any in-flight request from previous call
         if (abortRef.current) abortRef.current.abort();
         const ctrl = new AbortController();
         abortRef.current = ctrl;
 
-        setLoading(true);
+        if (!silent) setLoading(true);
         setError(null);
         try {
             const result = fetcherRef.current(ctrl.signal);
@@ -76,9 +79,14 @@ export function usePolledFetch(fetcher, {
             if (!mountedRef.current) return;
             setError(e.message || String(e));
         } finally {
-            if (mountedRef.current && !ctrl.signal.aborted) setLoading(false);
+            if (!silent && mountedRef.current && !ctrl.signal.aborted) setLoading(false);
         }
     }, []); // stable — uses ref
+
+    /** Force-reload with loading indicator (for user-initiated refreshes) */
+    const reload        = useCallback(() => doFetch(false), [doFetch]);
+    /** Background reload — keeps stale data visible, no spinner (socket handlers) */
+    const reloadSilent  = useCallback(() => doFetch(true),  [doFetch]);
 
     // Trigger reload when deps change (initial + on user-driven inputs)
     /* eslint-disable react-hooks/exhaustive-deps */
@@ -95,7 +103,7 @@ export function usePolledFetch(fetcher, {
             if (timer) return;
             timer = setInterval(() => {
                 if (pauseOnHidden && document.hidden) return;
-                reload();
+                reloadSilent(); // background poll — no spinner
             }, intervalMs);
         };
         const stop = () => {
@@ -106,7 +114,7 @@ export function usePolledFetch(fetcher, {
             if (document.hidden) {
                 stop();
             } else {
-                if (refetchOnVisible) reload();
+                if (refetchOnVisible) reloadSilent(); // tab restored — silent too
                 start();
             }
         };
@@ -120,9 +128,9 @@ export function usePolledFetch(fetcher, {
             if (pauseOnHidden) document.removeEventListener('visibilitychange', onVisibility);
             if (abortRef.current) abortRef.current.abort();
         };
-    }, [intervalMs, pauseOnHidden, refetchOnVisible, reload]);
+    }, [intervalMs, pauseOnHidden, refetchOnVisible, reloadSilent]);
 
-    return { data, loading, error, reload };
+    return { data, loading, error, reload, reloadSilent };
 }
 
 export default usePolledFetch;

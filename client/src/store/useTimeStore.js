@@ -131,7 +131,6 @@ export const useTimeStore = create((set, get) => ({
         const socket = SocketService.connect();
 
         SocketService.on('scan-update', (newScanMeta) => {
-            console.log('⚡ New Scan Received:', newScanMeta);
             const { timeline, currentIndex, loadScan, fetchAnalytics, fetchResearch } = get();
 
             // isLive check allows us to buffer incoming data if the user is scrubbing historically
@@ -157,13 +156,12 @@ export const useTimeStore = create((set, get) => ({
         });
 
         // Handle Ledger Updates (The Picker)
-        SocketService.on('ledger-update', (data) => {
-            console.log('⚡ Picker Update:', data);
+        SocketService.on('ledger-update', (_data) => {
+            // reserved for future ledger reaction logic
         });
 
         // Handle Stream C Webhook Updates (Fusion Dashboard)
         SocketService.on('smart-level-update', (data) => {
-            console.log('⚡ Smart Level Update:', data);
             const { timeline, currentIndex } = get();
             const isLive = currentIndex === timeline.length - 1;
             if (isLive) {
@@ -173,7 +171,6 @@ export const useTimeStore = create((set, get) => ({
 
         // Handle Stream B Market Context Updates (Telemetry)
         SocketService.on('market-context-update', (data) => {
-            console.log('⚡ Market Context Telemetry Update', data);
             const { timeline, currentIndex } = get();
             const isLive = currentIndex === timeline.length - 1;
             if (isLive) {
@@ -245,7 +242,6 @@ export const useTimeStore = create((set, get) => ({
     },
 
     refreshAll: async () => {
-        console.log("Refreshing All Data...");
         await get().fetchTimeline();
         await get().fetchAnalytics();
         await get().fetchResearch();
@@ -274,7 +270,7 @@ export const useTimeStore = create((set, get) => ({
                 const diffHours = (last - first) / (1000 * 60 * 60);
 
                 // Debugging Window Issue
-                console.log(`[Timeline] Loaded ${sorted.length} scans. Span: ${diffHours.toFixed(2)} hours. Current Lookback: ${get().lookbackHours}`);
+                // [debug] console.log(`[Timeline] Loaded ${sorted.length} scans. Span: ${diffHours.toFixed(2)} hours.`);
             }
 
             set({
@@ -435,7 +431,7 @@ export const useTimeStore = create((set, get) => ({
 
                 try {
                     const { lookbackHours, activeScan, timeline, currentIndex } = get();
-                    console.log('[Research] Fetching data...', { currentIndex, hasActiveScan: !!activeScan, timelineLen: timeline.length });
+                    // [debug] console.log('[Research] Fetching data...');
 
                     let refTimeStr = '';
                     if (activeScan && activeScan.timestamp) {
