@@ -87,13 +87,13 @@ export function ParticipationPulseWidget() {
                 <div className="p-3 rounded-lg shadow-lg border" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', minWidth: '180px'}}>
                     <div className="font-bold mb-3 text-xs" style={{ color: 'var(--text-secondary)' }}>{label}</div>
                     
-                    <div className="flex justify-between items-center py-2 text-sm font-mono border-b border-gray-700/50 mb-1">
-                        <span style={{ color: '#FF2E93', fontSize: '0.75rem', fontWeight: 600 }}>SCREENER COUNT</span>
-                        <span className="font-bold text-[#FF2E93] text-lg">{p.screener_count}</span>
+                    <div className="flex justify-between items-center py-2 text-sm font-mono border-b border-[var(--border-subtle)] mb-1">
+                        <span style={{ color: 'var(--accent-blue)', fontSize: '0.75rem', fontWeight: 600 }}>SCREENER COUNT</span>
+                        <span className="font-bold text-[var(--accent-blue)] text-lg">{p.screener_count}</span>
                     </div>
-                    <div className="flex justify-between items-center py-2 text-sm font-mono border-b border-gray-700/50 mb-2">
-                        <span style={{ color: '#3B82F6', fontSize: '0.75rem', fontWeight: 600 }}>WATCHLIST COUNT</span>
-                        <span className="font-bold text-[#3B82F6] text-lg">{p.watchlist_count}</span>
+                    <div className="flex justify-between items-center py-2 text-sm font-mono border-b border-[var(--border-subtle)] mb-2">
+                        <span style={{ color: 'var(--accent-purple)', fontSize: '0.75rem', fontWeight: 600 }}>WATCHLIST COUNT</span>
+                        <span className="font-bold text-[var(--accent-purple)] text-lg">{p.watchlist_count}</span>
                     </div>
 
                     <div className="flex justify-between items-center py-1 text-xs font-mono">
@@ -115,18 +115,18 @@ export function ParticipationPulseWidget() {
             
             <div className="flex items-center justify-between mb-2 pb-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <div className="flex items-center gap-2">
-                    <Activity size={18} className="text-[#FF2E93]" />
+                    <Activity size={18} className="text-[var(--accent-blue)]" />
                     <h3 className="text-sm font-bold uppercase" style={{ color: 'var(--text-secondary)' }}>Scout Screener Engine</h3>
                 </div>
                 
                 <div className="flex gap-6 items-center">
                     <div className="flex flex-col items-end">
                         <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Total Screener</span>
-                        <span className="text-lg font-bold font-mono text-[#FF2E93]">{latest.screener_count || 0}</span>
+                        <span className="text-lg font-bold font-mono text-[var(--accent-blue)]">{latest.screener_count || 0}</span>
                     </div>
                     <div className="flex flex-col items-end border-l border-[var(--border-subtle)] pl-6">
                         <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Tracked Watchlist</span>
-                        <span className="text-lg font-bold font-mono text-[#3B82F6]">{latest.watchlist_count || 0}</span>
+                        <span className="text-lg font-bold font-mono text-[var(--accent-purple)]">{latest.watchlist_count || 0}</span>
                     </div>
                     <div className="flex flex-col items-end border-l border-[var(--border-subtle)] pl-6">
                         <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Net Rating</span>
@@ -197,22 +197,22 @@ export function ParticipationPulseWidget() {
                         <Line 
                             type="linear" 
                             dataKey="screener_count" 
-                            stroke="#FF2E93" 
+                            stroke="var(--accent-blue)" 
                             strokeWidth={2} 
                             dot={false}
                             isAnimationActive={false} 
-                            activeDot={{ r: 6, fill: '#FF2E93', stroke: 'var(--bg-card)', strokeWidth: 2 }}
+                            activeDot={{ r: 6, fill: 'var(--accent-blue)', stroke: 'var(--bg-card)', strokeWidth: 2 }}
                         />
                         
                         {/* 4. Watchlist Count Overlay Line */}
                         <Line 
                             type="linear" 
                             dataKey="watchlist_count" 
-                            stroke="#3B82F6" 
+                            stroke="var(--accent-purple)" 
                             strokeWidth={3} 
                             dot={false}
                             isAnimationActive={false} 
-                            activeDot={{ r: 6, fill: '#3B82F6', stroke: 'var(--bg-card)', strokeWidth: 2 }}
+                            activeDot={{ r: 6, fill: 'var(--accent-purple)', stroke: 'var(--bg-card)', strokeWidth: 2 }}
                         />
 
                         {/* Recharts Brush: desktop drag handles & optimized for mobile via touchAction */}
@@ -233,10 +233,10 @@ export function ParticipationPulseWidget() {
             <div className="flex justify-between items-center mt-4 px-2">
                 <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Geometric Heat Flow Overlay</div>
                 <div className="flex flex-wrap gap-4 text-[10px] font-bold uppercase" style={{ color: 'var(--text-tertiary)' }}>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full shadow-[0_0_6px_#10B981] bg-[#10B981]"></span> Buy Ratings</span>
-                    <span className="flex items-center gap-1"><span className="w-4 h-[3px] shadow-[0_0_6px_#FF2E93] bg-[#FF2E93]"></span> Screener Count</span>
-                    <span className="flex items-center gap-1"><span className="w-4 h-[3px] shadow-[0_0_6px_#3B82F6] bg-[#3B82F6]"></span> Watchlist Count</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full shadow-[0_0_6px_#EF4444] bg-[#EF4444]"></span> Sell Ratings</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full shadow-[0_0_6px_var(--success)] bg-[var(--success)]"></span> Buy Ratings</span>
+                    <span className="flex items-center gap-1"><span className="w-4 h-[3px] shadow-[0_0_6px_var(--accent-blue)] bg-[var(--accent-blue)]"></span> Screener Count</span>
+                    <span className="flex items-center gap-1"><span className="w-4 h-[3px] shadow-[0_0_6px_var(--accent-purple)] bg-[var(--accent-purple)]"></span> Watchlist Count</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full shadow-[0_0_6px_var(--error)] bg-[var(--error)]"></span> Sell Ratings</span>
                 </div>
             </div>
             

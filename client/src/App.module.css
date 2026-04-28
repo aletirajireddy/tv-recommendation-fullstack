@@ -1,37 +1,72 @@
 .appContainer {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: var(--bg-app);
 }
 
 .topBar {
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    background: var(--bg-app);
-    /* Matches body bg to avoid jagged scrolling */
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--border-subtle);
+  min-height: var(--header-height);
+  height: auto;
+  background-color: var(--bg-header);
+  border-bottom: 1px solid var(--border-subtle);
+  backdrop-filter: blur(8px);
+  z-index: 2000;
+  position: sticky;
+  top: 0;
+  width: 100%;
+  padding: 0 16px;
 }
 
-.mainGrid {
-    display: grid;
-    grid-template-columns: 280px 1fr 320px;
-    /* Fixed Sidebars, Fluid Center */
-    gap: 24px;
-    padding: 24px;
-    flex: 1;
-    max-width: var(--max-width);
-    margin: 0 auto;
-    width: 100%;
+.viewLayout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
 }
 
-/* Responsive: Stack on smaller screens */
+@media (max-width: 1024px) {
+  .viewLayout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+}
+
+.mainContent {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--widget-gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--widget-gap);
+  background: var(--bg-app);
+  scroll-behavior: smooth;
+}
+
+.widgetSection {
+  width: 100%;
+}
+
+.splitGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--widget-gap);
+  width: 100%;
+}
+
 @media (max-width: 1200px) {
-    .mainGrid {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto auto auto;
-    }
+  .splitGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Custom Scrollbar for Main Content */
+.mainContent::-webkit-scrollbar {
+  width: 5px;
+}
+.mainContent::-webkit-scrollbar-thumb {
+  background: var(--gray-700);
+  border-radius: 10px;
 }
 
 /* Analytics Mode Wrapper */

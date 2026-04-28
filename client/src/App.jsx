@@ -1,40 +1,33 @@
 import React, { useEffect } from 'react';
 import styles from './App.module.css';
 import { GlobalHeader } from './components/GlobalHeader';
-import { MacroHUD } from './components/MacroHUD';
-import { ScanResults } from './components/ScanResults';
-import { PulseFeed } from './components/PulseFeed';
-import { AlertsAnalyzer } from './components/AnalyticsWidgets/AlertsAnalyzer';
-import { ConfluenceGrid } from './components/AnalyticsWidgets/ConfluenceGrid';
-import { MarketStructureWidget } from './components/AnalyticsWidgets/MarketStructureWidget';
-import { AlphaScatter } from './components/AnalyticsWidgets/AlphaScatter';
-import { TrendFlowChart } from './components/AnalyticsWidgets/TrendFlowChart';
-import RecommendationsFeed from './components/AnalyticsWidgets/RecommendationsFeed';
-import ScenarioBoard from './components/AnalyticsWidgets/ScenarioBoard';
-import MarketSentimentTimeline from './components/AnalyticsWidgets/MarketSentimentTimeline';
-import AlertFrequencyTimeline from './components/AnalyticsWidgets/AlertFrequencyTimeline';
-import { ParticipationPulseWidget } from './components/AnalyticsWidgets/ParticipationPulseWidget';
-import FusionDashboard from './components/AnalyticsWidgets/FusionDashboard';
-import RSIDistributionWidget from './components/AnalyticsWidgets/RSIDistributionWidget';
-import { GhostCoinWidget } from './components/AnalyticsWidgets/GhostCoinWidget';
-import { CoinAgeWidget } from './components/AnalyticsWidgets/CoinAgeWidget';
+import { Sidebar } from './components/Sidebar';
+import { SelectionDrawer } from './components/SelectionDrawer';
 import { ValidatorTimelineWidget } from './components/AnalyticsWidgets/ValidatorTimelineWidget';
 import { DailyCalendarWidget } from './components/AnalyticsWidgets/DailyCalendarWidget';
 import { LevelReactionWidget } from './components/AnalyticsWidgets/LevelReactionWidget';
 import { EMACascadeMonitor } from './components/AnalyticsWidgets/EMACascadeMonitor';
 import { DistanceTracker } from './components/AnalyticsWidgets/DistanceTracker';
-
+import { MarketSentimentTimeline } from './components/AnalyticsWidgets/MarketSentimentTimeline';
+import { AlertFrequencyTimeline } from './components/AnalyticsWidgets/AlertFrequencyTimeline';
+import FusionDashboard from './components/AnalyticsWidgets/FusionDashboard';
+import RSIDistributionWidget from './components/AnalyticsWidgets/RSIDistributionWidget';
+import { MarketStructureWidget } from './components/AnalyticsWidgets/MarketStructureWidget';
+import { ConfluenceGrid } from './components/AnalyticsWidgets/ConfluenceGrid';
+import { AlertsAnalyzer } from './components/AnalyticsWidgets/AlertsAnalyzer';
+import RecommendationsFeed from './components/AnalyticsWidgets/RecommendationsFeed';
+import { ParticipationPulseWidget } from './components/AnalyticsWidgets/ParticipationPulseWidget';
+import { CoinAgeWidget } from './components/AnalyticsWidgets/CoinAgeWidget';
+import { GhostCoinWidget } from './components/AnalyticsWidgets/GhostCoinWidget';
+import { AlphaScatter } from './components/AnalyticsWidgets/AlphaScatter';
 import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
 import { MonitorDetailModal } from './components/MonitorDetailModal';
-import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { useTimeStore } from './store/useTimeStore';
 
 function App() {
-  const viewMode = useTimeStore(s => s.viewMode);
-  const isLive = useTimeStore(s => {
-    return s.timeline.length > 0 ? s.currentIndex === s.timeline.length - 1 : false;
-  });
+  const isLive = useTimeStore(s => s.timeline.length > 0 ? s.currentIndex === s.timeline.length - 1 : false);
+  const showPlayback = useTimeStore(s => s.showPlayback);
 
   return (
     <div className={styles.appContainer}>
@@ -42,100 +35,112 @@ function App() {
         <GlobalHeader />
       </header>
 
-      <main className={styles.mainGridDefault}>
+      <div className={styles.viewLayout}>
+        <Sidebar />
 
-        {/* UNIFIED TIMELINE VIEW */}
-        <div className={styles.colAnalytics} style={{ padding: 0 }}>
-        
-            {/* ROW 0: 3rd UMPIRE VALIDATOR (Top row — always visible) */}
-            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                <ValidatorTimelineWidget />
-            </div>
+        <main className={styles.mainContent}>
+          
+          {/* SECTION: 3rd UMPIRE VALIDATOR */}
+          <section id="section-umpire" className={styles.widgetSection}>
+            <ValidatorTimelineWidget />
+          </section>
 
-            {/* ROW 0b: DAILY PERFORMANCE CALENDAR (7-day grid — opposite-direction spotter) */}
-            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                <DailyCalendarWidget />
-            </div>
 
-            {/* ROW 0c: LEVEL REACTION MONITOR (swim-lane price paths at structural levels) */}
-            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                <LevelReactionWidget />
-            </div>
-
-            {/* ROW 0d: EMA CASCADE MONITOR (200-EMA defense ladder 1m→4h, scalper view) */}
-            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                <EMACascadeMonitor />
-            </div>
-
-            {/* ROW 0e: DISTANCE TRACKER (cross-coin sortable distance-to-EMA board) */}
-            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                <DistanceTracker />
-            </div>
-
-            {/* ROW 1: TIMELINE ANALYZERS (Moved to the very top!) */}
-            <div className={styles.analyticsSplitRow} style={{ marginBottom: '24px' }}>
-                <MarketSentimentTimeline />
-                <AlertFrequencyTimeline />
-            </div>
-
-            {/* ROW 2: FUSION DASHBOARD (Command Center) */}
-            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                <FusionDashboard />
-            </div>
+          {/* SECTION: LEVELS & CASCADE MONITOR (SPLIT ROW) */}
+          <div className={styles.splitGrid}>
+            <section id="section-levels" className={styles.widgetSection}>
+              <LevelReactionWidget />
+            </section>
             
+            {/* RIGHT COLUMN: CASCADE + SCOUT + GHOST */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--widget-gap)' }}>
+              <section id="section-cascade" className={styles.widgetSection}>
+                <EMACascadeMonitor />
+              </section>
 
-
-            {/* ROW 2.5: RSI DISTRIBUTION SETUPS */}
-            <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                <RSIDistributionWidget />
-            </div>
-
-            {/* ROW 2: ENHANCED MACRO SUMMARY (Full Width) */}
-            <div className={styles.analyticsFullRow}>
-                <MarketStructureWidget />
-                <ConfluenceGrid />
-            </div>
-
-
-
-            {/* ROW 2: ALERTS & RECOMMENDATIONS */}
-            <div className={styles.analyticsSplitRow}>
-                <AlertsAnalyzer />
-                <div style={{ height: '100%', minHeight: '300px' }}>
-                    <RecommendationsFeed />
-                </div>
-            </div>
-
-            {/* ROW 3: MOOD & ALPHA */}
-            <div className={styles.analyticsSplitRow}>
-                <TrendFlowChart />
-                <AlphaScatter />
-            </div>
-
-            {/* ROW 4: SCOUT SCREENER (Participation Pulse moved to bottom) */}
-            <div className={styles.analyticsFullRow} style={{ marginTop: '24px', marginBottom: '24px' }}>
+              <section id="section-scout" className={styles.widgetSection}>
                 <ParticipationPulseWidget />
+              </section>
+
+              {isLive && (
+                <section className={styles.widgetSection}>
+                  <GhostCoinWidget />
+                </section>
+              )}
+              <section id="section-alpha" className={styles.widgetSection}>
+                <AlphaScatter />
+              </section>
             </div>
+          </div>
 
-            {/* ROW 5: INSTITUTIONAL WIDGETS (Moved to bottom) */}
-            {isLive && (
-                <>
-                    <div className={styles.analyticsFullRow} style={{ marginBottom: '24px' }}>
-                        <CoinAgeWidget />
-                    </div>
-                    <div className={styles.analyticsFullRow}>
-                        <GhostCoinWidget />
-                    </div>
-                </>
-            )}
-        </div>
+          {/* SECTION: DISTANCE BOARD & TIMELINES (SPLIT ROW) */}
+          <div className={styles.splitGrid}>
+            <section id="section-dist" className={styles.widgetSection}>
+              <DistanceTracker />
+            </section>
+            
+            {/* RIGHT SIDE: ANALYTICS COLUMN (STACKED) */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--widget-gap)' }}>
+              <MarketSentimentTimeline />
+              <AlertFrequencyTimeline />
+            </div>
+          </div>
 
-        {/* FLOATING CONTROLS (Always Visible in BOTH Modes) */}
-        <FloatingTimeController />
-        <FloatingMediaPlayer />
-        <MonitorDetailModal />
 
-      </main>
+          {/* SECTION: FUSION COMMAND */}
+          <section id="section-fusion" className={styles.widgetSection}>
+            <FusionDashboard />
+          </section>
+
+          {/* RSI DISTRIBUTION */}
+          <section className={styles.widgetSection}>
+            <RSIDistributionWidget />
+          </section>
+
+          {/* MARKET STRUCTURE (FULL WIDTH) */}
+          <section className={styles.widgetSection}>
+            <MarketStructureWidget />
+          </section>
+
+          {/* CONFLUENCE GRID (FULL WIDTH) */}
+          <section className={styles.widgetSection}>
+            <ConfluenceGrid />
+          </section>
+
+          {/* ALERTS ANALYZER (FULL WIDTH) */}
+          <section className={styles.widgetSection}>
+            <AlertsAnalyzer />
+          </section>
+
+          {/* RECOMMENDATIONS FEED (FULL WIDTH) */}
+          <section className={styles.widgetSection}>
+            <RecommendationsFeed />
+          </section>
+
+          {/* INSTITUTIONAL (LIVE ONLY) */}
+          {isLive && (
+            <section className={styles.widgetSection}>
+              <CoinAgeWidget />
+            </section>
+          )}
+
+          {/* SECTION: DAILY CALENDAR (FOOTER) */}
+          <section className={styles.widgetSection} style={{ marginTop: '24px' }}>
+            <DailyCalendarWidget />
+          </section>
+
+        </main>
+      </div>
+
+      {/* OVERLAYS & FLOATING */}
+      <SelectionDrawer />
+      {showPlayback && (
+        <>
+          <FloatingTimeController />
+          <FloatingMediaPlayer />
+        </>
+      )}
+      <MonitorDetailModal />
     </div>
   );
 }

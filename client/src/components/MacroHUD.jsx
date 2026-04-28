@@ -5,12 +5,18 @@ import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 export function MacroHUD() {
     const activeScan = useTimeStore(s => s.activeScan);
+    const marketMood = useTimeStore(s => s.marketMood);
 
-    if (!activeScan || !activeScan.market_sentiment) {
-        return <div className="card" style={{ padding: '1rem', color: 'var(--text-tertiary)' }}>No Market Data</div>;
+    if (!activeScan) {
+        return <div className="card" style={{ padding: '1rem', color: 'var(--text-tertiary)' }}>No Active Scan</div>;
     }
 
-    const { mood, moodScore, counts, tickers } = activeScan.market_sentiment;
+    // Use marketMood (Supreme Court) for stats, fall back to activeScan.market_sentiment
+    const stats = marketMood?.stats || activeScan.market_sentiment?.counts || activeScan.market_sentiment || {};
+    const moodLabel = marketMood?.label || activeScan.market_sentiment?.mood || 'NEUTRAL';
+    const moodScore = marketMood?.moodScore ?? activeScan.market_sentiment?.moodScore ?? 0;
+    const tickers = activeScan.market_sentiment?.tickers || { bullish: [], bearish: [] };
+
     const moodColor = moodScore > 0 ? 'var(--success)' : moodScore < 0 ? 'var(--error)' : 'var(--text-tertiary)';
 
     return (
@@ -19,7 +25,7 @@ export function MacroHUD() {
             <div className="card" style={{ padding: '24px' }}>
                 <div className={styles.moodLabel}>MARKET MOOD</div>
                 <div className={styles.moodBigValue} style={{ color: moodColor }}>
-                    {mood}
+                    {moodLabel}
                 </div>
                 <div className={styles.scoreRow}>
                     <span className={styles.scoreValue}>{moodScore}</span>
@@ -37,7 +43,7 @@ export function MacroHUD() {
                         <TrendingUp size={16} color="var(--success)" />
                         <span>BULLISH</span>
                     </div>
-                    <span className={styles.statNumber}>{counts.bullish}</span>
+                    <span className={styles.statNumber}>{stats.bullish || 0}</span>
                 </div>
 
                 {/* Bearish */}
@@ -46,7 +52,7 @@ export function MacroHUD() {
                         <TrendingDown size={16} color="var(--error)" />
                         <span>BEARISH</span>
                     </div>
-                    <span className={styles.statNumber}>{counts.bearish}</span>
+                    <span className={styles.statNumber}>{stats.bearish || 0}</span>
                 </div>
 
                 {/* Neutral */}
@@ -55,48 +61,15 @@ export function MacroHUD() {
                         <Minus size={16} color="var(--text-tertiary)" />
                         <span>NEUTRAL</span>
                     </div>
-                    <span className={styles.statNumber}>{counts.neutral}</span>
+                    <span className={styles.statNumber}>{stats.neutral || 0}</span>
                 </div>
 
                 <div className={styles.totalRow}>
                     <span>TOTAL</span>
-                    <span>{counts.total}</span>
+                    <span>{stats.total || 0}</span>
                 </div>
             </div>
 
-            {/* 3. TICKER LISTS (Replay Data) */}
-            <div className="card" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                <div className={styles.sectionTitle} style={{ padding: '16px', borderBottom: '1px solid var(--border-subtle)' }}>
-                    MOVERS
-                </div>
-                <div className={styles.scrollList}>
-                    {/* Bullish Movers */}
-                    {tickers.bullish && tickers.bullish.length > 0 && (
-                        <div className={styles.groupBlock}>
-                            <div className={styles.groupHeader} style={{ color: 'var(--success)' }}>BULLISH</div>
-                            {tickers.bullish.map(t => (
-                                <div key={t.t} className={styles.tickerRow}>
-                                    <span className={styles.tickerName}>{t.t}</span>
-                                    <span className={styles.tickerMeta}>{t.nt} NT</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {/* Bearish Movers */}
-                    {tickers.bearish && tickers.bearish.length > 0 && (
-                        <div className={styles.groupBlock}>
-                            <div className={styles.groupHeader} style={{ color: 'var(--error)' }}>BEARISH</div>
-                            {tickers.bearish.map(t => (
-                                <div key={t.t} className={styles.tickerRow}>
-                                    <span className={styles.tickerName}>{t.t}</span>
-                                    <span className={styles.tickerMeta}>{t.nt} NT</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </div>
         </aside>
     );
 }

@@ -1,11 +1,10 @@
 .widget {
-    background: rgba(18, 18, 22, 0.7);
-    border: 1px solid rgba(255, 152, 0, 0.2);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
     border-radius: 12px;
     padding: 16px;
-    color: #fff;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    backdrop-filter: blur(10px);
+    color: var(--text-primary);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     margin-bottom: 24px;
     font-family: 'Inter', sans-serif;
     animation: fadeIn 0.3s ease-out;
@@ -21,18 +20,20 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid var(--border-subtle);
     padding-bottom: 12px;
 }
 
 .header h4 {
     margin: 0;
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 700;
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #ffd54f;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .pulseIcon {
@@ -52,9 +53,9 @@
 }
 
 .toggleLabel {
-    font-size: 12px;
-    color: #aaa;
-    font-weight: 500;
+    font-size: 10px;
+    color: var(--text-tertiary);
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -77,10 +78,10 @@
     position: absolute;
     cursor: pointer;
     top: 0; left: 0; right: 0; bottom: 0;
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: var(--gray-200);
     transition: .4s;
     border-radius: 34px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid var(--border-subtle);
 }
 
 .slider:before {
@@ -96,13 +97,13 @@
 }
 
 input:checked + .slider {
-    background-color: rgba(244, 67, 54, 0.2);
-    border-color: rgba(244, 67, 54, 0.5);
+    background-color: var(--bg-active);
+    border-color: var(--accent-blue);
 }
 
 input:checked + .slider:before {
     transform: translateX(16px);
-    background-color: #f44336;
+    background-color: var(--accent-blue);
 }
 
 .approveAllBtn {
@@ -140,13 +141,13 @@ input:checked + .slider:before {
 
 /* Custom Scrollbar for list */
 .list::-webkit-scrollbar {
-    width: 6px;
+    width: 4px;
 }
 .list::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.1);
+    background: transparent;
 }
 .list::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--gray-300);
     border-radius: 4px;
 }
 
@@ -154,16 +155,18 @@ input:checked + .slider:before {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 10px 12px;
+    background: var(--bg-app);
+    border: 1px solid var(--border-subtle);
     border-radius: 8px;
-    transition: background 0.2s;
+    transition: all 0.2s;
     animation: slideIn 0.3s ease-out;
 }
 
 .coinRow:hover {
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--white);
+    border-color: var(--accent-blue);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
 }
 
 .coinInfo {
@@ -173,28 +176,29 @@ input:checked + .slider:before {
 }
 
 .ticker {
-    font-weight: 600;
-    font-size: 14px;
-    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text-primary);
     letter-spacing: 0.5px;
 }
 
 .reason {
-    font-size: 12px;
-    color: #ff9800;
-    opacity: 0.8;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-weight: 500;
 }
 
 .approveBtn {
-    background: rgba(255, 152, 0, 0.1);
-    color: #ffb74d;
-    border: 1px solid rgba(255, 152, 0, 0.3);
-    padding: 6px 16px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 600;
+    background: var(--gray-200);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
     cursor: pointer;
     transition: all 0.2s;
+    text-transform: uppercase;
 }
 
 .approveBtn:hover {

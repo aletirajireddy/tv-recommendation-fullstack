@@ -91,34 +91,15 @@ export function GlobalHeader() {
             </div>
 
             <div className={styles.metaSection}>
-                {/* VIEW MODE TOGGLE */}
-                <div className={styles.modeSwitch}>
-                    <div 
-                        className={isLive ? styles.activeMode : styles.inactiveMode} 
-                        style={{ marginRight: '16px', fontWeight: 'bold', pointerEvents: 'none' }}
-                    >
-                        {isLive ? <span style={{ color: '#ef4444' }}>🔴 LIVE</span> : <span style={{ color: '#f59e0b' }}>⏪ REPLAY</span>}
-                    </div>
-
-                    <button
-                        className={useSmartLevelsContext ? styles.activeMode : styles.inactiveMode}
-                        onClick={() => setSmartLevelsContext(!useSmartLevelsContext)}
-                        title={useSmartLevelsContext ? "Smart Levels AI: ON" : "Smart Levels AI: OFF"}
-                        style={{ marginRight: '8px' }}
-                    >
-                        {useSmartLevelsContext ? <span style={{ color: '#60a5fa' }}>🧠 AI: ON</span> : <span style={{ opacity: 0.5 }}>🧠 AI: OFF</span>}
-                    </button>
-
-                    <button
-                        className={telegramEnabled ? styles.activeMode : styles.inactiveMode}
-                        onClick={toggleTelegram}
-                        title={telegramEnabled ? "Telegram: ON" : "Telegram: OFF"}
-                        style={{ marginRight: '8px' }} // Spacing
-                    >
-                        {telegramEnabled ? <span style={{ color: '#4ade80' }}>🔔 ON</span> : <span style={{ opacity: 0.5 }}>🔕 OFF</span>}
-                    </button>
-
-
+                {/* STATUS INDICATOR */}
+                <div className={isLive ? styles.activeStatus : styles.inactiveStatus}>
+                    {isLive ? (
+                        <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Wifi size={14} className={styles.pulseIcon} /> STREAM ACTIVE
+                        </span>
+                    ) : (
+                        <span style={{ color: 'var(--warning)' }}>⏪ REPLAY MODE</span>
+                    )}
                 </div>
             </div>
         </header>

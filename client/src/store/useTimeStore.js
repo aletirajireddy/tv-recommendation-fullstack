@@ -31,6 +31,9 @@ export const useTimeStore = create((set, get) => ({
     lookbackHours: 720, // Default 30 days to capture all data
     isMonitorModalOpen: false, // New Modal State
     streamsHealth: null, // NEW: Tri-Stream Health
+    selectedTicker: null, // Contextual ToolBox Target
+    sidebarCollapsed: false, // Layout state
+    showPlayback: localStorage.getItem('tv_showPlayback') === null ? true : localStorage.getItem('tv_showPlayback') === 'true',
 
     // NEW: Genie Smart State
     marketMood: { score: 0, label: 'LOADING', stats: { bullish: 0, bearish: 0, total: 0 } },
@@ -43,6 +46,12 @@ export const useTimeStore = create((set, get) => ({
     },
 
     // 2. ACTIONS
+    setSelectedTicker: (ticker) => set({ selectedTicker: ticker }),
+    setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+    setShowPlayback: (show) => {
+        set({ showPlayback: !!show });
+        localStorage.setItem('tv_showPlayback', String(!!show));
+    },
     setTelegramEnabled: (enabled) => set({ telegramEnabled: enabled }),
     setSmartLevelsContext: (enabled) => {
         set({ useSmartLevelsContext: enabled });
@@ -290,6 +299,7 @@ export const useTimeStore = create((set, get) => ({
     },
 
     loadScan: async (scanId) => {
+        if (!scanId) return;
         // Cancel previous
         const { abortControllers } = get();
         if (abortControllers.loadScan) abortControllers.loadScan.abort();

@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
 import styles from './DistanceTracker.module.css';
 
@@ -39,9 +40,14 @@ const MAX_DISTS = [
 // state changes (rows array is already memoized; memo here guards against any
 // accidental parent re-renders).
 const DistRow = React.memo(function DistRow({ r }) {
+    const setSelectedTicker = useTimeStore(s => s.setSelectedTicker);
     return (
         <tr key={r.ticker} className={`${r.anyStale ? styles.staleRow : ''} ${r.isSqueezed ? styles.squeezedRow : ''}`}>
-            <td className={styles.tickerCell}>
+            <td 
+                className={styles.tickerCell} 
+                onClick={() => setSelectedTicker(r.ticker)}
+                style={{ cursor: 'pointer' }}
+            >
                 {r.cleanTicker}
                 {r.isSqueezed && <span className={styles.squeezeBadge} title="2+ EMAs within 0.5% delta">SQUEEZE</span>}
             </td>
@@ -73,15 +79,18 @@ const DistRow = React.memo(function DistRow({ r }) {
     );
 });
 
-export function DistanceTracker() {
-    const [maxDist, setMaxDist] = useState(5);
+export function DistanceTracker({ filterTicker, compact }) {
+    const [maxDist, setMaxDist] = useState(compact ? 10 : 5);
     const [sortKey, setSortKey] = useState('minAbsDist');
     const [sortDir, setSortDir] = useState('asc');
 
-    // Audit fix #4/#5/#6: ref-pattern poll, AbortController, tab-visibility pause.
+    // Audit fix #4/#5/#6: ref-pattern poll
     const { data, loading, error, reload } = usePolledFetch(
-        () => `/api/ema-distance-board?limit=60&max_dist=${maxDist}&active_min=60`,
-        { intervalMs: 60_000, deps: [maxDist] }
+        () => {
+            const tParam = filterTicker ? `&ticker=${filterTicker}&max_dist=100` : `&max_dist=${maxDist}`;
+            return `/api/ema-distance-board?limit=60${tParam}&active_min=60`;
+        },
+        { intervalMs: 60_000, deps: [maxDist, filterTicker] }
     );
 
     // Audit fix: Live socket updates

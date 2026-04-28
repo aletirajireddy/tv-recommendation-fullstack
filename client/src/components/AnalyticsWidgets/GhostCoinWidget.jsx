@@ -125,18 +125,18 @@ export function GhostCoinWidget() {
                                 {/* Confidence score bar */}
                                 {score != null && (
                                     <div style={{ marginTop: 5 }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 2, color: '#a0aec0' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 2, color: 'var(--text-tertiary)' }}>
                                             <span>Confidence</span>
-                                            <span style={{ color: confColor, fontWeight: 600 }}>{score.toFixed(1)} — {confLabel}</span>
+                                            <span style={{ color: confColor, fontWeight: 700 }}>{score.toFixed(1)} — {confLabel}</span>
                                         </div>
-                                        <div style={{ height: 4, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' }}>
+                                        <div style={{ height: 5, background: 'var(--gray-200)', borderRadius: 2, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
                                             <div style={{ height: '100%', width: barWidth, background: confColor, borderRadius: 2, transition: 'width 0.4s' }} />
                                         </div>
                                         {bd && (
-                                            <div style={{ fontSize: 9, color: '#718096', marginTop: 3, display: 'flex', gap: 8 }}>
-                                                <span>WR: {bd.base_win_rate}%</span>
-                                                <span>Regime: {bd.regime_mood} ×{bd.regime_multiplier}</span>
-                                                <span>Dir: {bd.direction_used || '?'}</span>
+                                            <div style={{ fontSize: 9, color: 'var(--text-tertiary)', marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                                                <span>WR: <span style={{color: 'var(--text-secondary)'}}>{bd.base_win_rate}%</span></span>
+                                                <span>Regime: <span style={{color: 'var(--text-secondary)'}}>{bd.regime_mood}</span> ×{bd.regime_multiplier}</span>
+                                                <span>Dir: <span style={{color: 'var(--text-secondary)', fontWeight: 700}}>{bd.direction_used || '?'}</span></span>
                                                 {bd.sample_count != null && <span>n={bd.sample_count}</span>}
                                             </div>
                                         )}

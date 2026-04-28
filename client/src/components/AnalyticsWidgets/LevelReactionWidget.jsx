@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useTimeStore } from '../../store/useTimeStore';
 import {
     ComposedChart, Area, Line, XAxis, YAxis, ReferenceLine,
     Tooltip, ResponsiveContainer,
@@ -201,21 +202,21 @@ function LaneTooltip({ active, payload, coin }) {
     const sideCol = SIDE_COLOR[coin?.side] || SIDE_COLOR.SUPPORT;
     return (
         <div style={{
-            background: '#0d1117', border: `1px solid ${sideCol.line}40`,
+            background: 'var(--bg-card)', border: `1px solid ${sideCol.line}40`,
             borderRadius: 6, padding: '6px 10px', fontSize: 11, lineHeight: 1.7,
-            boxShadow: '0 4px 20px rgba(0,0,0,0.7)', minWidth: 140,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.2)', minWidth: 140,
         }}>
-            <div style={{ color: '#718096', marginBottom: 2 }}>{fmtTime(p.ts)}</div>
+            <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>{fmtTime(p.ts)}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                <span style={{ color: '#a0aec0' }}>Price</span>
-                <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{smartFmt(p.price)}</span>
+                <span style={{ color: 'var(--text-secondary)' }}>Price</span>
+                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{smartFmt(p.price)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                <span style={{ color: '#a0aec0' }}>Level</span>
+                <span style={{ color: 'var(--text-secondary)' }}>Level</span>
                 <span style={{ color: sideCol.line }}>{smartFmt(coin?.levelPrice)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                <span style={{ color: '#a0aec0' }}>vs Level</span>
+                <span style={{ color: 'var(--text-secondary)' }}>vs Level</span>
                 <span style={{ color: p.pct >= 0 ? '#68d391' : '#fc8181', fontWeight: 700 }}>
                     {p.pct > 0 ? '+' : ''}{p.pct?.toFixed(3)}%
                 </span>
@@ -239,6 +240,7 @@ const VOL_SRC_PRIORITY = { STREAM_C_ALERT: 3, STREAM_D_RVOL: 2, STREAM_A_EDGE: 1
 // this lane's data (coin, volEvents, schema) is unchanged. useMemo inside avoids
 // rebuilding Recharts series on every render pass.
 const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading, schema, volEvents }) {
+    const setSelectedTicker = useTimeStore(s => s.setSelectedTicker);
     const meta     = REACTION_META[coin.reaction]   || REACTION_META.APPROACHING;
     const sideCol  = SIDE_COLOR[coin.side]          || SIDE_COLOR.SUPPORT;
 
@@ -278,7 +280,13 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading
             {/* Lane header */}
             <div className={styles.laneHeader}>
                 <div className={styles.laneLeft}>
-                    <span className={styles.laneTicker}>{coin.cleanTicker}</span>
+                    <span 
+                        className={styles.laneTicker} 
+                        onClick={() => setSelectedTicker(coin.cleanTicker || coin.ticker)}
+                        style={{ cursor: 'pointer' }}
+                    >
+                        {coin.cleanTicker}
+                    </span>
                     <span className={styles.laneSide} style={{ background: sideCol.zone, color: sideCol.line }}>
                         {sideCol.label}
                     </span>
@@ -458,7 +466,7 @@ const INTERVALS = [
     { label: '15m', value: 15 },
 ];
 
-export function LevelReactionWidget() {
+export function LevelReactionWidget({ filterTicker, compact }) {
     const [windowMin,   setWindowMin]   = useState(60);
     const [intervalMin, setIntervalMin] = useState(5);
     const [maxDist,     setMaxDist]     = useState(5);
@@ -470,8 +478,9 @@ export function LevelReactionWidget() {
     // polling interval is created once; dep changes trigger reload via useEffect.
     const { data, loading, error, reload } = usePolledFetch(
         async (signal) => {
+            const tickerParam = filterTicker ? `&ticker=${filterTicker}` : '';
             const r = await fetch(
-                `/api/level-reactions?window_min=${windowMin}&interval=${intervalMin}&limit=16&max_dist=${maxDist}`,
+                `/api/level-reactions?window_min=${windowMin}&interval=${intervalMin}&limit=16&max_dist=${maxDist}${tickerParam}`,
                 { signal }
             );
             const d = await r.json();

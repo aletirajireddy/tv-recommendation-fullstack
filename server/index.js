@@ -139,7 +139,8 @@ app.post('/scan-report', (req, res) => {
                 moodScore: moodScore,
                 bullish: bulls,
                 bearish: bears,
-                neutral: neutral
+                neutral: neutral,
+                tickers: payload.market_sentiment?.tickers || { bullish: [], bearish: [] }
             };
 
             console.log(`[INGRESS] Sanitized Scan: ${moodScore}% (${label}) | Overwrote Scores`);
@@ -1225,8 +1226,9 @@ app.get('/api/ema-cascade', (req, res) => {
 //   distance % per TF along with a synthetic "minAbsDist" sort key.
 app.get('/api/ema-distance-board', (req, res) => {
     try {
-        const limit     = Math.min(120, Math.max(5, parseInt(req.query.limit) || 40));
-        const maxDist   = Math.min(50, Math.max(0.5, parseFloat(req.query.max_dist) || 10));
+        const requestedTicker = req.query.ticker?.toUpperCase();
+        const limit     = requestedTicker ? 1 : Math.min(120, Math.max(5, parseInt(req.query.limit) || 40));
+        const maxDist   = requestedTicker ? 100 : Math.min(50, Math.max(0.5, parseFloat(req.query.max_dist) || 10));
         const activeMin = Math.min(720, Math.max(5, parseInt(req.query.active_min) || 60));
         const sinceISO  = new Date(Date.now() - activeMin * 60 * 1000).toISOString();
         const nowMs     = Date.now();
@@ -1238,7 +1240,8 @@ app.get('/api/ema-distance-board', (req, res) => {
 
         // Q1 — latest snapshot per ticker (any source) in window: drives the
         //      ticker list + last price.
-        const latestRows = db.prepare(`
+        // Q1 — latest snapshot per ticker
+        const sql1 = `
             SELECT t.ticker, t.mx AS last_ts,
                    (SELECT price FROM master_coin_store p 
                     WHERE p.ticker = t.ticker AND p.price IS NOT NULL 
@@ -1247,11 +1250,17 @@ app.get('/api/ema-distance-board', (req, res) => {
                 SELECT ticker, MAX(timestamp) AS mx
                 FROM master_coin_store
                 WHERE timestamp >= ?
+                ${requestedTicker ? 'AND (ticker = ? OR ticker = ? OR ticker = ?)' : ''}
                 GROUP BY ticker
             ) t
             ORDER BY t.mx DESC
             LIMIT ?
-        `).all(sinceISO, Math.min(400, limit * 4));
+        `;
+        const params1 = requestedTicker 
+            ? [sinceISO, requestedTicker, `${requestedTicker}USDT.P`, `${requestedTicker}USDT`, limit]
+            : [sinceISO, Math.min(400, limit * 4)];
+
+        const latestRows = db.prepare(sql1).all(...params1);
 
         if (latestRows.length === 0) {
             return res.json({
@@ -3075,8 +3084,10 @@ app.get('/api/level-reactions', (req, res) => {
     try {
         const windowMin  = Math.min(360, Math.max(15, parseInt(req.query.window_min) || 60));
         const intervalMin = Math.max(1, Math.min(30, parseInt(req.query.interval) || 5));
-        const limit      = Math.min(20, Math.max(1, parseInt(req.query.limit) || 12));
-        const maxDist    = Math.min(10, Math.max(0.5, parseFloat(req.query.max_dist) || 5));
+        const requestedTicker = req.query.ticker?.toUpperCase();
+        // If a single ticker is requested, allow 1 results (limit is ignored) and slightly wider dist
+        const limit      = requestedTicker ? 1 : Math.min(20, Math.max(1, parseInt(req.query.limit) || 12));
+        const maxDist    = Math.min(requestedTicker ? 100 : 10, Math.max(0.5, parseFloat(req.query.max_dist) || 5));
 
         // ── 1. Latest scan ──────────────────────────────────────────────────
         const latestScanRow = db.prepare(
@@ -3135,6 +3146,11 @@ app.get('/api/level-reactions', (req, res) => {
         results.forEach(r => {
             const d      = r.data || r;
             const ticker = (d.ticker || r.ticker || '').trim();
+            const cleanTicker = ticker.replace(/USDT\.P$|USDT$/, '').toUpperCase();
+            
+            // Filter by requested ticker if present
+            if (requestedTicker && cleanTicker !== requestedTicker && ticker.toUpperCase() !== requestedTicker) return;
+
             const close  = parsePrice(d.close || d.price);
             if (!ticker || !close) return;
 

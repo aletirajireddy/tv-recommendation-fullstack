@@ -55,7 +55,7 @@ export function HeaderStatsDeck() {
                 <div className={styles.divider} />
 
                 {/* 3. MARKET HEARTBEAT */}
-                <div className={styles.card} style={{ flex: 1, minWidth: '350px', padding: '0', height: '64px', overflow: 'hidden' }}>
+                <div className={styles.card} style={{ flex: 1, minWidth: '400px', padding: '0', height: '100%', overflow: 'hidden' }}>
                     <MarketHeartbeatIndicator />
                 </div>            <div className={styles.divider} />
             <TriStreamHealthCard />

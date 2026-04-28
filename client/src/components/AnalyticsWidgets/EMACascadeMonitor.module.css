@@ -1,18 +1,19 @@
 /* ─── Widget shell ─────────────────────────────────────────────────────────── */
 .widget {
-    background: #0d1117;
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
     border-radius: 10px;
     display: flex;
     flex-direction: column;
     min-height: 520px;
     overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.05);
 }
 
 /* ─── Header ───────────────────────────────────────────────────────────────── */
 .header {
     padding: 12px 14px 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
 }
 .titleRow {
@@ -26,20 +27,20 @@
 .titleText {
     font-size: 13px;
     font-weight: 700;
-    color: #e2e8f0;
+    color: var(--text-primary);
     letter-spacing: 0.5px;
 }
 .titleSub {
     font-size: 10px;
-    color: #4a5568;
+    color: var(--text-muted);
     font-weight: 400;
     letter-spacing: 0.3px;
 }
 .refreshBtn {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.04);
+    border: 1px solid var(--border-subtle);
     border-radius: 5px;
-    color: #718096;
+    color: var(--text-secondary);
     cursor: pointer;
     font-size: 14px;
     line-height: 1;
@@ -66,16 +67,16 @@
 }
 .controlLabel {
     font-size: 9px;
-    color: #4a5568;
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-right: 2px;
 }
 .tickerInput {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.1);
+    background: var(--white);
+    border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    color: #e2e8f0;
+    color: var(--text-primary);
     font-size: 11px;
     font-weight: 700;
     padding: 4px 8px;
@@ -87,10 +88,10 @@
     border-color: rgba(99,179,237,0.5);
 }
 .pill {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    color: #718096;
+    color: var(--text-secondary);
     cursor: pointer;
     font-size: 10px;
     padding: 3px 8px;
@@ -113,8 +114,8 @@
     gap: 10px;
     flex-wrap: wrap;
     padding: 8px 14px;
-    background: rgba(255,255,255,0.015);
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    background: var(--bg-hover);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
 }
 .stateChip {
@@ -131,8 +132,8 @@
 .regimeBull { color: #68d391; background: rgba(104,211,145,0.10); border-color: rgba(104,211,145,0.3); }
 .regimeBear { color: #fc8181; background: rgba(252,129,129,0.10); border-color: rgba(252,129,129,0.3); }
 .regimeMixed { color: #fbd38d; background: rgba(251,211,141,0.10); border-color: rgba(251,211,141,0.3); }
-.stateLabel { font-size: 9px; color: #4a5568; text-transform: uppercase; letter-spacing: 0.5px; }
-.stateValue { font-size: 11px; color: #e2e8f0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stateLabel { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.stateValue { font-size: 11px; color: var(--text-primary); font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* ─── Source health row ─────────────────────────────────────────────────────── */
 .healthRow {
@@ -152,7 +153,7 @@
 }
 .healthOk { color: #68d391; background: rgba(104,211,145,0.08); border-color: rgba(104,211,145,0.25); }
 .healthStale { color: #fc8181; background: rgba(252,129,129,0.08); border-color: rgba(252,129,129,0.3); }
-.healthMissing { color: #4a5568; background: rgba(255,255,255,0.02); border-color: rgba(255,255,255,0.06); }
+.healthMissing { color: var(--text-muted); background: rgba(0,0,0,0.02); border-color: var(--border-subtle); }
 
 /* ─── Body ─────────────────────────────────────────────────────────────────── */
 .body {
@@ -202,12 +203,12 @@
 }
 .tfPrice {
     font-size: 10px;
-    color: #a0aec0;
+    color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }
 .tfDist { font-size: 9px; font-variant-numeric: tabular-nums; opacity: 0.85; display: flex; flex-direction: column; align-items: center; gap: 1px; cursor: help; }
-.tfDistLabel { font-size: 7px; color: #4a5568; letter-spacing: 0.4px; text-transform: uppercase; opacity: 0.8; }
-.tfSrc { font-size: 8px; color: #4a5568; letter-spacing: 0.3px; }
+.tfDistLabel { font-size: 7px; color: var(--text-muted); letter-spacing: 0.4px; text-transform: uppercase; opacity: 0.8; }
+.tfSrc { font-size: 8px; color: var(--text-muted); letter-spacing: 0.3px; }
 
 .tfAbove   { background: rgba(104,211,145,0.07); border-color: rgba(104,211,145,0.25); color: #68d391; }
 .tfTesting { background: rgba(246,173,85,0.10);  border-color: rgba(246,173,85,0.35);  color: #f6ad55; }
@@ -231,13 +232,13 @@
     border-bottom: 1px dashed rgba(255,255,255,0.03);
     font-variant-numeric: tabular-nums;
 }
-.transTime { color: #4a5568; min-width: 52px; }
+.transTime { color: var(--text-muted); min-width: 52px; }
 .transTf {
     font-weight: 700;
     padding: 1px 5px;
     border-radius: 3px;
-    background: rgba(255,255,255,0.05);
-    color: #a0aec0;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
     min-width: 28px;
     text-align: center;
 }
@@ -253,7 +254,7 @@
 .evTOUCH          { color: #fbd38d; background: rgba(251,211,141,0.12); }
 .evPULLBACK_TOUCH { color: #f6ad55; background: rgba(246,173,85,0.12); }
 .evPULLBACK_HOLD  { color: #f6ad55; background: rgba(246,173,85,0.20); }
-.transPrice { color: #a0aec0; }
+.transPrice { color: var(--text-secondary); }
 
 /* ─── Loading / empty / error ───────────────────────────────────────────────── */
 .loadingState, .emptyState, .errorState {

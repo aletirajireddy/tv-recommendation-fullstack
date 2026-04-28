@@ -1,18 +1,19 @@
 /* ─── Widget shell ─────────────────────────────────────────────────────────── */
 .widget {
-    background: #0d1117;
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
     border-radius: 10px;
     display: flex;
     flex-direction: column;
     min-height: 400px;
     overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.05);
 }
 
 /* ─── Header ───────────────────────────────────────────────────────────────── */
 .header {
     padding: 12px 14px 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
 }
 
@@ -37,22 +38,22 @@
 .titleText {
     font-size: 13px;
     font-weight: 700;
-    color: #e2e8f0;
+    color: var(--text-primary);
     letter-spacing: 0.5px;
 }
 
 .titleSub {
     font-size: 10px;
-    color: #4a5568;
+    color: var(--text-muted);
     font-weight: 400;
     letter-spacing: 0.3px;
 }
 
 .refreshBtn {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.04);
+    border: 1px solid var(--border-subtle);
     border-radius: 5px;
-    color: #718096;
+    color: var(--text-secondary);
     cursor: pointer;
     font-size: 14px;
     line-height: 1;
@@ -81,17 +82,17 @@
 
 .controlLabel {
     font-size: 9px;
-    color: #4a5568;
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-right: 2px;
 }
 
 .pill {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    color: #718096;
+    color: var(--text-secondary);
     cursor: pointer;
     font-size: 10px;
     padding: 3px 8px;
@@ -109,7 +110,7 @@
 
 .scanAge {
     font-size: 10px;
-    color: #4a5568;
+    color: var(--text-secondary);
     margin-left: auto;
 }
 
@@ -122,10 +123,10 @@
 }
 
 .filterPill {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    color: #4a5568;
+    color: var(--text-secondary);
     cursor: pointer;
     font-size: 10px;
     padding: 2px 8px;
@@ -192,12 +193,12 @@
 /* ─── Individual lane ───────────────────────────────────────────────────────── */
 .lane {
     border-left: 3px solid transparent;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid var(--border-subtle);
     padding: 8px 14px 6px 12px;
     transition: background 0.15s;
 }
 .lane:hover {
-    background: rgba(255,255,255,0.015);
+    background: var(--bg-hover);
 }
 
 /* Lane header */
@@ -220,7 +221,7 @@
 .laneTicker {
     font-size: 12px;
     font-weight: 700;
-    color: #e2e8f0;
+    color: var(--text-primary);
     white-space: nowrap;
 }
 
@@ -235,7 +236,7 @@
 
 .laneLevel {
     font-size: 10px;
-    color: #718096;
+    color: var(--text-secondary);
     white-space: nowrap;
     flex-shrink: 0;
 }
@@ -250,7 +251,7 @@
 
 .lanePrice {
     font-size: 11px;
-    color: #a0aec0;
+    color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }
 
@@ -267,7 +268,7 @@
 .distContext {
     font-size: 8px;
     font-weight: 400;
-    color: #4a5568;
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.4px;
 }
@@ -310,7 +311,7 @@
 
 .snapshotCount {
     font-size: 9px;
-    color: #4a5568;
+    color: var(--text-secondary);
 }
 
 .laneTrend {

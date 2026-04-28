@@ -1,15 +1,16 @@
 .widget {
-    background: #0d1117;
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
     border-radius: 10px;
     display: flex;
     flex-direction: column;
     min-height: 360px;
     overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.05);
 }
 .header {
     padding: 12px 14px 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--border-subtle);
 }
 .titleRow {
     display: flex;
@@ -20,7 +21,7 @@
 .title { display: flex; align-items: center; gap: 8px; }
 .titleIcon { font-size: 15px; color: #d6bcfa; }
 .titleText {
-    font-size: 13px; font-weight: 700; color: #e2e8f0; letter-spacing: 0.5px;
+    font-size: 13px; font-weight: 700; color: var(--text-primary); letter-spacing: 0.5px;
 }
 .titleSub {
     font-size: 10px; color: #4a5568; font-weight: 400; letter-spacing: 0.3px;
@@ -68,14 +69,14 @@
 }
 .table thead th {
     position: sticky; top: 0;
-    background: #0d1117;
-    color: #4a5568;
+    background: var(--bg-card);
+    color: var(--text-muted);
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     text-align: right;
     padding: 6px 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
+    border-bottom: 1px solid var(--border-bright);
     cursor: pointer;
     user-select: none;
 }
@@ -91,11 +92,11 @@
 .table td {
     padding: 5px 8px;
     text-align: right;
-    color: #a0aec0;
+    color: var(--text-secondary);
 }
 .table td:first-child,
 .table td:nth-child(2) { text-align: left; }
-.tickerCell { color: #e2e8f0; font-weight: 700; }
+.tickerCell { color: var(--text-primary); font-weight: 700; }
 .priceCell { color: #cbd5e0; }
 .tfCell {
     color: #d6bcfa;

@@ -27,34 +27,23 @@
     color: var(--text-primary);
 }
 
-.modeSwitch {
-    display: flex;
-    gap: 0;
+.activeStatus, .inactiveStatus {
+    font-size: 11px;
+    font-weight: 800;
+    padding: 6px 16px;
     background: var(--gray-200);
     border-radius: 4px;
-    padding: 2px;
+    border: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
 }
 
-.modeSwitch button {
-    border: none;
-    background: transparent;
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 4px 12px;
-    cursor: pointer;
-    border-radius: 3px;
-    color: var(--text-tertiary);
-    transition: all 0.2s ease;
-}
-
-.modeSwitch .activeMode {
-    background: var(--bg-card);
-    color: var(--text-primary);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.modeSwitch .inactiveMode:hover {
-    color: var(--text-secondary);
+.activeStatus {
+    background: var(--white);
+    border-color: var(--success);
+    color: var(--success);
+    box-shadow: 0 0 10px rgba(56, 161, 105, 0.1);
 }
 
 /* CENTER: META & MINI PLAYBACK */
@@ -193,4 +182,24 @@
         /* Spread controls */
         padding: 0 4px;
     }
+}
+
+.pulseIcon {
+    animation: iconPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes iconPulse {
+    0% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.9); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+:global(.animate-header-flow) {
+    animation: headerFlow 1.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes headerFlow {
+    0% { box-shadow: inset 0 0 0 rgba(49, 130, 206, 0); }
+    30% { box-shadow: inset 0 0 20px rgba(49, 130, 206, 0.2); }
+    100% { box-shadow: inset 0 0 0 rgba(49, 130, 206, 0); }
 }

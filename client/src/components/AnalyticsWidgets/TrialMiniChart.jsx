@@ -79,9 +79,9 @@ export function TrialMiniChart({ trial }) {
             <div style={{
                 height: 72, marginTop: 8,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'rgba(255,255,255,0.02)', borderRadius: 6,
-                border: '1px dashed rgba(255,255,255,0.06)',
-                fontSize: 10, color: '#4a5568',
+                background: 'var(--bg-hover)', borderRadius: 6,
+                border: '1px dashed var(--border-subtle)',
+                fontSize: 10, color: 'var(--text-muted)',
             }}>
                 Loading chart…
             </div>
@@ -93,9 +93,9 @@ export function TrialMiniChart({ trial }) {
             <div style={{
                 height: 72, marginTop: 8,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'rgba(255,255,255,0.02)', borderRadius: 6,
-                border: '1px dashed rgba(255,255,255,0.06)',
-                fontSize: 10, color: '#4a5568',
+                background: 'var(--bg-hover)', borderRadius: 6,
+                border: '1px dashed var(--border-subtle)',
+                fontSize: 10, color: 'var(--text-muted)',
             }}>
                 No price data yet
             </div>
@@ -103,8 +103,8 @@ export function TrialMiniChart({ trial }) {
     }
 
     const isLong = trial.direction === 'LONG';
-    const lineColor = isLong ? '#68d391' : '#fc8181';
-    const fillColor = isLong ? 'rgba(104,211,145,0.12)' : 'rgba(252,129,129,0.12)';
+    const lineColor = isLong ? 'var(--success)' : 'var(--error)';
+    const fillColor = isLong ? 'rgba(56, 161, 105, 0.08)' : 'rgba(229, 62, 62, 0.08)';
 
     const { candles, levels, phases } = ohlc;
 
@@ -137,18 +137,18 @@ export function TrialMiniChart({ trial }) {
                         dataKey="t" type="number" scale="time"
                         domain={['dataMin', 'dataMax']}
                         tickFormatter={fmtTime}
-                        tick={{ fontSize: 9, fill: '#4a5568' }}
+                        tick={{ fontSize: 9, fill: 'var(--text-muted)' }}
                         tickCount={3}
                     />
                     <YAxis
                         domain={[pMin - pPad, pMax + pPad]}
-                        tick={{ fontSize: 9, fill: '#4a5568' }}
+                        tick={{ fontSize: 9, fill: 'var(--text-muted)' }}
                         tickFormatter={smartFmt}
                         width={55}
                         tickCount={4}
                     />
                     <Tooltip
-                        contentStyle={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 10 }}
+                        contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 6, fontSize: 10 }}
                         labelFormatter={(v) => fmtTime(v)}
                         formatter={(v) => [smartFmt(v), 'Price']}
                     />
@@ -156,31 +156,31 @@ export function TrialMiniChart({ trial }) {
                     {/* Phase zones */}
                     {cooldownStart != null && cooldownEnd != null && (
                         <ReferenceArea x1={cooldownStart} x2={cooldownEnd}
-                            fill="rgba(160,174,192,0.08)" stroke="none"
-                            label={{ value: 'COOLDOWN', fill: 'rgba(160,174,192,0.5)', fontSize: 8, position: 'insideTopLeft' }}
+                            fill="rgba(0,0,0,0.05)" stroke="none"
+                            label={{ value: 'COOLDOWN', fill: 'var(--text-muted)', fontSize: 8, position: 'insideTopLeft' }}
                         />
                     )}
                     {watchStart != null && watchEnd != null && watchEnd > watchStart && (
                         <ReferenceArea x1={watchStart} x2={watchEnd}
-                            fill="rgba(99,179,237,0.07)" stroke="none"
-                            label={{ value: 'WATCHING', fill: 'rgba(99,179,237,0.5)', fontSize: 8, position: 'insideTopLeft' }}
+                            fill="rgba(49, 130, 206, 0.04)" stroke="none"
+                            label={{ value: 'WATCHING', fill: 'var(--accent-blue)', opacity: 0.6, fontSize: 8, position: 'insideTopLeft' }}
                         />
                     )}
 
                     {/* Key price levels */}
                     {levels.ema200_5m > 0 && (
-                        <ReferenceLine y={levels.ema200_5m} stroke="#4299e1" strokeDasharray="2 4" strokeWidth={1}
-                            label={{ value: '5m EMA', fill: '#4299e1', fontSize: 8, position: 'right' }}
+                        <ReferenceLine y={levels.ema200_5m} stroke="var(--accent-blue)" strokeDasharray="2 4" strokeWidth={1}
+                            label={{ value: '5m EMA', fill: 'var(--accent-blue)', fontSize: 8, position: 'right' }}
                         />
                     )}
                     {levels.smart_level > 0 && levels.smart_level !== levels.trigger && (
-                        <ReferenceLine y={levels.smart_level} stroke="#f6ad55" strokeDasharray="5 3" strokeWidth={1.5}
-                            label={{ value: ohlc.level_type?.replace('EMA200_', '') || 'Level', fill: '#f6ad55', fontSize: 8, position: 'right' }}
+                        <ReferenceLine y={levels.smart_level} stroke="var(--warning)" strokeDasharray="5 3" strokeWidth={1.5}
+                            label={{ value: ohlc.level_type?.replace('EMA200_', '') || 'Level', fill: 'var(--warning)', fontSize: 8, position: 'right' }}
                         />
                     )}
                     {levels.trigger > 0 && (
-                        <ReferenceLine y={levels.trigger} stroke="rgba(255,255,255,0.4)" strokeDasharray="3 3" strokeWidth={1}
-                            label={{ value: 'T', fill: 'rgba(255,255,255,0.4)', fontSize: 8, position: 'right' }}
+                        <ReferenceLine y={levels.trigger} stroke="var(--text-muted)" strokeDasharray="3 3" strokeWidth={1} opacity={0.3}
+                            label={{ value: 'T', fill: 'var(--text-muted)', fontSize: 8, position: 'right' }}
                         />
                     )}
 
@@ -194,13 +194,13 @@ export function TrialMiniChart({ trial }) {
                         .map(e => ({ t: new Date(e.ts).getTime(), src: e.source }))
                         .filter(e => e.t >= (series[0]?.t ?? 0) && e.t <= (series.at(-1)?.t ?? Infinity))
                         .map((e, i) => {
-                            const color = VOL_SRC_COLOR[e.src] || '#a0aec0';
+                            const color = VOL_SRC_COLOR[e.src] || 'var(--text-muted)';
                             return (
                                 <ReferenceLine key={`vol-${i}`}
                                     x={e.t}
-                                    stroke={color} strokeOpacity={0.6}
+                                    stroke={color} strokeOpacity={0.4}
                                     strokeDasharray="2 3" strokeWidth={1}
-                                    label={{ value: VOL_SRC_LABEL[e.src] || '▾', position: 'top', fill: color, fontSize: 8 }}
+                                    label={{ value: VOL_SRC_LABEL[e.src] || '▾', position: 'top', fill: color, fontSize: 8, opacity: 0.6 }}
                                 />
                             );
                         })
@@ -209,7 +209,7 @@ export function TrialMiniChart({ trial }) {
                     {/* Verdict vertical */}
                     {phases.resolved_ms != null && (
                         <ReferenceLine x={phases.resolved_ms}
-                            stroke={ohlc.verdict === 'CONFIRMED' ? '#68d391' : '#fc8181'}
+                            stroke={ohlc.verdict === 'CONFIRMED' ? 'var(--success)' : 'var(--error)'}
                             strokeDasharray="3 2" strokeWidth={1.5}
                         />
                     )}
@@ -221,7 +221,7 @@ export function TrialMiniChart({ trial }) {
                         stroke={lineColor}
                         strokeWidth={2}
                         fill={fillColor}
-                        dot={false}
+                        dot={{ r: 1.5, fill: lineColor, stroke: 'none' }}
                         isAnimationActive={false}
                     />
                 </ComposedChart>

@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
     ComposedChart, Line, XAxis, YAxis, ReferenceLine, ReferenceDot,
     Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import styles from './EMACascadeMonitor.module.css';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useTimeStore } from '../../store/useTimeStore';
 
 // Audit fix #7: cap rendered Recharts ReferenceLine/ReferenceDot to avoid
 // the ~100-marker render cliff. Older events drop off; the most recent
@@ -71,27 +72,27 @@ function CascadeTooltip({ active, payload, label }) {
     const point = payload[0]?.payload || {};
     return (
         <div style={{
-            background: '#0d1117', border: '1px solid rgba(255,255,255,0.1)',
+            background: 'var(--bg-card)', border: '1px solid var(--border-subtle)',
             borderRadius: 6, padding: '8px 10px', fontSize: 11,
-            color: '#e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+            color: 'var(--text-primary)', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
         }}>
-            <div style={{ color: '#a0aec0', marginBottom: 4 }}>{fmtTime(label)}</div>
+            <div style={{ color: 'var(--text-muted)', marginBottom: 4 }}>{fmtTime(label)}</div>
             <div style={{ marginBottom: 4 }}>
-                <span style={{ color: '#fff', fontWeight: 700 }}>Price </span>
-                <span style={{ color: '#e2e8f0' }}>{smartFmt(point.price)}</span>
+                <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>Price </span>
+                <span style={{ color: 'var(--text-secondary)' }}>{smartFmt(point.price)}</span>
             </div>
             {TFS.map(tf => point[tf] != null && (
                 <div key={tf} style={{ color: TF_COLORS[tf], fontVariantNumeric: 'tabular-nums' }}>
                     {TF_LABELS[tf]} EMA: {smartFmt(point[tf])}
                     {point.distPct?.[tf] != null && (
-                        <span style={{ color: '#718096', marginLeft: 6 }}>
+                        <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>
                             ({point.distPct[tf].toFixed(2)}%)
                         </span>
                     )}
                 </div>
             ))}
             {point.regime && (
-                <div style={{ marginTop: 4, color: '#718096' }}>
+                <div style={{ marginTop: 4, color: 'var(--text-muted)' }}>
                     Defense: {point.bullDefense || '—'} · Regime: {point.regime}
                 </div>
             )}
@@ -114,11 +115,20 @@ const INTERVALS = [
     { label: '5m', value: 5 },
 ];
 
-export function EMACascadeMonitor() {
-    const [ticker,     setTicker]     = useState('BTC');
-    const [tickerInput,setTickerInput]= useState('BTC');
+export function EMACascadeMonitor({ filterTicker, compact }) {
+    const selectedTicker = useTimeStore(s => s.selectedTicker);
+    const [ticker,     setTicker]     = useState(filterTicker || selectedTicker || 'BTC');
+    const [tickerInput,setTickerInput]= useState(filterTicker || selectedTicker || 'BTC');
     const [windowMin,  setWindowMin]  = useState(120);
     const [intervalMin,setIntervalMin]= useState(2);
+
+    // Sync with global selection
+    useEffect(() => {
+        if (selectedTicker && !filterTicker) {
+            setTicker(selectedTicker);
+            setTickerInput(selectedTicker);
+        }
+    }, [selectedTicker, filterTicker]);
 
     // Audit fixes #4: ref-pattern fetcher (no interval churn on dep changes),
     // AbortController on every fetch (#3), pause when tab hidden (#6).
