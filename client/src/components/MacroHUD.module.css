@@ -8,7 +8,7 @@
 .moodLabel {
     font-size: 0.75rem;
     font-weight: 700;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     letter-spacing: 0.05em;
     margin-bottom: 8px;
 }
@@ -30,19 +30,19 @@
 .scoreValue {
     font-size: 1.5rem;
     font-weight: 700;
-    color: var(--text-primary);
+    color: var(--text-main);
 }
 
 .scoreSub {
     font-size: 0.875rem;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
 }
 
 .sectionTitle {
     font-size: 0.75rem;
     font-weight: 700;
     margin-bottom: 12px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     text-transform: uppercase;
 }
 
@@ -51,7 +51,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 0;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border);
 }
 
 .statLabel {
@@ -60,12 +60,12 @@
     gap: 8px;
     font-size: 0.875rem;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text-muted);
 }
 
 .statNumber {
     font-weight: 700;
-    color: var(--text-primary);
+    color: var(--text-main);
 }
 
 .totalRow {
@@ -90,7 +90,7 @@
 .groupHeader {
     position: sticky;
     top: 0;
-    background: var(--bg-card);
+    background: var(--bg-panel);
     padding: 8px 0;
     font-size: 0.75rem;
     font-weight: 700;
@@ -102,17 +102,17 @@
     display: flex;
     justify-content: space-between;
     padding: 6px 0;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border);
     font-size: 0.875rem;
 }
 
 .tickerName {
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--text-main);
 }
 
 .tickerMeta {
     font-family: 'Roboto Mono', monospace;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-size: 0.75rem;
 }

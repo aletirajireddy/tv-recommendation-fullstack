@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
-import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart, Target } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart, Target, Menu, Palette } from 'lucide-react';
 import styles from './GlobalHeader.module.css';
 import { format, formatDistanceToNow } from 'date-fns';
 import { HeaderStatsDeck } from './HeaderStatsDeck';
 
-export function GlobalHeader() {
+export function GlobalHeader({ onOpenThemeBuilder }) {
     const timeline = useTimeStore(s => s.timeline);
     const currentIndex = useTimeStore(s => s.currentIndex);
     const isPlaying = useTimeStore(s => s.isPlaying);
@@ -24,6 +24,8 @@ export function GlobalHeader() {
     const useSmartLevelsContext = useTimeStore(s => s.useSmartLevelsContext);
     const setSmartLevelsContext = useTimeStore(s => s.setSmartLevelsContext);
     const fetchStreamsHealth = useTimeStore(s => s.fetchStreamsHealth);
+    const mobileMenuOpen = useTimeStore(s => s.mobileMenuOpen);
+    const setMobileMenuOpen = useTimeStore(s => s.setMobileMenuOpen);
 
     // Initialize Data & Socket & Settings
     useEffect(() => {
@@ -87,6 +89,13 @@ export function GlobalHeader() {
     return (
         <header className={`${styles.header} ${isPulsing ? 'animate-header-flow' : ''}`}>
             <div className={styles.deckSection}>
+                <button 
+                    className={styles.hamburgerBtn}
+                    onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                    aria-label="Toggle Menu"
+                >
+                    <Menu size={20} />
+                </button>
                 <HeaderStatsDeck />
             </div>
 
@@ -94,13 +103,23 @@ export function GlobalHeader() {
                 {/* STATUS INDICATOR */}
                 <div className={isLive ? styles.activeStatus : styles.inactiveStatus}>
                     {isLive ? (
-                        <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ color: 'var(--accent-green)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                             <Wifi size={14} className={styles.pulseIcon} /> STREAM ACTIVE
                         </span>
                     ) : (
-                        <span style={{ color: 'var(--warning)' }}>⏪ REPLAY MODE</span>
+                        <span style={{ color: 'var(--accent-orange)' }}>⏪ REPLAY MODE</span>
                     )}
                 </div>
+                
+                {/* THEME BUILDER TOGGLE */}
+                <button 
+                    onClick={onOpenThemeBuilder}
+                    className="p-1.5 rounded hover:bg-bg-panel text-text-muted transition-colors border border-transparent hover:border-border ml-2 flex items-center justify-center"
+                    title="Theme Builder"
+                    style={{ background: 'transparent', cursor: 'pointer', padding: '6px' }}
+                >
+                    <Palette size={18} strokeWidth={2} />
+                </button>
             </div>
         </header>
     );

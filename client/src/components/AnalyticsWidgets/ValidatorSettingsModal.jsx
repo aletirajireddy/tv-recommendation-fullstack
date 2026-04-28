@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Settings, Check } from 'lucide-react';
 import styles from './ValidatorTimelineWidget.module.css';
 
 const SETTINGS_META = [
@@ -51,7 +52,7 @@ export function ValidatorSettingsModal({ onClose }) {
         <>
             <div className={styles.overlay} onClick={onClose} />
             <div className={styles.csvModal} style={{ minWidth: 380 }}>
-                <h4>⚙ Validator Settings</h4>
+                <h4><Settings size={18} className="inline mr-2" /> Validator Settings</h4>
                 <p style={{ fontSize: 11, color: '#718096', marginTop: -8, marginBottom: 16 }}>
                     Changes apply to new trials only. Existing in-flight trials keep their original config.
                 </p>
@@ -99,7 +100,7 @@ export function ValidatorSettingsModal({ onClose }) {
                 <div className={styles.csvModalActions} style={{ marginTop: 20 }}>
                     <button className={styles.btnSecondary} onClick={onClose}>Cancel</button>
                     <button className={styles.btnPrimary} onClick={handleSave} disabled={saving}>
-                        {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Settings'}
+                        {saving ? 'Saving…' : saved ? <><Check size={14} className="inline mr-1" /> Saved</> : 'Save Settings'}
                     </button>
                 </div>
             </div>

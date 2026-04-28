@@ -6,6 +6,7 @@ import {
 import styles from './EMACascadeMonitor.module.css';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useTimeStore } from '../../store/useTimeStore';
+import { Zap, ChevronUp, ChevronDown, Diamond, ArrowDown, RefreshCw } from 'lucide-react';
 
 // Audit fix #7: cap rendered Recharts ReferenceLine/ReferenceDot to avoid
 // the ~100-marker render cliff. Older events drop off; the most recent
@@ -72,14 +73,14 @@ function CascadeTooltip({ active, payload, label }) {
     const point = payload[0]?.payload || {};
     return (
         <div style={{
-            background: 'var(--bg-card)', border: '1px solid var(--border-subtle)',
+            background: 'var(--bg-panel)', border: '1px solid var(--border)',
             borderRadius: 6, padding: '8px 10px', fontSize: 11,
-            color: 'var(--text-primary)', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+            color: 'var(--text-main)', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
         }}>
             <div style={{ color: 'var(--text-muted)', marginBottom: 4 }}>{fmtTime(label)}</div>
             <div style={{ marginBottom: 4 }}>
-                <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>Price </span>
-                <span style={{ color: 'var(--text-secondary)' }}>{smartFmt(point.price)}</span>
+                <span style={{ color: 'var(--text-main)', fontWeight: 700 }}>Price </span>
+                <span style={{ color: 'var(--text-muted)' }}>{smartFmt(point.price)}</span>
             </div>
             {TFS.map(tf => point[tf] != null && (
                 <div key={tf} style={{ color: TF_COLORS[tf], fontVariantNumeric: 'tabular-nums' }}>
@@ -233,12 +234,14 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
             {/* ── Header ── */}
             <div className={styles.header}>
                 <div className={styles.titleRow}>
-                    <div className={styles.title}>
-                        <span className={styles.titleIcon}>⚡</span>
+                    <div className="widget-title">
+                        <span className={styles.titleIcon}><Zap size={16} className="text-accent-blue" /></span>
                         <span className={styles.titleText}>EMA CASCADE MONITOR</span>
                         <span className={styles.titleSub}>200 EMA · 1m → 4h · cascade defense</span>
                     </div>
-                    <button className={styles.refreshBtn} onClick={() => load()} title="Refresh">↺</button>
+                    <button className={styles.refreshBtn} onClick={() => load()} title="Refresh">
+                        <RefreshCw size={14} />
+                    </button>
                 </div>
 
                 <div className={styles.controlsRow}>
@@ -252,15 +255,17 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                             placeholder="BTC"
                         />
                     </form>
-                    <div className={styles.controlGroup}>
-                        {dynamicTickers.map(t => (
-                            <button key={t}
-                                className={`${styles.pill} ${ticker === t ? styles.pillActive : ''}`}
-                                onClick={() => setQuickTicker(t)}>
-                                {t}
-                            </button>
-                        ))}
-                    </div>
+                    {!filterTicker && (
+                        <div className={styles.controlGroup}>
+                            {dynamicTickers.map(t => (
+                                <button key={t}
+                                    className={`${styles.pill} ${ticker === t ? styles.pillActive : ''}`}
+                                    onClick={() => setQuickTicker(t)}>
+                                    {t}
+                                </button>
+                            ))}
+                        </div>
+                    )}
 
                     {/* Window */}
                     <div className={styles.controlGroup}>
@@ -291,7 +296,7 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
             {/* ── State strip ── */}
             <div className={styles.stateStrip}>
                 <span className={`${styles.stateChip} ${regimeClass}`}>
-                    {regime === 'BULL' ? '▲' : regime === 'BEAR' ? '▼' : '◆'} {regime}
+                    {regime === 'BULL' ? <ChevronUp size={12} /> : regime === 'BEAR' ? <ChevronDown size={12} /> : <Diamond size={10} />} {regime}
                 </span>
                 <span className={styles.stateLabel}>Bull defense</span>
                 <span className={styles.stateValue}>
@@ -333,9 +338,10 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                             style={{
                                 color: volEvents.length ? '#f6ad55' : '#4a5568',
                                 borderColor: volEvents.length ? 'rgba(246,173,85,0.3)' : 'rgba(255,255,255,0.06)',
+                                display: 'flex', alignItems: 'center', gap: '2px'
                             }}
                             title={`Last volume spike: ${new Date(lastVolEventMs).toLocaleTimeString()}`}>
-                            ▾vol·{ageStr(Date.now() - lastVolEventMs)}{volEvents.length ? ` (${volEvents.length})` : ' ago'}
+                            <ArrowDown size={10} /> vol·{ageStr(Date.now() - lastVolEventMs)}{volEvents.length ? ` (${volEvents.length})` : ' ago'}
                         </span>
                     )}
                 </div>

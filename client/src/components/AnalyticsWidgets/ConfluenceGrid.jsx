@@ -10,7 +10,7 @@ export function ConfluenceGrid() {
 
     return (
         <div className={styles.gridContainer}>
-            <h3 className={styles.title}>ENHANCED INSTITUTIONAL MACRO SUMMARY (Time Spread Analysis)</h3>
+            <h3 className="widget-title">ENHANCED INSTITUTIONAL MACRO SUMMARY (Time Spread Analysis)</h3>
 
             <div
                 className={styles.tableWrapper}

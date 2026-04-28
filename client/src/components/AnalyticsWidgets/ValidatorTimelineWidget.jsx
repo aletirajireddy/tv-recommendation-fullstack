@@ -4,6 +4,7 @@ import socketService from '../../services/SocketService';
 import { ValidatorSettingsModal } from './ValidatorSettingsModal';
 import { TrialExpandedModal } from './TrialExpandedModal';
 import { TrialMiniChart } from './TrialMiniChart';
+import { Target, Settings, Maximize2 } from 'lucide-react';
 import styles from './ValidatorTimelineWidget.module.css';
 
 function smartFmt(price) {
@@ -20,7 +21,7 @@ function fmtTime(iso) {
 
 function MoveTag({ pct }) {
     if (pct == null) return null;
-    const color = pct > 0 ? 'var(--success)' : pct < 0 ? 'var(--error)' : 'var(--text-muted)';
+    const color = pct > 0 ? 'var(--accent-green)' : pct < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
     return <span style={{ color, marginLeft: 4 }}>{pct > 0 ? '+' : ''}{Number(pct).toFixed(2)}%</span>;
 }
 
@@ -132,8 +133,17 @@ function TrialCard({ trial, isResolved, onExpand }) {
                                 {isLong ? 'LONG' : 'SHORT'}
                             </span>
                         </div>
-                        <div className={styles.moveTag}>
-                            <MoveTag pct={trial.final_move ?? trial.latest_move} />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div className={styles.moveTag}>
+                                <MoveTag pct={trial.final_move ?? trial.latest_move} />
+                            </div>
+                            <button
+                                className={styles.expandBtnHeader}
+                                onClick={(e) => { e.stopPropagation(); onExpand(trial.trial_id); }}
+                                title="Forensic Details"
+                            >
+                                <Maximize2 size={14} />
+                            </button>
                         </div>
                     </div>
 
@@ -163,10 +173,6 @@ function TrialCard({ trial, isResolved, onExpand }) {
 
                 <div className={styles.trialVisuals}>
                     <TrialMiniChart trial={trial} />
-                    <button
-                        className={styles.expandBtn}
-                        onClick={(e) => { e.stopPropagation(); onExpand(trial.trial_id); }}
-                    >DETAILS →</button>
                 </div>
             </div>
         </div>
@@ -213,21 +219,23 @@ export function ValidatorTimelineWidget() {
     return (
         <div className={styles.widget}>
             <div className={styles.header}>
-                <h4 className={styles.title}>
-                    🎯 3RD UMPIRE
+                <h4 className="widget-title">
+                    <Target size={16} strokeWidth={2.5} className="text-accent-blue" /> 3RD UMPIRE
                     <div className={styles.badges}>
                         {isLive ? <span className={styles.badgeLive}>LIVE</span> : <span className={styles.badgeReplay}>REPLAY</span>}
                     </div>
                 </h4>
                 <div className={styles.headerActions}>
-                    <button className={styles.iconBtn} onClick={() => setShowSettings(true)}>⚙</button>
+                    <button className={styles.iconBtn} onClick={() => setShowSettings(true)}>
+                        <Settings size={14} />
+                    </button>
                 </div>
             </div>
 
             <div className={styles.validatorGrid}>
                 {/* ACTIVE COLUMN */}
                 <div className={styles.section}>
-                    <div className={styles.sectionTitle}>
+                    <div className="widget-title">
                         Active Trials <span className={styles.sectionCount}>{active.length}</span>
                     </div>
                     {loading ? <div className={styles.emptyState}>...</div> : (
@@ -240,7 +248,7 @@ export function ValidatorTimelineWidget() {
 
                 {/* VERDICTS COLUMN */}
                 <div className={styles.section}>
-                    <div className={styles.sectionTitle}>
+                    <div className="widget-title">
                         Recent Verdicts <span className={styles.sectionCount}>{resolved.length}</span>
                     </div>
                     <div className={styles.trialList}>

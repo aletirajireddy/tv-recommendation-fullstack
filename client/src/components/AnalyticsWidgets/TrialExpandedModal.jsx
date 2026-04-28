@@ -5,24 +5,15 @@ import {
     ReferenceLine, ReferenceArea,
     ResponsiveContainer,
 } from 'recharts';
-import styles from './ValidatorTimelineWidget.module.css';
+import { 
+    X, ChevronUp, ChevronDown, CheckCircle2, XCircle, 
+    Square, Inbox, Flag, Check, Zap, Info, Clock, 
+    BarChart3, Activity, ShieldCheck, Target
+} from 'lucide-react';
+import styles from './TrialExpandedModal.module.css';
 
 /**
  * TrialExpandedModal — Full forensic price chart for a single trial.
- *
- * Uses Recharts ComposedChart (responsive, correct proportions).
- * Data: /api/validator/trial/:id/ohlc (price series) +
- *       /api/validator/trial/:id/timeline (state log)
- *
- * Chart shows:
- *   - Real price line from master_coin_store snapshots (colored by direction)
- *   - Area fill (LONG=green, SHORT=red) below/above trigger to show P&L visually
- *   - Phase bands: COOLDOWN (grey) / WATCHING (blue) zones
- *   - Key price levels: Trigger, Smart Level, all 4 EMA200s
- *   - Trigger vertical marker (purple) + Verdict vertical marker (green/red)
- *   - Individual scan snapshot dots (show actual data density)
- *
- * Side panel: state transitions with rule pass/fail chips + trial meta
  */
 
 function smartFmt(price) {
@@ -33,15 +24,27 @@ function smartFmt(price) {
     if (price >= 0.001) return price.toFixed(6);
     return price.toFixed(8);
 }
+
 function fmtTime(ms) {
     return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+
 function fmtTimeFull(ms) {
     return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-const VERDICT_COLOR = { CONFIRMED: '#68d391', FAILED: '#fc8181', NEUTRAL_TIMEOUT: '#a0aec0', EARLY_FAVORABLE: '#f6ad55' };
-const STATE_COLOR   = { COOLDOWN: '#a0aec0', WATCHING: '#63b3ed', RESOLVED: '#68d391' };
+const VERDICT_COLOR = { 
+    CONFIRMED: 'var(--accent-green)', 
+    FAILED: 'var(--accent-red)', 
+    NEUTRAL_TIMEOUT: 'var(--text-muted)', 
+    EARLY_FAVORABLE: 'var(--warning)' 
+};
+
+const STATE_COLOR = { 
+    COOLDOWN: 'var(--text-muted)', 
+    WATCHING: 'var(--accent-blue)', 
+    RESOLVED: 'var(--accent-green)' 
+};
 
 const EMA_DEFS = [
     { key: 'ema200_4h',  color: '#2b6cb0', dash: '2 7', label: '4h EMA200' },
@@ -86,7 +89,6 @@ export function TrialExpandedModal({ trialId, onClose }) {
 
     const handleInterval = (iv) => { setIntervalMin(iv); loadOhlc(iv); };
 
-    // Build price series from candle close prices
     const series = useMemo(() => {
         if (!ohlc?.candles) return [];
         return ohlc.candles.map(c => ({
@@ -96,7 +98,6 @@ export function TrialExpandedModal({ trialId, onClose }) {
         }));
     }, [ohlc]);
 
-    // Price domain
     const { pMin, pMax } = useMemo(() => {
         if (!ohlc || series.length === 0) return { pMin: 0, pMax: 1 };
         const lvl = ohlc.levels;
@@ -112,9 +113,9 @@ export function TrialExpandedModal({ trialId, onClose }) {
     }, [ohlc, series]);
 
     const isLong = ohlc?.direction === 'LONG';
-    const lineColor = isLong ? '#68d391' : '#fc8181';
+    const lineColor = isLong ? 'var(--accent-green)' : 'var(--accent-red)';
     const areaFill  = isLong ? 'rgba(104,211,145,0.10)' : 'rgba(252,129,129,0.10)';
-    const verdictColor = VERDICT_COLOR[ohlc?.verdict] || '#a0aec0';
+    const verdictColor = VERDICT_COLOR[ohlc?.verdict] || 'var(--text-muted)';
 
     const ph = ohlc?.phases || {};
     const cooldownStart = ph.detected_ms;
@@ -125,74 +126,57 @@ export function TrialExpandedModal({ trialId, onClose }) {
     return (
         <>
             <div className={styles.overlay} onClick={onClose} />
-            <div style={{
-                position: 'fixed', top: '3%', left: '2%', right: '2%', bottom: '3%',
-                background: '#0d1117', border: '1px solid rgba(255,255,255,0.15)',
-                borderRadius: 10, zIndex: 1000,
-                display: 'flex', flexDirection: 'column',
-                boxShadow: '0 24px 80px rgba(0,0,0,0.85)',
-                overflow: 'hidden',
-            }}>
+            <div className={styles.panel}>
                 {/* ── HEADER ── */}
-                <div style={{
-                    padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)',
-                    display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
-                }}>
+                <div className={styles.header}>
                     {ohlc ? (
                         <>
-                            <span style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>{ohlc.ticker}</span>
-                            <span style={{
-                                fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 600,
+                            <span className={styles.ticker}>{ohlc.ticker}</span>
+                            <span className={styles.directionBadge} style={{
                                 background: isLong ? 'rgba(104,211,145,0.15)' : 'rgba(252,129,129,0.15)',
                                 color: lineColor,
-                            }}>{isLong ? '▲ LONG' : '▼ SHORT'}</span>
-                            <span style={{ fontSize: 11, color: '#718096' }}>{ohlc.trigger_type} · {ohlc.level_type}</span>
+                            }}>
+                                {isLong ? <ChevronUp size={12} className="inline" /> : <ChevronDown size={12} className="inline" />} {isLong ? 'LONG' : 'SHORT'}
+                            </span>
+                            <span className={styles.metaText}>{ohlc.trigger_type} · {ohlc.level_type}</span>
                             {ohlc.verdict && (
-                                <span style={{ fontSize: 12, fontWeight: 600, color: verdictColor, marginLeft: 2 }}>
-                                    {ohlc.verdict === 'CONFIRMED' ? '✅' : ohlc.verdict === 'FAILED' ? '❌' : '⏹'} {ohlc.verdict}
+                                <span className={styles.verdictText} style={{ color: verdictColor }}>
+                                    {ohlc.verdict === 'CONFIRMED' ? <CheckCircle2 size={14} /> : ohlc.verdict === 'FAILED' ? <XCircle size={14} /> : <Square size={14} />} {ohlc.verdict}
                                 </span>
                             )}
                         </>
-                    ) : <span style={{ color: '#718096' }}>Loading…</span>}
+                    ) : <span className={styles.metaText}>Loading forensic data...</span>}
 
-                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <span style={{ fontSize: 10, color: '#718096' }}>Granularity:</span>
+                    <div className={styles.headerActions}>
+                        <span className={styles.granularityLabel}>Granularity:</span>
                         {[1, 5, 15, 30].map(v => (
-                            <button key={v} onClick={() => handleInterval(v)} style={{
-                                padding: '3px 9px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
-                                background: intervalMin === v ? 'rgba(99,179,237,0.2)' : 'rgba(255,255,255,0.05)',
-                                color: intervalMin === v ? '#63b3ed' : '#718096',
-                                border: `1px solid ${intervalMin === v ? 'rgba(99,179,237,0.4)' : 'rgba(255,255,255,0.08)'}`,
-                            }}>{v}m</button>
+                            <button key={v} onClick={() => handleInterval(v)} className={`${styles.pill} ${intervalMin === v ? styles.pillActive : ''}`}>
+                                {v}m
+                            </button>
                         ))}
-                        <button onClick={onClose} style={{
-                            marginLeft: 8, padding: '4px 12px', fontSize: 12, cursor: 'pointer',
-                            background: 'rgba(252,129,129,0.15)', color: '#fc8181',
-                            border: '1px solid rgba(252,129,129,0.3)', borderRadius: 6,
-                        }}>✕ Esc</button>
+                        <button onClick={onClose} className={styles.closeBtn}>
+                            <X size={14} /> Close
+                        </button>
                     </div>
                 </div>
 
-                {error && <div style={{ padding: 20, color: '#fc8181' }}>Error: {error}</div>}
+                {error && <div style={{ padding: 20, color: 'var(--accent-red)' }}>Error: {error}</div>}
 
                 {/* ── BODY ── */}
-                <div style={{ flex: 1, display: 'flex', gap: 0, overflow: 'hidden', minHeight: 0 }}>
+                <div className={styles.body}>
 
                     {/* ── CHART ── */}
-                    <div style={{ flex: 1, padding: '12px 0 12px 8px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                    <div className={styles.chartContainer}>
                         {loadingOhlc && (
-                            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#718096' }}>
-                                Loading chart…
+                            <div className={styles.loading}>
+                                <Activity size={24} className="animate-spin" />
+                                <span style={{ marginLeft: 12 }}>Loading price forensics...</span>
                             </div>
                         )}
 
                         {!loadingOhlc && series.length === 0 && (
-                            <div style={{
-                                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                flexDirection: 'column', gap: 10, color: '#718096',
-                                border: '1px dashed rgba(255,255,255,0.08)', borderRadius: 8, margin: 12,
-                            }}>
-                                <div style={{ fontSize: 28 }}>📭</div>
+                            <div className={styles.empty}>
+                                <Inbox size={48} opacity={0.2} />
                                 <div>No price snapshots in master store for this window.</div>
                                 <div style={{ fontSize: 11 }}>Try a wider granularity, or this trial pre-dates master store ingestion.</div>
                             </div>
@@ -200,118 +184,109 @@ export function TrialExpandedModal({ trialId, onClose }) {
 
                         {!loadingOhlc && series.length > 0 && (
                             <>
-                                {/* Chart legend row */}
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, padding: '0 8px 6px', fontSize: 10, color: '#718096' }}>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                        <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke={lineColor} strokeWidth={2} /></svg> Price
+                                <div className={styles.legendRow}>
+                                    <span className={styles.legendItem}>
+                                        <svg width={16} height={4}><line x1={0} y1={2} x2={16} y2={2} stroke={lineColor} strokeWidth={2} /></svg> Price Path
                                     </span>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                        <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke="rgba(255,255,255,0.4)" strokeWidth={1.5} strokeDasharray="3 3" /></svg> Trigger
+                                    <span className={styles.legendItem}>
+                                        <svg width={16} height={4}><line x1={0} y1={2} x2={16} y2={2} stroke="rgba(255,255,255,0.4)" strokeWidth={1.5} strokeDasharray="3 2" /></svg> Trigger
                                     </span>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                        <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke="#f6ad55" strokeWidth={1.5} strokeDasharray="5 3" /></svg> {ohlc?.level_type || 'Level'}
+                                    <span className={styles.legendItem}>
+                                        <svg width={16} height={4}><line x1={0} y1={2} x2={16} y2={2} stroke="#f6ad55" strokeWidth={1.5} strokeDasharray="5 2" /></svg> {ohlc?.level_type || 'Level'}
                                     </span>
                                     {EMA_DEFS.filter(e => ohlc?.levels?.[e.key] > 0).map(e => (
-                                        <span key={e.key} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                            <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke={e.color} strokeWidth={1.5} strokeDasharray={e.dash} /></svg> {e.label}
+                                        <span key={e.key} className={styles.legendItem}>
+                                            <svg width={16} height={4}><line x1={0} y1={2} x2={16} y2={2} stroke={e.color} strokeWidth={1.5} strokeDasharray={e.dash} /></svg> {e.label}
                                         </span>
                                     ))}
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                        <span style={{ width: 16, height: 10, background: 'rgba(160,174,192,0.15)', display: 'inline-block', borderRadius: 2 }} /> Cooldown
+                                    <span className={styles.legendItem}>
+                                        <span style={{ width: 12, height: 8, background: 'rgba(160,174,192,0.15)', borderRadius: 2 }} /> Cooldown
                                     </span>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                        <span style={{ width: 16, height: 10, background: 'rgba(99,179,237,0.15)', display: 'inline-block', borderRadius: 2 }} /> Watching
-                                    </span>
-                                    <span style={{ marginLeft: 'auto', color: '#4a5568' }}>
-                                        {ohlc?.candle_count} snapshots · {intervalMin}m buckets
+                                    <span className={styles.legendItem}>
+                                        <span style={{ width: 12, height: 8, background: 'rgba(99,179,237,0.15)', borderRadius: 2 }} /> Watching
                                     </span>
                                 </div>
 
                                 <div style={{ flex: 1, minHeight: 0 }}>
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <ComposedChart data={series} margin={{ top: 8, right: 100, left: 8, bottom: 20 }}>
+                                        <ComposedChart data={series} margin={{ top: 8, right: 100, left: 0, bottom: 20 }}>
                                             <XAxis
                                                 dataKey="t" type="number" scale="time"
                                                 domain={['dataMin', 'dataMax']}
                                                 tickFormatter={fmtTime}
-                                                tick={{ fontSize: 10, fill: '#718096' }}
-                                                tickCount={8}
+                                                tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
+                                                tickCount={10}
                                             />
                                             <YAxis
                                                 domain={[pMin, pMax]}
-                                                tick={{ fontSize: 10, fill: '#718096' }}
+                                                tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
                                                 tickFormatter={smartFmt}
                                                 width={72}
-                                                tickCount={7}
+                                                tickCount={8}
+                                                axisLine={false}
+                                                tickLine={false}
                                             />
                                             <Tooltip
-                                                contentStyle={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, fontSize: 11 }}
+                                                contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11 }}
                                                 labelFormatter={(v) => fmtTimeFull(v)}
                                                 formatter={(v, n) => [smartFmt(v), n === 'price' ? 'Price' : n]}
                                             />
 
-                                            {/* Phase zones */}
                                             {cooldownStart != null && cooldownEnd != null && (
                                                 <ReferenceArea x1={cooldownStart} x2={cooldownEnd}
-                                                    fill="rgba(160,174,192,0.09)" stroke="rgba(160,174,192,0.15)" strokeWidth={0.5}
+                                                    fill="rgba(160,174,192,0.08)" stroke="none"
                                                 />
                                             )}
                                             {watchStart != null && watchEnd != null && watchEnd > watchStart && (
                                                 <ReferenceArea x1={watchStart} x2={watchEnd}
-                                                    fill="rgba(99,179,237,0.08)" stroke="rgba(99,179,237,0.15)" strokeWidth={0.5}
+                                                    fill="rgba(99,179,237,0.06)" stroke="none"
                                                 />
                                             )}
 
-                                            {/* EMA levels */}
                                             {EMA_DEFS.map(({ key, color, dash, label }) => {
                                                 const price = ohlc?.levels?.[key];
                                                 if (!price || price <= 0) return null;
                                                 return (
                                                     <ReferenceLine key={key} y={price}
-                                                        stroke={color} strokeDasharray={dash} strokeWidth={1.5}
-                                                        label={{ value: label, fill: color, fontSize: 9, position: 'right', offset: 4 }}
+                                                        stroke={color} strokeDasharray={dash} strokeWidth={1.2}
+                                                        label={{ value: label, fill: color, fontSize: 8, position: 'right', offset: 4 }}
                                                     />
                                                 );
                                             })}
 
-                                            {/* Smart level */}
                                             {ohlc?.levels?.smart_level > 0 && ohlc.levels.smart_level !== ohlc.levels.trigger && (
                                                 <ReferenceLine y={ohlc.levels.smart_level}
-                                                    stroke="#f6ad55" strokeDasharray="6 4" strokeWidth={2}
-                                                    label={{ value: ohlc.level_type || 'Level', fill: '#f6ad55', fontSize: 10, position: 'right', offset: 4 }}
+                                                    stroke="#f6ad55" strokeDasharray="6 4" strokeWidth={1.5}
+                                                    label={{ value: ohlc.level_type || 'Level', fill: '#f6ad55', fontSize: 9, position: 'right', offset: 4 }}
                                                 />
                                             )}
 
-                                            {/* Trigger price */}
                                             {ohlc?.levels?.trigger > 0 && (
                                                 <ReferenceLine y={ohlc.levels.trigger}
-                                                    stroke="rgba(255,255,255,0.45)" strokeDasharray="4 3" strokeWidth={1.5}
-                                                    label={{ value: `Trigger ${smartFmt(ohlc.levels.trigger)}`, fill: 'rgba(255,255,255,0.5)', fontSize: 9, position: 'right', offset: 4 }}
+                                                    stroke="rgba(255,255,255,0.3)" strokeDasharray="4 3" strokeWidth={1}
+                                                    label={{ value: `Trigger @ ${smartFmt(ohlc.levels.trigger)}`, fill: 'var(--text-muted)', fontSize: 8, position: 'right', offset: 4 }}
                                                 />
                                             )}
 
-                                            {/* Vertical: trigger moment */}
                                             {cooldownStart != null && (
-                                                <ReferenceLine x={cooldownStart} stroke="#9f7aea" strokeDasharray="4 3" strokeWidth={2}
-                                                    label={{ value: '⚡ Trigger', fill: '#9f7aea', fontSize: 10, position: 'insideTopLeft' }}
+                                                <ReferenceLine x={cooldownStart} stroke="#9f7aea" strokeDasharray="4 3" strokeWidth={1.5}
+                                                    label={{ value: 'Zap TRIGGER', fill: '#9f7aea', fontSize: 9, position: 'insideTopLeft' }}
                                                 />
                                             )}
 
-                                            {/* Vertical: verdict */}
                                             {ph.resolved_ms != null && (
                                                 <ReferenceLine x={ph.resolved_ms}
-                                                    stroke={verdictColor} strokeDasharray="4 3" strokeWidth={2}
-                                                    label={{ value: `🏁 ${ohlc?.verdict || ''}`, fill: verdictColor, fontSize: 10, position: 'insideTopRight' }}
+                                                    stroke={verdictColor} strokeDasharray="4 3" strokeWidth={1.5}
+                                                    label={{ value: `VERDICT: ${ohlc?.verdict || ''}`, fill: verdictColor, fontSize: 9, position: 'insideTopRight' }}
                                                 />
                                             )}
 
-                                            {/* Price area + line */}
                                             <Area
                                                 type="monotone" dataKey="price"
                                                 stroke={lineColor} strokeWidth={2.5}
                                                 fill={areaFill}
                                                 dot={{ r: 2.5, fill: lineColor, strokeWidth: 0 }}
-                                                activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
+                                                activeDot={{ r: 4, stroke: 'var(--bg-panel)', strokeWidth: 1 }}
                                                 isAnimationActive={false}
                                             />
                                         </ComposedChart>
@@ -322,16 +297,10 @@ export function TrialExpandedModal({ trialId, onClose }) {
                     </div>
 
                     {/* ── SIDE PANEL ── */}
-                    <div style={{
-                        width: 230, flexShrink: 0,
-                        borderLeft: '1px solid rgba(255,255,255,0.06)',
-                        padding: 12, display: 'flex', flexDirection: 'column',
-                        gap: 12, overflow: 'auto',
-                    }}>
-                        {/* Trial meta */}
+                    <div className={styles.sidePanel}>
                         {(ohlc || trial) && (
-                            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: 10 }}>
-                                <div style={{ fontSize: 10, fontWeight: 600, color: '#718096', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Trial</div>
+                            <div className={styles.metaBox}>
+                                <div className={styles.boxTitle}><Info size={10} className="inline mr-1" /> Trial Analytics</div>
                                 {[
                                     ['Trigger @', smartFmt(ohlc?.levels?.trigger)],
                                     ['Level @', smartFmt(ohlc?.levels?.smart_level)],
@@ -339,45 +308,43 @@ export function TrialExpandedModal({ trialId, onClose }) {
                                     ['Resolved', ohlc?.phases?.resolved_ms && fmtTime(ohlc.phases.resolved_ms)],
                                     ['Snapshots', ohlc?.candle_count],
                                 ].filter(([, v]) => v != null).map(([k, v]) => (
-                                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-                                        <span style={{ color: '#718096' }}>{k}</span>
-                                        <span style={{ color: '#cbd5e0', fontWeight: 600 }}>{v}</span>
+                                    <div key={k} className={styles.metaRow}>
+                                        <span className={styles.metaKey}>{k}</span>
+                                        <span className={styles.metaVal}>{v}</span>
                                     </div>
                                 ))}
                             </div>
                         )}
 
-                        {/* State transitions */}
-                        <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: 10, flex: 1, overflow: 'auto' }}>
-                            <div style={{ fontSize: 10, fontWeight: 600, color: '#718096', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>State Log</div>
+                        <div className={styles.metaBox} style={{ flex: 1 }}>
+                            <div className={styles.boxTitle}><Activity size={10} className="inline mr-1" /> Lifecycle Transitions</div>
                             {stateLog.length === 0
-                                ? <div style={{ fontSize: 11, color: '#4a5568' }}>No transitions yet.</div>
+                                ? <div className={styles.metaText}>No transitions detected.</div>
                                 : stateLog.map((s, i) => {
                                     const rules = (() => { try { return Object.entries(JSON.parse(s.rule_snapshot || '{}')).filter(([k]) => k !== 'TRIGGER_VALID'); } catch { return []; } })();
                                     return (
-                                        <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                                                <span style={{ color: STATE_COLOR[s.state] || '#cbd5e0', fontWeight: 600 }}>{s.state}</span>
-                                                <span style={{ color: '#718096' }}>{fmtTimeFull(new Date(s.changed_at).getTime())}</span>
+                                        <div key={i} className={styles.logItem}>
+                                            <div className={styles.logHeader}>
+                                                <span className={styles.logState} style={{ color: STATE_COLOR[s.state] }}>{s.state}</span>
+                                                <span className={styles.logTime}><Clock size={10} className="inline mr-1" /> {fmtTimeFull(new Date(s.changed_at).getTime())}</span>
                                             </div>
-                                            <div style={{ fontSize: 10, color: '#a0aec0', margin: '3px 0' }}>
+                                            <div className={styles.logPrice}>
                                                 {smartFmt(s.current_price)}
                                                 {s.unrealized_move_pct != null && (
-                                                    <span style={{ marginLeft: 8, fontWeight: 600, color: s.unrealized_move_pct > 0 ? '#68d391' : '#fc8181' }}>
+                                                    <span style={{ fontWeight: 700, color: s.unrealized_move_pct > 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
                                                         {s.unrealized_move_pct > 0 ? '+' : ''}{Number(s.unrealized_move_pct).toFixed(2)}%
                                                     </span>
                                                 )}
                                             </div>
                                             {rules.length > 0 && (
-                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                                                <div className={styles.rulesGrid}>
                                                     {rules.map(([id, r]) => (
-                                                        <span key={id} style={{
-                                                            fontSize: 9, padding: '1px 5px', borderRadius: 3,
-                                                            background: r.passed ? 'rgba(104,211,145,0.1)' : 'rgba(252,129,129,0.1)',
-                                                            color: r.passed ? '#68d391' : '#fc8181',
-                                                            border: `1px solid ${r.passed ? 'rgba(104,211,145,0.2)' : 'rgba(252,129,129,0.2)'}`,
+                                                        <span key={id} className={styles.ruleChip} style={{
+                                                            background: r.passed ? 'rgba(104,211,145,0.08)' : 'rgba(252,129,129,0.08)',
+                                                            color: r.passed ? 'var(--accent-green)' : 'var(--accent-red)',
+                                                            borderColor: r.passed ? 'rgba(104,211,145,0.15)' : 'rgba(252,129,129,0.15)',
                                                         }}>
-                                                            {r.passed ? '✓' : '✗'} {id.replace('EMA_', '').replace('_ALIGN', '').replace('_HOLD', '').replace('_SUSTAIN', '').replace('_CONFIRM', '').replace(/_/g, ' ')}
+                                                            {r.passed ? <Check size={8} /> : <X size={8} />} {id.replace('EMA_', '').replace('_ALIGN', '').replace('_HOLD', '').replace('_SUSTAIN', '').replace('_CONFIRM', '').replace(/_/g, ' ')}
                                                         </span>
                                                     ))}
                                                 </div>
@@ -393,3 +360,4 @@ export function TrialExpandedModal({ trialId, onClose }) {
         </>
     );
 }
+

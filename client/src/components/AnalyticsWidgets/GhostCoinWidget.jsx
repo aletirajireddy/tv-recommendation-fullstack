@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Ghost } from 'lucide-react';
 import styles from './GhostCoinWidget.module.css';
 
 export function GhostCoinWidget() {
@@ -89,7 +90,7 @@ export function GhostCoinWidget() {
         <div className={styles.widget}>
             <div className={styles.header}>
                 <h4>
-                    <span className={styles.pulseIcon}>🟠</span> Ghost Approvals ({queue.length})
+                    <Ghost size={16} strokeWidth={2.5} className="text-accent-orange" /> Ghost Approvals ({queue.length})
                 </h4>
                 <div className={styles.headerActions}>
                     <div className={styles.toggleRow}>
@@ -125,18 +126,18 @@ export function GhostCoinWidget() {
                                 {/* Confidence score bar */}
                                 {score != null && (
                                     <div style={{ marginTop: 5 }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 2, color: 'var(--text-tertiary)' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 2, color: 'var(--text-muted)' }}>
                                             <span>Confidence</span>
                                             <span style={{ color: confColor, fontWeight: 700 }}>{score.toFixed(1)} — {confLabel}</span>
                                         </div>
-                                        <div style={{ height: 5, background: 'var(--gray-200)', borderRadius: 2, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+                                        <div style={{ height: 5, background: 'var(--gray-200)', borderRadius: 2, overflow: 'hidden', border: '1px solid var(--border)' }}>
                                             <div style={{ height: '100%', width: barWidth, background: confColor, borderRadius: 2, transition: 'width 0.4s' }} />
                                         </div>
                                         {bd && (
-                                            <div style={{ fontSize: 9, color: 'var(--text-tertiary)', marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                                                <span>WR: <span style={{color: 'var(--text-secondary)'}}>{bd.base_win_rate}%</span></span>
-                                                <span>Regime: <span style={{color: 'var(--text-secondary)'}}>{bd.regime_mood}</span> ×{bd.regime_multiplier}</span>
-                                                <span>Dir: <span style={{color: 'var(--text-secondary)', fontWeight: 700}}>{bd.direction_used || '?'}</span></span>
+                                            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                                                <span>WR: <span style={{color: 'var(--text-muted)'}}>{bd.base_win_rate}%</span></span>
+                                                <span>Regime: <span style={{color: 'var(--text-muted)'}}>{bd.regime_mood}</span> ×{bd.regime_multiplier}</span>
+                                                <span>Dir: <span style={{color: 'var(--text-muted)', fontWeight: 700}}>{bd.direction_used || '?'}</span></span>
                                                 {bd.sample_count != null && <span>n={bd.sample_count}</span>}
                                             </div>
                                         )}

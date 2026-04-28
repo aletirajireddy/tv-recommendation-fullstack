@@ -7,7 +7,7 @@
 .mainTitle {
     font-size: 13px;
     font-weight: 700;
-    color: #455a64;
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 12px;
@@ -23,9 +23,9 @@
 }
 
 .card {
-    background: #ffffff;
+    background: var(--bg-panel);
     border-radius: 8px;
-    border: 1px solid #e0e0e0;
+    border: 1px solid var(--border);
     padding: 12px;
     display: flex;
     flex-direction: column;
@@ -39,18 +39,18 @@
 .cardHeader {
     font-size: 11px;
     font-weight: 700;
-    color: #546e7a;
+    color: var(--text-muted);
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding-bottom: 8px;
-    border-bottom: 1px solid #eeeeee;
+    border-bottom: 1px solid var(--border);
     margin-bottom: 8px;
 }
 
 .countBadge {
-    background: #eceff1;
-    color: #607d8b;
+    background: var(--border);
+    color: var(--text-main);
     padding: 2px 6px;
     border-radius: 4px;
     font-size: 10px;
@@ -62,11 +62,14 @@
     flex-direction: column;
     gap: 6px;
     min-height: 48px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 4px;
 }
 
 .emptyText {
     text-align: center;
-    color: #b0bec5;
+    color: var(--text-muted);
     font-size: 12px;
     font-weight: 500;
     margin-top: 12px;
@@ -83,7 +86,7 @@
 }
 
 .row:hover {
-    background: #f8f9fa;
+    background: var(--border);
 }
 
 .tickerGroup {
@@ -95,7 +98,7 @@
 .ticker {
     font-size: 12px;
     font-weight: 600;
-    color: #37474f;
+    color: var(--text-main);
 }
 
 .ghostIcon {
@@ -106,8 +109,8 @@
 .ageBadge {
     font-size: 11px;
     font-weight: 700;
-    color: #455a64;
-    background: #f5f5f5;
+    color: var(--text-main);
+    background: var(--border);
     padding: 2px 6px;
     border-radius: 4px;
 }
@@ -117,29 +120,29 @@
     border-color: rgba(76, 175, 80, 0.3);
     background: rgba(76, 175, 80, 0.04);
 }
-.catNewborn .ticker { color: #2e7d32; }
-.catNewborn .ageBadge { background: #e8f5e9; color: #388e3c; }
+.catNewborn .ticker { color: var(--text-main); }
+.catNewborn .ageBadge { background: rgba(76, 175, 80, 0.15); color: var(--accent-green); }
 
 .catEstablished {
     border-color: rgba(255, 152, 0, 0.3);
     background: rgba(255, 152, 0, 0.04);
 }
-.catEstablished .ticker { color: #ef6c00; }
-.catEstablished .ageBadge { background: #fff3e0; color: #f57c00; }
+.catEstablished .ticker { color: var(--text-main); }
+.catEstablished .ageBadge { background: rgba(255, 152, 0, 0.15); color: var(--accent-orange); }
 
 .catVeteran {
     border-color: rgba(156, 39, 176, 0.2);
     background: rgba(156, 39, 176, 0.02);
 }
-.catVeteran .ticker { color: #7b1fa2; }
-.catVeteran .ageBadge { background: #f3e5f5; color: #8e24aa; }
+.catVeteran .ticker { color: var(--text-main); }
+.catVeteran .ageBadge { background: rgba(156, 39, 176, 0.15); color: var(--accent-blue); }
 
 .catFixture {
     border-color: rgba(158, 158, 158, 0.3);
     background: rgba(158, 158, 158, 0.02);
 }
-.catFixture .ticker { color: #616161; }
-.catFixture .ageBadge { background: #eeeeee; color: #757575; }
+.catFixture .ticker { color: var(--text-main); }
+.catFixture .ageBadge { background: var(--border); color: var(--text-muted); }
 
 @keyframes fadeIn {
     from { opacity: 0; }

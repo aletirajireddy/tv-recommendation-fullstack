@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
+import { Ruler, RefreshCw, AlertTriangle } from 'lucide-react';
 import styles from './DistanceTracker.module.css';
 
 const TFS = ['m1', 'm5', 'm15', 'h1', 'h4'];
@@ -155,12 +156,14 @@ export function DistanceTracker({ filterTicker, compact }) {
         <div className={styles.widget}>
             <div className={styles.header}>
                 <div className={styles.titleRow}>
-                    <div className={styles.title}>
-                        <span className={styles.titleIcon}>📐</span>
+                    <div className="widget-title">
+                        <span className={styles.titleIcon}><Ruler size={16} className="text-accent-blue" /></span>
                         <span className={styles.titleText}>DISTANCE TRACKER</span>
                         <span className={styles.titleSub}>200 EMA · 1m → 4h · sortable</span>
                     </div>
-                    <button className={styles.refreshBtn} onClick={() => reload()} title="Refresh">↺</button>
+                    <button className={styles.refreshBtn} onClick={() => reload()} title="Refresh">
+                        <RefreshCw size={14} />
+                    </button>
                 </div>
                 <div className={styles.controlsRow}>
                     <div className={styles.controlGroup}>
@@ -188,7 +191,7 @@ export function DistanceTracker({ filterTicker, compact }) {
                         <div>Loading distance board…</div>
                     </div>
                 )}
-                {error && <div className={styles.errorState}>⚠ {error}</div>}
+                {error && <div className={styles.errorState}><AlertTriangle size={14} /> {error}</div>}
                 {!loading && !error && rows.length === 0 && (
                     <div className={styles.empty}>
                         No coins within ±{maxDist}% of a 200 EMA.

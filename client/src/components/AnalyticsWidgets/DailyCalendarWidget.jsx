@@ -53,7 +53,7 @@ export function DailyCalendarWidget() {
     return (
         <div className={styles.widget}>
             <div className={styles.header}>
-                <h3 className={styles.title}>📅 Daily Performance Calendar (7d)</h3>
+                <h3 className="widget-title">📅 Daily Performance Calendar (7d)</h3>
                 <span className={styles.hint}>Click any day for full coin heatmap →</span>
             </div>
 

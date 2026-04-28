@@ -1,9 +1,9 @@
 .widget {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 12px;
     padding: 16px;
-    color: var(--text-primary);
+    color: var(--text-main);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     margin-bottom: 24px;
     font-family: 'Inter', sans-serif;
@@ -20,7 +20,7 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 16px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border);
     padding-bottom: 12px;
 }
 
@@ -31,7 +31,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    color: var(--text-primary);
+    color: var(--text-main);
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -54,7 +54,7 @@
 
 .toggleLabel {
     font-size: 10px;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -81,7 +81,7 @@
     background-color: var(--gray-200);
     transition: .4s;
     border-radius: 34px;
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border);
 }
 
 .slider:before {
@@ -157,7 +157,7 @@ input:checked + .slider:before {
     align-items: center;
     padding: 10px 12px;
     background: var(--bg-app);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border);
     border-radius: 8px;
     transition: all 0.2s;
     animation: slideIn 0.3s ease-out;
@@ -178,20 +178,20 @@ input:checked + .slider:before {
 .ticker {
     font-weight: 700;
     font-size: 13px;
-    color: var(--text-primary);
+    color: var(--text-main);
     letter-spacing: 0.5px;
 }
 
 .reason {
     font-size: 11px;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-weight: 500;
 }
 
 .approveBtn {
     background: var(--gray-200);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
     padding: 6px 12px;
     border-radius: 4px;
     font-size: 11px;

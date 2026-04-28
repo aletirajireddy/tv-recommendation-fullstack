@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { useTimeStore } from '../../store/useTimeStore';
 import SpeedbreakerPanel from '../Shared/SpeedbreakerPanel';
 
@@ -14,7 +15,7 @@ const RSIDistributionWidget = () => {
 
     if (!rsiDistribution) {
         return (
-            <div style={{ padding: '24px', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e0e0e0', margin: '16px 0', fontSize: '13px', color: '#666', textAlign: 'center' }}>
+            <div style={{ padding: '24px', backgroundColor: 'var(--bg-panel)', borderRadius: '8px', border: '1px solid var(--border)', margin: '16px 0', fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center' }}>
                 Loading RSI Distribution Matrix...
             </div>
         );
@@ -52,14 +53,16 @@ const RSIDistributionWidget = () => {
 
     const columnStyle = {
         flex: 1,
-        backgroundColor: '#fafafa',
-        border: '1px solid #e8e8e8',
+        backgroundColor: 'var(--bg-panel)',
+        border: '1px solid var(--border)',
         borderRadius: '8px',
         padding: '12px',
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
-        minWidth: '220px'
+        minWidth: '220px',
+        maxHeight: '400px',
+        overflowY: 'auto'
     };
 
     const headerStyle = (color) => ({
@@ -77,7 +80,7 @@ const RSIDistributionWidget = () => {
 
     return (
         <div style={{ marginBottom: '16px', position: 'relative' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 'bold', color: '#333', marginBottom: '12px', letterSpacing: '0.5px' }}>
+            <h3 className="widget-title" style={{ marginBottom: '12px' }}>
                 RSI SPEEDBREAKER DISTRIBUTION
             </h3>
             
@@ -90,7 +93,7 @@ const RSIDistributionWidget = () => {
                         <span style={{ background: '#26a69a20', padding: '2px 6px', borderRadius: '4px' }}>{OVERSOLD_30.length}</span>
                     </div>
                     {OVERSOLD_30.map(coin => <CoinCard key={coin.ticker} coin={coin} onClick={(e) => handleCoinClick(e, coin)} />)}
-                    {OVERSOLD_30.length === 0 && <span style={{ color: '#aaa', fontSize: '11px', textAlign: 'center', marginTop: '12px' }}>--</span>}
+                    {OVERSOLD_30.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', marginTop: '12px' }}>--</span>}
                 </div>
 
                 {/* RSI 50 Rejection Bucket */}
@@ -100,7 +103,7 @@ const RSIDistributionWidget = () => {
                         <span style={{ background: '#fff3e0', padding: '2px 6px', borderRadius: '4px' }}>{REJECTION_50.length}</span>
                     </div>
                     {REJECTION_50.map(coin => <CoinCard key={coin.ticker} coin={coin} onClick={(e) => handleCoinClick(e, coin)} />)}
-                    {REJECTION_50.length === 0 && <span style={{ color: '#aaa', fontSize: '11px', textAlign: 'center', marginTop: '12px' }}>--</span>}
+                    {REJECTION_50.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', marginTop: '12px' }}>--</span>}
                 </div>
 
                 {/* Overbought Bucket */}
@@ -110,7 +113,7 @@ const RSIDistributionWidget = () => {
                         <span style={{ background: '#ffebee', padding: '2px 6px', borderRadius: '4px' }}>{OVERBOUGHT_70.length}</span>
                     </div>
                     {OVERBOUGHT_70.map(coin => <CoinCard key={coin.ticker} coin={coin} onClick={(e) => handleCoinClick(e, coin)} />)}
-                    {OVERBOUGHT_70.length === 0 && <span style={{ color: '#aaa', fontSize: '11px', textAlign: 'center', marginTop: '12px' }}>--</span>}
+                    {OVERBOUGHT_70.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', marginTop: '12px' }}>--</span>}
                 </div>
             </div>
 
@@ -157,10 +160,10 @@ const CoinCard = ({ coin, onClick }) => {
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 padding: '8px 10px',
-                background: gradient,
+                background: 'var(--bg-app)',
                 borderLeft: borderLeft,
                 borderRadius: '4px',
-                border: '1px solid #f0f0f0',
+                border: '1px solid var(--border)',
                 boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
                 cursor: 'pointer',
                 transition: 'transform 0.1s ease',
@@ -169,17 +172,17 @@ const CoinCard = ({ coin, onClick }) => {
             onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
         >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontWeight: '600', fontSize: '13px', color: '#222' }}>
+                <span style={{ fontWeight: '600', fontSize: '13px', color: 'var(--text-main)' }}>
                     {coin.ticker.replace('BINANCE:', '').replace('USDT.P', '')}
                 </span>
                 {emaWarnings > 0 && (
-                    <span title={`${emaWarnings} EMA Speedbreakers ahead`} style={{ fontSize: '10px', background: '#ffe0b2', color: '#e65100', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
-                        ⚠️ {emaWarnings}
+                    <span title={`${emaWarnings} EMA Speedbreakers ahead`} style={{ fontSize: '10px', background: 'rgba(246, 173, 85, 0.1)', color: 'var(--warning)', padding: '2px 4px', borderRadius: '3px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                        <AlertTriangle size={10} /> {emaWarnings}
                     </span>
                 )}
             </div>
             
-            <span style={{ fontSize: '11px', color: '#777', fontWeight: '500' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '500' }}>
                 {parseFloat(coin.price).toPrecision(4)}
             </span>
         </div>

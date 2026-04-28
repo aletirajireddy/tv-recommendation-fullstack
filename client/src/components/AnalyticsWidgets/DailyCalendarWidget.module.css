@@ -1,13 +1,13 @@
 .widget {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 14px 16px;
-    color: var(--text-primary);
+    color: var(--text-main);
     box-shadow: 0 4px 20px rgba(0,0,0,0.05);
 }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.title { margin: 0; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.title { margin: 0; font-size: 14px; font-weight: 600; color: var(--text-main); }
 .hint { font-size: 10px; color: var(--text-muted); }
 
 .grid {
@@ -18,7 +18,7 @@
 
 .cell {
     background: var(--white);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 8px;
     cursor: pointer;
@@ -30,7 +30,7 @@
 .cell:hover { transform: translateY(-2px); border-color: var(--accent-blue); }
 
 .cellHead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
-.cellDate { font-weight: 600; color: var(--text-primary); font-size: 12px; }
+.cellDate { font-weight: 600; color: var(--text-main); font-size: 12px; }
 .cellMood { font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: 600; opacity: 0.8; }
 
 .cellScore { font-size: 10px; color: #a0aec0; margin-bottom: 4px; }
@@ -45,7 +45,7 @@
 .moodNeutral  { background: linear-gradient(180deg, rgba(160,174,192,0.08), var(--white)); }
 .moodBearish  { background: linear-gradient(180deg, rgba(252,129,129,0.08), var(--white)); border-color: rgba(252,129,129,0.2); }
 .moodPanic    { background: linear-gradient(180deg, rgba(252,129,129,0.15), var(--white)); border-color: rgba(252,129,129,0.3); }
-.moodUnknown  { background: var(--bg-hover); }
+.moodUnknown  { background: var(--border); }
 
 .gain { color: #68d391; }
 .lose { color: #fc8181; }
@@ -64,7 +64,7 @@
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 999; backdrop-filter: blur(4px); }
 .modal {
     position: fixed; top: 5%; left: 5%; right: 5%; bottom: 5%;
-    background: var(--bg-card); border: 1px solid var(--border-bright);
+    background: var(--bg-panel); border: 1px solid var(--border-bright);
     border-radius: 10px; z-index: 1000; padding: 20px; overflow: hidden;
     display: flex; flex-direction: column;
     box-shadow: 0 20px 60px rgba(0,0,0,0.15);
@@ -96,7 +96,7 @@
 
 .heatTableWrap { flex: 1; overflow: auto; }
 .heatTable { width: 100%; border-collapse: collapse; font-size: 11px; }
-.heatTable thead { position: sticky; top: 0; background: var(--bg-card); z-index: 1; }
+.heatTable thead { position: sticky; top: 0; background: var(--bg-panel); z-index: 1; }
 .heatTable th {
     text-align: left; padding: 8px 10px;
     font-weight: 600; color: var(--text-muted);

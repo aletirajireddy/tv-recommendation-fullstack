@@ -79,13 +79,13 @@ export function MarketHeartbeatIndicator() {
         if (active && payload && payload.length) {
             const p = payload[0].payload;
             return (
-                <div className="p-2 rounded shadow-lg border bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] min-w-[150px] text-xs font-mono">
-                    <div className="font-bold mb-1 text-[var(--text-secondary)]">{p.timeLabel}</div>
+                <div className="p-2 rounded shadow-lg border bg-[var(--bg-panel)] border-[var(--border)] text-[var(--text-main)] min-w-[150px] text-xs font-mono">
+                    <div className="font-bold mb-1 text-[var(--text-muted)]">{p.timeLabel}</div>
                     <div className="flex justify-between items-center py-1">
                         <span className="text-[#F59E0B] font-bold">Alert Intensity</span>
                         <span className="font-bold">{p.alertCount}</span>
                     </div>
-                    <div className="flex justify-between items-center py-1 border-t border-[var(--border-subtle)]">
+                    <div className="flex justify-between items-center py-1 border-t border-[var(--border)]">
                         <span className={p.rawMood > 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}>Genie Score</span>
                         <span className="font-bold">{p.rawMood > 0 ? '+' : ''}{p.rawMood}</span>
                     </div>
@@ -98,7 +98,7 @@ export function MarketHeartbeatIndicator() {
     return (
         <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden', touchAction: 'pan-y' }}>
             {/* Label */}
-            <div style={{ position: 'absolute', top: 4, left: 8, zIndex: 10, fontSize: '10px', fontWeight: 'bold', color: 'var(--text-tertiary)', letterSpacing: '0.5px' }}>
+            <div style={{ position: 'absolute', top: 4, left: 8, zIndex: 10, fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', letterSpacing: '0.5px' }}>
                 MARKET HEARTBEAT
             </div>
 
@@ -134,8 +134,8 @@ export function MarketHeartbeatIndicator() {
                             dataKey="timestamp_ms" 
                             height={16}
                             travellerWidth={18}
-                            stroke="var(--text-tertiary)" 
-                            fill="var(--bg-card)"
+                            stroke="var(--text-muted)" 
+                            fill="var(--bg-panel)"
                             tickFormatter={() => ''} /* Hide text to save space */
                             onChange={handleBrushChange}
                             startIndex={brushRange.startIndex}

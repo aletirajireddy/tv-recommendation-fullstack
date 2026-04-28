@@ -45,7 +45,7 @@ export function AnalyticsDashboard() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <h3>PERSISTENCE RADAR</h3>
                         <div title="Tracks how many consecutive scans a ticker has appeared in. Assets lock on after 1 scan.">
-                            <HelpCircle size={14} color="var(--text-tertiary)" />
+                            <HelpCircle size={14} color="var(--text-muted)" />
                         </div>
                     </div>
                     <span className={styles.tag}>LOCKED</span>

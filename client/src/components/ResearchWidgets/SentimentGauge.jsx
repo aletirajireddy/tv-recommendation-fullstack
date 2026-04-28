@@ -4,14 +4,14 @@ import { RadialBarChart, RadialBar, PolarAngleAxis, ResponsiveContainer } from '
 export function SentimentGauge({ score }) {
     // Normalize -100 to 100 range to 0-100 for the chart
     const normalized = Math.min(100, Math.max(0, (score + 100) / 2));
-    const color = score > 0 ? 'var(--success)' : score < 0 ? 'var(--error)' : 'var(--text-tertiary)';
+    const color = score > 0 ? 'var(--accent-green)' : score < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
 
     const data = [{ name: 'Mood', value: normalized, fill: color }];
 
     return (
         <div style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-subtle)',
+            background: 'var(--bg-panel)',
+            border: '1px solid var(--border)',
             borderRadius: '8px',
             padding: '1rem',
             display: 'flex',
@@ -20,7 +20,7 @@ export function SentimentGauge({ score }) {
             justifyContent: 'center',
             height: '100%'
         }}>
-            <h3 style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>MARKET SENTIMENT</h3>
+            <h3 style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>MARKET SENTIMENT</h3>
             <div style={{ width: '100%', height: '150px', position: 'relative' }}>
                 <ResponsiveContainer>
                     <RadialBarChart
@@ -50,7 +50,7 @@ export function SentimentGauge({ score }) {
                     textAlign: 'center'
                 }}>
                     <div style={{ fontSize: '2rem', fontWeight: 700, color: color }}>{score}</div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>SCORE</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>SCORE</div>
                 </div>
             </div>
         </div>

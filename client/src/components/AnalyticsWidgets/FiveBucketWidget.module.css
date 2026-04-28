@@ -75,7 +75,7 @@
 
 .ticker {
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--text-main);
 }
 
 .score {
@@ -85,7 +85,7 @@
 
 .empty {
     text-align: center;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-size: 1.5rem;
     opacity: 0.2;
     margin-top: 32px;
@@ -94,6 +94,6 @@
 .more {
     text-align: center;
     font-size: 0.7rem;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     margin-top: 4px;
 }

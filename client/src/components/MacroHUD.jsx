@@ -8,7 +8,7 @@ export function MacroHUD() {
     const marketMood = useTimeStore(s => s.marketMood);
 
     if (!activeScan) {
-        return <div className="card" style={{ padding: '1rem', color: 'var(--text-tertiary)' }}>No Active Scan</div>;
+        return <div className="card" style={{ padding: '1rem', color: 'var(--text-muted)' }}>No Active Scan</div>;
     }
 
     // Use marketMood (Supreme Court) for stats, fall back to activeScan.market_sentiment
@@ -17,7 +17,7 @@ export function MacroHUD() {
     const moodScore = marketMood?.moodScore ?? activeScan.market_sentiment?.moodScore ?? 0;
     const tickers = activeScan.market_sentiment?.tickers || { bullish: [], bearish: [] };
 
-    const moodColor = moodScore > 0 ? 'var(--success)' : moodScore < 0 ? 'var(--error)' : 'var(--text-tertiary)';
+    const moodColor = moodScore > 0 ? 'var(--accent-green)' : moodScore < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
 
     return (
         <aside className={styles.container}>
@@ -40,7 +40,7 @@ export function MacroHUD() {
                 {/* Bullish */}
                 <div className={styles.statRow}>
                     <div className={styles.statLabel}>
-                        <TrendingUp size={16} color="var(--success)" />
+                        <TrendingUp size={16} color="var(--accent-green)" />
                         <span>BULLISH</span>
                     </div>
                     <span className={styles.statNumber}>{stats.bullish || 0}</span>
@@ -49,7 +49,7 @@ export function MacroHUD() {
                 {/* Bearish */}
                 <div className={styles.statRow}>
                     <div className={styles.statLabel}>
-                        <TrendingDown size={16} color="var(--error)" />
+                        <TrendingDown size={16} color="var(--accent-red)" />
                         <span>BEARISH</span>
                     </div>
                     <span className={styles.statNumber}>{stats.bearish || 0}</span>
@@ -58,7 +58,7 @@ export function MacroHUD() {
                 {/* Neutral */}
                 <div className={styles.statRow}>
                     <div className={styles.statLabel}>
-                        <Minus size={16} color="var(--text-tertiary)" />
+                        <Minus size={16} color="var(--text-muted)" />
                         <span>NEUTRAL</span>
                     </div>
                     <span className={styles.statNumber}>{stats.neutral || 0}</span>

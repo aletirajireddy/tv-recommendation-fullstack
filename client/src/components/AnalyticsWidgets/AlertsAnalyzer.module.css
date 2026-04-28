@@ -2,8 +2,8 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 20px;
     margin-bottom: 24px;
@@ -13,7 +13,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border);
     padding-bottom: 12px;
 }
 
@@ -21,7 +21,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
 }
 
 .header h3 {
@@ -29,7 +29,7 @@
     font-size: 0.95rem;
     font-weight: 700;
     letter-spacing: 0.05em;
-    color: var(--text-primary);
+    color: var(--text-main);
 }
 
 .rangeControl {
@@ -39,7 +39,7 @@
 
 .rangeLabel {
     font-size: 0.75rem;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-family: 'Roboto Mono', monospace;
 }
 
@@ -55,7 +55,7 @@
 
 .card {
     background: var(--gray-50);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 16px;
     display: flex;
@@ -66,7 +66,7 @@
 .card h4 {
     margin: 0 0 4px 0;
     font-size: 0.75rem;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     text-transform: uppercase;
     font-weight: 700;
 }
@@ -78,21 +78,21 @@
 }
 
 .bigNumber {
-    font-size: 2rem;
+    font-size: 1.25rem;
     font-weight: 800;
-    color: var(--text-primary);
+    color: var(--text-main);
     line-height: 1;
 }
 
 .unit {
     font-size: 0.8rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     font-weight: 500;
 }
 
 .subtext {
     font-size: 0.7rem;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     margin-bottom: 12px;
     font-family: 'Roboto Mono', monospace;
 }
@@ -117,7 +117,7 @@
 
 .speedHot {
     height: 100%;
-    background: var(--error);
+    background: var(--accent-red);
     transition: width 0.3s ease;
 }
 
@@ -167,7 +167,7 @@
     align-items: center;
     gap: 6px;
     font-size: 0.8rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     font-weight: 600;
     margin-top: auto;
 }
@@ -179,17 +179,17 @@
     gap: 12px;
     margin-top: 12px;
     padding-top: 16px;
-    border-top: 1px dashed var(--border-subtle);
+    border-top: 1px dashed var(--border);
 }
 
 .footerText {
     font-size: 0.85rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     line-height: 1.4;
 }
 
 .footerText strong {
-    color: var(--text-primary);
+    color: var(--text-main);
 }
 
 .footerText em {
@@ -202,6 +202,6 @@
 .loading {
     padding: 24px;
     text-align: center;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-size: 0.9rem;
 }

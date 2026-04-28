@@ -79,8 +79,8 @@ export function TrialMiniChart({ trial }) {
             <div style={{
                 height: 72, marginTop: 8,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'var(--bg-hover)', borderRadius: 6,
-                border: '1px dashed var(--border-subtle)',
+                background: 'var(--border)', borderRadius: 6,
+                border: '1px dashed var(--border)',
                 fontSize: 10, color: 'var(--text-muted)',
             }}>
                 Loading chart…
@@ -93,8 +93,8 @@ export function TrialMiniChart({ trial }) {
             <div style={{
                 height: 72, marginTop: 8,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'var(--bg-hover)', borderRadius: 6,
-                border: '1px dashed var(--border-subtle)',
+                background: 'var(--border)', borderRadius: 6,
+                border: '1px dashed var(--border)',
                 fontSize: 10, color: 'var(--text-muted)',
             }}>
                 No price data yet
@@ -103,7 +103,7 @@ export function TrialMiniChart({ trial }) {
     }
 
     const isLong = trial.direction === 'LONG';
-    const lineColor = isLong ? 'var(--success)' : 'var(--error)';
+    const lineColor = isLong ? 'var(--accent-green)' : 'var(--accent-red)';
     const fillColor = isLong ? 'rgba(56, 161, 105, 0.08)' : 'rgba(229, 62, 62, 0.08)';
 
     const { candles, levels, phases } = ohlc;
@@ -148,7 +148,7 @@ export function TrialMiniChart({ trial }) {
                         tickCount={4}
                     />
                     <Tooltip
-                        contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 6, fontSize: 10 }}
+                        contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 10 }}
                         labelFormatter={(v) => fmtTime(v)}
                         formatter={(v) => [smartFmt(v), 'Price']}
                     />
@@ -209,7 +209,7 @@ export function TrialMiniChart({ trial }) {
                     {/* Verdict vertical */}
                     {phases.resolved_ms != null && (
                         <ReferenceLine x={phases.resolved_ms}
-                            stroke={ohlc.verdict === 'CONFIRMED' ? 'var(--success)' : 'var(--error)'}
+                            stroke={ohlc.verdict === 'CONFIRMED' ? 'var(--accent-green)' : 'var(--accent-red)'}
                             strokeDasharray="3 2" strokeWidth={1.5}
                         />
                     )}

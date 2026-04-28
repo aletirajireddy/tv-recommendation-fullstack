@@ -8,7 +8,7 @@ import { SmartLevelBreaker } from './SmartLevelBreaker';
 const SignalLight = ({ active, color, label }) => (
   <div className="flex flex-col items-center justify-center mx-1" title={label}>
     <div className={`w-3 h-3 rounded-full ${active ? color : 'bg-[var(--gray-300)] dark:bg-gray-700'}`} style={{ boxShadow: active ? `0 0 8px ${color.replace('bg-', '')}` : 'none' }} />
-    <span className="text-[9px] text-[var(--text-tertiary)] mt-1 font-mono">{label}</span>
+    <span className="text-[9px] text-[var(--text-muted)] mt-1 font-mono">{label}</span>
   </div>
 );
 
@@ -25,7 +25,7 @@ const formatPct = (val) => {
   if (val === null || val === undefined) return '--';
   const num = Number(val);
   const sign = num > 0 ? '+' : '';
-  const color = num > 0 ? 'text-[var(--success)]' : num < 0 ? 'text-[var(--error)]' : 'text-[var(--text-tertiary)]';
+  const color = num > 0 ? 'text-[var(--accent-green)]' : num < 0 ? 'text-[var(--accent-red)]' : 'text-[var(--text-muted)]';
   return <span className={color}>{sign}{num.toFixed(2)}%</span>;
 };
 
@@ -49,19 +49,19 @@ export default function FusionDashboard() {
   };
 
   return (
-    <div className="flex flex-col w-full p-2 px-3 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+    <div className="flex flex-col w-full p-2 px-3 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--bg-panel)', color: 'var(--text-main)', border: '1px solid var(--border)' }}>
       
-      <div className="flex items-center justify-between mb-2 py-1" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div className="flex items-center justify-between mb-2 py-1" style={{ borderBottom: '1px solid var(--border)' }}>
         <div className="flex items-baseline gap-3">
-          <h2 className="text-sm font-bold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+          <h3 className="widget-title flex items-center gap-1.5" style={{ color: 'var(--text-main)' }}>
             <span className="text-[#3B82F6] text-xs">⚡</span> FUSION COMMAND CENTER
-          </h2>
-          <p className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Stream Aggregate Stream A, B & C</p>
+          </h3>
+          <p className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Stream Aggregate Stream A, B & C</p>
         </div>
         <button 
           onClick={fetchFusionData}
           className="p-1.5 rounded-md hover:bg-[var(--gray-200)] transition-colors cursor-pointer flex items-center justify-center"
-          style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
+          style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
           title="Refresh Fusion Data"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
@@ -77,21 +77,21 @@ export default function FusionDashboard() {
         </div>
       </div>
 
-      <div className="w-full max-h-[500px] overflow-y-auto" style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px' }}>
+      <div className="w-full max-h-[500px] overflow-y-auto" style={{ border: '1px solid var(--border)', borderRadius: '6px' }}>
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="text-xs uppercase tracking-wider sticky top-0 z-20" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-tertiary)' }}>
-              <th className="p-3 font-medium" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Asset</th>
-              <th className="p-3 font-medium text-right" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Mom %</th>
-              <th className="p-3 font-medium text-right hidden md:table-cell" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Volume</th>
-              <th className="p-3 font-medium text-right hidden md:table-cell" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Day %</th>
-              <th className="p-3 font-medium text-right w-32 hidden lg:table-cell" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Next UP ⬆️</th>
-              <th className="p-3 font-medium text-right w-32 hidden lg:table-cell" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Next DOWN ⬇️</th>
-              <th className="p-3 font-medium pl-6 w-1/3 min-w-[400px]" style={{ borderBottom: '1px solid var(--border-subtle)' }}>Speed Breakers</th>
-              <th className="p-3 w-12" style={{ borderBottom: '1px solid var(--border-subtle)' }}></th>
+            <tr className="text-xs uppercase tracking-wider sticky top-0 z-20" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-muted)' }}>
+              <th className="p-3 font-medium" style={{ borderBottom: '1px solid var(--border)' }}>Asset</th>
+              <th className="p-3 font-medium text-right" style={{ borderBottom: '1px solid var(--border)' }}>Mom %</th>
+              <th className="p-3 font-medium text-right hidden md:table-cell" style={{ borderBottom: '1px solid var(--border)' }}>Volume</th>
+              <th className="p-3 font-medium text-right hidden md:table-cell" style={{ borderBottom: '1px solid var(--border)' }}>Day %</th>
+              <th className="p-3 font-medium text-right w-32 hidden lg:table-cell" style={{ borderBottom: '1px solid var(--border)' }}>Next UP ⬆️</th>
+              <th className="p-3 font-medium text-right w-32 hidden lg:table-cell" style={{ borderBottom: '1px solid var(--border)' }}>Next DOWN ⬇️</th>
+              <th className="p-3 font-medium pl-6 w-1/3 min-w-[400px]" style={{ borderBottom: '1px solid var(--border)' }}>Speed Breakers</th>
+              <th className="p-3 w-12" style={{ borderBottom: '1px solid var(--border)' }}></th>
             </tr>
           </thead>
-          <tbody className="divide-y" style={{ divideColor: 'var(--border-subtle)' }}>
+          <tbody className="divide-y" style={{ divideColor: 'var(--border)' }}>
             {!fusionData || fusionData.length === 0 ? (
               <tr>
                 <td colSpan="8" className="p-8 text-center text-gray-500">
@@ -106,12 +106,12 @@ export default function FusionDashboard() {
                 
                 return (
                 <React.Fragment key={row.ticker}>
-                  <tr className="transition-colors group hover:bg-[var(--bg-hover)]" style={{ borderBottomColor: isExpanded ? 'transparent' : 'var(--border-subtle)' }}>
+                  <tr className="transition-colors group hover:bg-[var(--border)]" style={{ borderBottomColor: isExpanded ? 'transparent' : 'var(--border)' }}>
                     <td className="p-3 cursor-pointer min-w-[200px]" onClick={() => toggleRow(row.ticker)}>
                       <div className="flex items-center gap-2">
-                        <div className="font-bold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+                        <div className="font-bold flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--text-main)' }}>
                           {row.ticker.replace('BINANCE:', '').replace('.P', '')}
-                          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>({row.price})</span>
+                          <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>({row.price})</span>
                         </div>
                         
                         {/* Stream Active Dot (Green if active in any stream) */}
@@ -131,12 +131,12 @@ export default function FusionDashboard() {
                         
                         {/* Burst Badge */}
                         {burstCount > 0 && (
-                          <div className="px-1.5 py-0.5 rounded text-[10px] font-bold inline-flex items-center" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--error)' }}>
+                          <div className="px-1.5 py-0.5 rounded text-[10px] font-bold inline-flex items-center" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--accent-red)' }}>
                             🔥 {burstCount}
                           </div>
                         )}
                       </div>
-                      <div className="text-[10px] mt-1 whitespace-nowrap" style={{ color: 'var(--text-tertiary)' }}>
+                      <div className="text-[10px] mt-1 whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
                         {row.timestamp ? `${format(new Date(row.timestamp), 'MMM d, h:mm a')} (${formatDistanceToNow(new Date(row.timestamp), { addSuffix: true })})` : 'Unknown'}
                       </div>
                     </td>
@@ -145,7 +145,7 @@ export default function FusionDashboard() {
                       {formatPct(row.momentum?.roc_pct)}
                     </td>
                     
-                    <td className="p-3 text-right font-mono text-sm hidden md:table-cell" style={{ color: 'var(--text-secondary)' }}>
+                    <td className="p-3 text-right font-mono text-sm hidden md:table-cell" style={{ color: 'var(--text-muted)' }}>
                       {formatVolume(row.volume_proxy)}
                     </td>
                     
@@ -156,19 +156,19 @@ export default function FusionDashboard() {
                     <td className="p-3 text-right truncate hidden lg:table-cell">
                       {row.nextUp ? (
                         <div className="flex flex-col items-end">
-                          <span className="font-mono text-sm text-[var(--success)]">+{row.nextUp.dist_pct?.toFixed(2)}%</span>
-                          <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{row.nextUp.name}</span>
+                          <span className="font-mono text-sm text-[var(--accent-green)]">+{row.nextUp.dist_pct?.toFixed(2)}%</span>
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{row.nextUp.name}</span>
                         </div>
-                      ) : <span style={{ color: 'var(--text-tertiary)' }}>--</span>}
+                      ) : <span style={{ color: 'var(--text-muted)' }}>--</span>}
                     </td>
                     
                     <td className="p-3 text-right truncate hidden lg:table-cell">
                       {row.nextDown ? (
                         <div className="flex flex-col items-end">
-                          <span className="font-mono text-sm text-[var(--error)]">{row.nextDown.dist_pct?.toFixed(2)}%</span>
-                          <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{row.nextDown.name}</span>
+                          <span className="font-mono text-sm text-[var(--accent-red)]">{row.nextDown.dist_pct?.toFixed(2)}%</span>
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{row.nextDown.name}</span>
                         </div>
-                      ) : <span style={{ color: 'var(--text-tertiary)' }}>--</span>}
+                      ) : <span style={{ color: 'var(--text-muted)' }}>--</span>}
                     </td>
                     
                     <td className="p-3 pl-6 align-middle">
@@ -179,7 +179,7 @@ export default function FusionDashboard() {
                       <button 
                         onClick={() => toggleRow(row.ticker)}
                         className="text-xl px-2 py-1 rounded hover:bg-[var(--gray-100)] dark:hover:bg-gray-800 transition-colors"
-                        style={{ color: 'var(--text-tertiary)' }}
+                        style={{ color: 'var(--text-muted)' }}
                         title="View Details"
                       >
                         ⋮
@@ -189,13 +189,13 @@ export default function FusionDashboard() {
 
                   {/* EXPANDED DRAWER */}
                   {isExpanded && (
-                    <tr style={{ backgroundColor: 'var(--bg-app)', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <tr style={{ backgroundColor: 'var(--bg-app)', borderBottom: '1px solid var(--border)' }}>
                       <td colSpan="11" className="p-6">
                         <div className="flex flex-col xl:flex-row gap-8 w-full">
                           
                           {/* Left Side: 200 EMA Visualizer (Hidden by default in main table) */}
-                          <div className="flex-1 border rounded-lg p-4" style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-card)' }}>
-                            <h4 className="text-xs font-bold uppercase mb-4" style={{ color: 'var(--text-secondary)' }}>200 EMA Proximity Visualizer</h4>
+                          <div className="flex-1 border rounded-lg p-4" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-panel)' }}>
+                            <h4 className="text-xs font-bold uppercase mb-4" style={{ color: 'var(--text-muted)' }}>200 EMA Proximity Visualizer</h4>
                             {emaLevels.length > 0 ? (
                                <SpeedBreakerRuler currentPrice={row.price} levels={emaLevels} />
                             ) : (
@@ -204,9 +204,9 @@ export default function FusionDashboard() {
                           </div>
 
                           {/* Right Side: Burst History Timeline */}
-                          <div className="flex-1 border rounded-lg p-4" style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-card)' }}>
+                          <div className="flex-1 border rounded-lg p-4" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-panel)' }}>
                             <div className="flex items-center justify-between mb-4">
-                              <h4 className="text-xs font-bold uppercase" style={{ color: 'var(--text-secondary)' }}>24H Burst History ({burstCount})</h4>
+                              <h4 className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>24H Burst History ({burstCount})</h4>
                               <span className="text-[10px] text-gray-400">Chronological Alert Sequence</span>
                             </div>
                             
@@ -214,9 +214,9 @@ export default function FusionDashboard() {
                               {row.bursts && row.bursts.length > 0 ? (
                                 // Show at most 3 burst history items to keep UI clean
                                 row.bursts.slice(0, 3).map((burst, idx) => (
-                                  <div key={idx} className="flex items-center justify-between px-3 py-2 rounded border" style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-app)' }}>
+                                  <div key={idx} className="flex items-center justify-between px-3 py-2 rounded border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-app)' }}>
                                     <div className="flex flex-col">
-                                      <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                                      <span className="text-xs font-bold" style={{ color: 'var(--text-main)' }}>
                                         {formatDistanceToNow(new Date(burst.timestamp), { addSuffix: true })}
                                       </span>
                                       <span className="text-[10px] text-gray-500">{format(new Date(burst.timestamp), 'MMM d, h:mm a')}</span>
@@ -224,9 +224,9 @@ export default function FusionDashboard() {
                                     <div className="flex items-center gap-4">
                                       <span className="text-xs font-mono font-medium">{formatPct(burst.roc_pct)} Mom</span>
                                       {burst.direction > 0 ? (
-                                        <span className="px-2 py-[2px] rounded text-[10px] font-bold" style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success)' }}>BUY</span>
+                                        <span className="px-2 py-[2px] rounded text-[10px] font-bold" style={{ backgroundColor: 'var(--success-bg)', color: 'var(--accent-green)' }}>BUY</span>
                                       ) : burst.direction < 0 ? (
-                                        <span className="px-2 py-[2px] rounded text-[10px] font-bold" style={{ backgroundColor: 'var(--error-bg)', color: 'var(--error)' }}>SELL</span>
+                                        <span className="px-2 py-[2px] rounded text-[10px] font-bold" style={{ backgroundColor: 'var(--error-bg)', color: 'var(--accent-red)' }}>SELL</span>
                                       ) : (
                                         <span className="px-2 py-[2px] rounded text-[10px] bg-gray-200 text-gray-500">--</span>
                                       )}

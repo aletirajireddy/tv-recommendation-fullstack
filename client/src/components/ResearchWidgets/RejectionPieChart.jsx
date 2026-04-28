@@ -12,7 +12,7 @@ export function RejectionPieChart({ data }) {
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: 'var(--text-tertiary)',
+                color: 'var(--text-muted)',
                 opacity: 0.6
             }}>
                 <div className="pie-spinner"></div>
@@ -43,15 +43,15 @@ export function RejectionPieChart({ data }) {
                         <Label
                             value={total}
                             position="center"
-                            fill="var(--text-primary)"
+                            fill="var(--text-main)"
                             style={{ fontSize: '24px', fontWeight: 'bold', fontFamily: 'monospace' }}
                         />
                     </Pie>
                     <Tooltip
                         contentStyle={{
-                            backgroundColor: 'var(--bg-card)',
-                            borderColor: 'var(--border-subtle)',
-                            color: 'var(--text-primary)',
+                            backgroundColor: 'var(--bg-panel)',
+                            borderColor: 'var(--border)',
+                            color: 'var(--text-main)',
                             borderRadius: '4px'
                         }}
                     />
@@ -59,7 +59,7 @@ export function RejectionPieChart({ data }) {
                         verticalAlign="bottom"
                         height={36}
                         iconType="circle"
-                        formatter={(value) => <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{value}</span>}
+                        formatter={(value) => <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{value}</span>}
                     />
                 </PieChart>
             </ResponsiveContainer>

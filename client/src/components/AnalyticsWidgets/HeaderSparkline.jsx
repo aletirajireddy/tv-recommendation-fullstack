@@ -21,7 +21,7 @@ export default function HeaderSparkline() {
     }, [timeline]);
 
     if(chartData.length === 0) return (
-        <div style={{ flex: 1, minWidth: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', fontSize: '11px', fontFamily: 'monospace' }}>
+        <div style={{ flex: 1, minWidth: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '11px', fontFamily: 'monospace' }}>
             AWAITING MACRO TIMELINE...
         </div>
     );
@@ -30,11 +30,11 @@ export default function HeaderSparkline() {
         <div style={{ flex: 1, minWidth: '300px', height: '100%', display: 'flex', flexDirection: 'column', padding: '0 8px', justifyContent: 'center' }}>
             
             {/* Header / Legend row perfectly aligned with other cards */}
-            <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-tertiary)', fontFamily: 'monospace', fontWeight: 800, marginBottom: '4px' }}>
+            <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'monospace', fontWeight: 800, marginBottom: '4px' }}>
                 <span>MACRO NET FLOW (24H)</span>
                 <span style={{display: 'flex', gap: '8px'}}>
-                    <span style={{ color: 'var(--success)' }}>BULL</span>
-                    <span style={{ color: 'var(--error)' }}>BEAR</span>
+                    <span style={{ color: 'var(--accent-green)' }}>BULL</span>
+                    <span style={{ color: 'var(--accent-red)' }}>BEAR</span>
                 </span>
             </div>
             
@@ -45,18 +45,18 @@ export default function HeaderSparkline() {
                         <Area 
                             type="monotone" 
                             dataKey="bull_flow" 
-                            stroke="var(--success)" 
+                            stroke="var(--accent-green)" 
                             strokeWidth={1.5} 
-                            fill="var(--success)" 
+                            fill="var(--accent-green)" 
                             fillOpacity={0.15} 
                             isAnimationActive={false} 
                         />
                         <Area 
                             type="monotone" 
                             dataKey="bear_flow" 
-                            stroke="var(--error)" 
+                            stroke="var(--accent-red)" 
                             strokeWidth={1.5} 
-                            fill="var(--error)" 
+                            fill="var(--accent-red)" 
                             fillOpacity={0.15} 
                             isAnimationActive={false} 
                         />

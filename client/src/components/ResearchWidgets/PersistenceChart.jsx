@@ -10,7 +10,7 @@ export function PersistenceChart({ data }) {
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: 'var(--text-tertiary)',
+                color: 'var(--text-muted)',
                 opacity: 0.6
             }}>
                 <div className="radar-sweep"></div>
@@ -25,20 +25,20 @@ export function PersistenceChart({ data }) {
                 <BarChart data={data} layout="vertical" margin={{ left: 40, right: 20, top: 10, bottom: 0 }}>
                     <defs>
                         <linearGradient id="gradHigh" x1="0" y1="0" x2="1" y2="0">
-                            <stop offset="0%" stopColor="var(--success)" stopOpacity={0.6} />
-                            <stop offset="100%" stopColor="var(--success)" />
+                            <stop offset="0%" stopColor="var(--accent-green)" stopOpacity={0.6} />
+                            <stop offset="100%" stopColor="var(--accent-green)" />
                         </linearGradient>
                         <linearGradient id="gradNormal" x1="0" y1="0" x2="1" y2="0">
-                            <stop offset="0%" stopColor="var(--text-secondary)" stopOpacity={0.4} />
-                            <stop offset="100%" stopColor="var(--text-secondary)" />
+                            <stop offset="0%" stopColor="var(--text-muted)" stopOpacity={0.4} />
+                            <stop offset="100%" stopColor="var(--text-muted)" />
                         </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border-subtle)" opacity={0.2} />
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border)" opacity={0.2} />
                     <XAxis type="number" hide />
                     <YAxis
                         dataKey="ticker"
                         type="category"
-                        stroke="var(--text-secondary)"
+                        stroke="var(--text-muted)"
                         fontSize={12}
                         tickLine={false}
                         axisLine={false}
@@ -48,9 +48,9 @@ export function PersistenceChart({ data }) {
                     <Tooltip
                         cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                         contentStyle={{
-                            backgroundColor: 'var(--bg-card)',
-                            borderColor: 'var(--border-subtle)',
-                            color: 'var(--text-primary)',
+                            backgroundColor: 'var(--bg-panel)',
+                            borderColor: 'var(--border)',
+                            color: 'var(--text-main)',
                             boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
                             borderRadius: '4px'
                         }}

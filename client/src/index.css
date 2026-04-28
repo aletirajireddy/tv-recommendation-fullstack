@@ -1,69 +1,24 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700&display=swap');
 
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-    /* ═══════════════════════════════════════════════════════════════
-       DESIGN SYSTEM: INSTITUTIONAL GRADE (LIGHT MATERIAL THEME)
-       ═══════════════════════════════════════════════════════════════ */
-
-    /* PRIMITIVES */
-    --black: #000000;
-    --gray-900: #1a202c;
-    --gray-800: #2d3748;
-    --gray-700: #4a5568;
-    --gray-600: #718096;
-    --gray-500: #a0aec0;
-    --gray-400: #cbd5e0;
-    --gray-300: #e2e8f0;
-    --gray-200: #edf2f7;
-    --white: #ffffff;
-    --bg-light: #f7fafc; /* Very light gray/blue background */
-
-    /* BRAND ACCENTS */
-    --accent-blue: #3182ce;
-    --accent-purple: #805ad5;
-    --accent-glow: rgba(49, 130, 206, 0.15);
-
-    /* SEMANTIC: BACKGROUNDS */
-    --bg-app: var(--bg-light);
-    --bg-card: var(--white);
-    --bg-header: var(--white);
-    --bg-hover: rgba(0, 0, 0, 0.04);
-    --bg-active: rgba(49, 130, 206, 0.08);
-
-    /* SEMANTIC: BORDERS */
-    --border-subtle: #e2e8f0;
-    --border-bright: #cbd5e0;
-    --border-accent: var(--accent-blue);
-
-    /* SEMANTIC: TEXT */
-    --text-primary: #000000;
-    --text-secondary: #1a202c;
-    --text-muted: #4a5568;
-
-    /* SEMANTIC: STATUS */
-    --success: #38a169;
-    --error: #e53e3e;
-    --warning: #dd6b20;
-    --info: #3182ce;
-
-    /* LAYOUT & DENSITY */
+    /* Base Variables (Color variables are injected dynamically by useThemeStore) */
     --sidebar-width-expanded: 240px;
     --sidebar-width-collapsed: 64px;
-    --header-height: 80px;
+    --header-height: 76px;
     --widget-gap: 8px;
-    --card-radius: 8px;
-    --card-padding: 12px;
+    --card-radius: 0.375rem; /* rounded-md */
+    --card-padding: 0.75rem; /* p-3 */
 }
-
 
 body {
     margin: 0;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     background-color: var(--bg-app);
-    color: var(--text-primary);
+    color: var(--text-main);
     -webkit-font-smoothing: antialiased;
     overflow-x: hidden;
     width: 100%;
@@ -74,14 +29,27 @@ h1, h2, h3, h4, h5, h6 {
     font-weight: 600;
 }
 
+.widget-title {
+    font-size: 14px;
+    font-weight: 700;
+    font-family: 'Outfit', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-main);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+}
+
 *, *::before, *::after {
     box-sizing: border-box;
 }
 
 /* UTILITIES */
 .card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: var(--card-radius);
     padding: var(--card-padding);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);

@@ -1,7 +1,7 @@
 /* ─── Widget shell ─────────────────────────────────────────────────────────── */
 .widget {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 10px;
     display: flex;
     flex-direction: column;
@@ -13,7 +13,7 @@
 /* ─── Header ───────────────────────────────────────────────────────────────── */
 .header {
     padding: 12px 14px 8px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
 
@@ -38,7 +38,7 @@
 .titleText {
     font-size: 13px;
     font-weight: 700;
-    color: var(--text-primary);
+    color: var(--text-main);
     letter-spacing: 0.5px;
 }
 
@@ -51,9 +51,9 @@
 
 .refreshBtn {
     background: rgba(0,0,0,0.04);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border);
     border-radius: 5px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     cursor: pointer;
     font-size: 14px;
     line-height: 1;
@@ -82,17 +82,17 @@
 
 .controlLabel {
     font-size: 9px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-right: 2px;
 }
 
 .pill {
-    background: var(--bg-hover);
-    border: 1px solid var(--border-subtle);
+    background: var(--border);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     cursor: pointer;
     font-size: 10px;
     padding: 3px 8px;
@@ -110,7 +110,7 @@
 
 .scanAge {
     font-size: 10px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     margin-left: auto;
 }
 
@@ -123,10 +123,10 @@
 }
 
 .filterPill {
-    background: var(--bg-hover);
-    border: 1px solid var(--border-subtle);
+    background: var(--border);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     cursor: pointer;
     font-size: 10px;
     padding: 2px 8px;
@@ -193,12 +193,12 @@
 /* ─── Individual lane ───────────────────────────────────────────────────────── */
 .lane {
     border-left: 3px solid transparent;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border);
     padding: 8px 14px 6px 12px;
     transition: background 0.15s;
 }
 .lane:hover {
-    background: var(--bg-hover);
+    background: var(--border);
 }
 
 /* Lane header */
@@ -221,7 +221,7 @@
 .laneTicker {
     font-size: 12px;
     font-weight: 700;
-    color: var(--text-primary);
+    color: var(--text-main);
     white-space: nowrap;
 }
 
@@ -236,7 +236,7 @@
 
 .laneLevel {
     font-size: 10px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     white-space: nowrap;
     flex-shrink: 0;
 }
@@ -251,7 +251,7 @@
 
 .lanePrice {
     font-size: 11px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     font-variant-numeric: tabular-nums;
 }
 
@@ -311,7 +311,7 @@
 
 .snapshotCount {
     font-size: 9px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
 }
 
 .laneTrend {

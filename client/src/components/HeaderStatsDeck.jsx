@@ -17,9 +17,9 @@ export function HeaderStatsDeck() {
     const { moodScore, label: moodLabel, stats } = marketMood;
 
     // Dynamic Color
-    let moodColor = 'var(--text-secondary)';
-    if (moodLabel === 'BULLISH' || moodLabel === 'EUPHORIC') moodColor = 'var(--success)';
-    else if (moodLabel === 'BEARISH' || moodLabel === 'PANIC') moodColor = 'var(--error)';
+    let moodColor = 'var(--text-muted)';
+    if (moodLabel === 'BULLISH' || moodLabel === 'EUPHORIC') moodColor = 'var(--accent-green)';
+    else if (moodLabel === 'BEARISH' || moodLabel === 'PANIC') moodColor = 'var(--accent-red)';
     else if (moodLabel === 'NEUTRAL') moodColor = 'var(--warning)';
 
     return (
@@ -40,13 +40,13 @@ export function HeaderStatsDeck() {
                 <div className={`${styles.card} ${styles.sectionBreadth}`}>
                     <div className={styles.cardLabel}>BREADTH</div>
                     <div className={styles.breadthGrid}>
-                        <div className={styles.breadthItem} style={{ color: 'var(--success)' }}>
+                        <div className={styles.breadthItem} style={{ color: 'var(--accent-green)' }}>
                             <TrendingUp size={14} /> {stats.bullish}
                         </div>
-                        <div className={styles.breadthItem} style={{ color: 'var(--error)' }}>
+                        <div className={styles.breadthItem} style={{ color: 'var(--accent-red)' }}>
                             <TrendingDown size={14} /> {stats.bearish}
                         </div>
-                        <div className={styles.breadthItem} style={{ color: 'var(--text-tertiary)' }}>
+                        <div className={styles.breadthItem} style={{ color: 'var(--text-muted)' }}>
                             <Minus size={14} /> {stats.neutral}
                         </div>
                     </div>
@@ -70,7 +70,7 @@ function TriStreamHealthCard() {
 
     // Status Engine (<30m Green, 30-120m Yellow, >120m Red)
     const getStatusParams = (isoString) => {
-        if (!isoString) return { label: '--', color: 'var(--text-tertiary)', dot: '⚪' };
+        if (!isoString) return { label: '--', color: 'var(--text-muted)', dot: '⚪' };
         
         const mins = (Date.now() - new Date(isoString).getTime()) / 60000;
         let diffStr = TimeService.timeAgo(isoString);
@@ -89,20 +89,20 @@ function TriStreamHealthCard() {
 
     return (
         <div className={`${styles.card} ${styles.sectionSystem}`} style={{ minWidth: '200px', paddingRight: '12px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', fontSize: '10px', fontFamily: 'monospace', fontWeight: 700 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', fontSize: '11px', fontFamily: 'monospace', fontWeight: 700 }}>
                 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '3px' }}>
-                    <span style={{ color: 'var(--text-tertiary)' }}>A: MACRO SCAN</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '3px' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>A: MACRO SCAN</span>
                     <span style={{ color: sA.color }}>{sA.dot} {sA.label}</span>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '3px' }}>
-                    <span style={{ color: 'var(--text-tertiary)' }}>B: SCOUT VELO</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '3px' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>B: SCOUT VELO</span>
                     <span style={{ color: sB.color }}>{sB.dot} {sB.label}</span>
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: 'var(--text-tertiary)' }}>C: INST ALERTS</span>
+                    <span style={{ color: 'var(--text-muted)' }}>C: INST ALERTS</span>
                     <span style={{ color: sC.color }}>{sC.dot} {sC.label}</span>
                 </div>
 
@@ -133,7 +133,7 @@ function SystemTimeCard() {
         <div className={`${styles.card} ${styles.sectionSystem}`}>
             <div className={styles.cardLabel} style={{ justifyContent: 'flex-end', gap: '8px' }}>
                 <span style={{ opacity: 0.6 }}>SYSTEM STATUS</span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: "var(--success)" }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: "var(--accent-green)" }}>
                     <Wifi size={12} strokeWidth={3} />
                     {relativeTime}
                 </span>

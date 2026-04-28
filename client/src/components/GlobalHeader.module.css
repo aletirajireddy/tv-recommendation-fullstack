@@ -11,6 +11,30 @@
     height: 100%;
     display: flex;
     align-items: center;
+    gap: 12px;
+}
+
+.hamburgerBtn {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--text-main);
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 6px;
+    transition: background 0.2s;
+}
+
+.hamburgerBtn:hover {
+    background: var(--bg-panel);
+}
+
+@media (max-width: 1024px) {
+    .hamburgerBtn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
 }
 
 /* LEFT: BRAND */
@@ -24,7 +48,7 @@
     font-weight: 900;
     font-size: 1.2rem;
     letter-spacing: -0.05em;
-    color: var(--text-primary);
+    color: var(--text-main);
 }
 
 .activeStatus, .inactiveStatus {
@@ -33,7 +57,7 @@
     padding: 6px 16px;
     background: var(--gray-200);
     border-radius: 4px;
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border);
     display: flex;
     align-items: center;
     white-space: nowrap;
@@ -41,8 +65,8 @@
 
 .activeStatus {
     background: var(--white);
-    border-color: var(--success);
-    color: var(--success);
+    border-color: var(--accent-green);
+    color: var(--accent-green);
     box-shadow: 0 0 10px rgba(56, 161, 105, 0.1);
 }
 
@@ -59,29 +83,29 @@
     align-items: center;
     gap: 8px;
     font-size: 0.7rem;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
 }
 
 .windowValue {
     font-family: 'Roboto Mono', monospace;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text-muted);
 }
 
 .miniPlayback {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: var(--bg-card);
+    background: var(--bg-panel);
     padding: 2px 8px;
     border-radius: 12px;
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border);
 }
 
 .miniPlayBtn {
     background: none;
     border: none;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -108,7 +132,7 @@
 }
 
 .live {
-    background-color: var(--error);
+    background-color: var(--accent-red);
     color: white;
     /* No pulse animation for mini badge to reduce distraction */
 }
@@ -133,7 +157,7 @@
 
 .label {
     font-size: 0.65rem;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-weight: 600;
     letter-spacing: 0.05em;
 }
@@ -142,19 +166,19 @@
     font-family: 'Roboto Mono', monospace;
     font-weight: 600;
     font-size: 0.9rem;
-    color: var(--text-primary);
+    color: var(--text-main);
 }
 
 .infoGroup {
     display: flex;
     gap: 12px;
-    border-left: 1px solid var(--border-subtle);
+    border-left: 1px solid var(--border);
     padding-left: 12px;
 }
 
 .latency {
     font-size: 0.75rem;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     display: flex;
     align-items: center;
     gap: 6px;

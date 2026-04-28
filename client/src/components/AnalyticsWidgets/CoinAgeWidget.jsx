@@ -70,7 +70,7 @@ export function CoinAgeWidget() {
 
     return (
         <div className={styles.widgetWrapper}>
-            <h3 className={styles.mainTitle}>COIN LIFECYCLE TRACKER (TIME IN SYSTEM)</h3>
+            <h3 className="widget-title">COIN LIFECYCLE TRACKER (TIME IN SYSTEM)</h3>
             <div className={styles.grid}>
                 {categories.map(cat => (
                     <div key={cat.key} className={`${styles.card} ${grouped[cat.key].length === 0 ? styles.cardEmpty : ''}`}>

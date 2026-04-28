@@ -41,21 +41,21 @@ export const SpeedBreakerRuler = ({ currentPrice, levels }) => {
   };
 
   return (
-    <div className="relative w-full h-8 rounded-md overflow-visible flex items-center shadow-inner" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border-subtle)' }}>
+    <div className="relative w-full h-8 rounded-md overflow-visible flex items-center shadow-inner" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)' }}>
       {/* Background Gradient to signify Support (Left) and Resistance (Right) */}
       <div className="absolute inset-0 bg-gradient-to-r from-red-500/10 via-transparent to-green-500/10 pointer-events-none rounded-md" />
 
       {/* Center Line (Current Price) */}
-      <div className="absolute left-1/2 top-0 bottom-0 w-[3px] z-10 -translate-x-1/2" style={{ backgroundColor: 'var(--text-primary)', boxShadow: '0 0 6px var(--border-default)' }} />
+      <div className="absolute left-1/2 top-0 bottom-0 w-[3px] z-10 -translate-x-1/2" style={{ backgroundColor: 'var(--text-main)', boxShadow: '0 0 6px var(--border-default)' }} />
 
       {/* Render Markers */}
       {renderMarkers()}
       
       {/* Ticks/Guides */}
-      <div className="absolute left-0 bottom-[-18px] text-[10px] p-1 font-mono" style={{ color: 'var(--text-tertiary)' }}>-5%</div>
-      <div className="absolute left-1/4 bottom-[-18px] text-[10px] p-1 font-mono" style={{ color: 'var(--text-tertiary)' }}>-2.5%</div>
-      <div className="absolute right-1/4 bottom-[-18px] text-[10px] p-1 font-mono" style={{ color: 'var(--text-tertiary)' }}>+2.5%</div>
-      <div className="absolute right-0 bottom-[-18px] text-[10px] p-1 font-mono" style={{ color: 'var(--text-tertiary)' }}>+5%</div>
+      <div className="absolute left-0 bottom-[-18px] text-[10px] p-1 font-mono" style={{ color: 'var(--text-muted)' }}>-5%</div>
+      <div className="absolute left-1/4 bottom-[-18px] text-[10px] p-1 font-mono" style={{ color: 'var(--text-muted)' }}>-2.5%</div>
+      <div className="absolute right-1/4 bottom-[-18px] text-[10px] p-1 font-mono" style={{ color: 'var(--text-muted)' }}>+2.5%</div>
+      <div className="absolute right-0 bottom-[-18px] text-[10px] p-1 font-mono" style={{ color: 'var(--text-muted)' }}>+5%</div>
     </div>
   );
 };

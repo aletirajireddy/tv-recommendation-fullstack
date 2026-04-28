@@ -52,7 +52,7 @@ export function TrendFlowChart() {
                 </div>
                 <button
                     onClick={handleRefresh}
-                    style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
+                    style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
                 >
                     <RefreshCw size={14} />
                 </button>
@@ -64,48 +64,48 @@ export function TrendFlowChart() {
                         data={data}
                         margin={{ top: 20, right: 30, left: 0, bottom: 5 }}
                     >
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                         <XAxis
                             dataKey="label"
-                            stroke="var(--text-tertiary)"
+                            stroke="var(--text-muted)"
                             fontSize={10}
                             tickLine={false}
                         />
                         <YAxis
                             yAxisId="left"
-                            stroke="var(--text-tertiary)"
+                            stroke="var(--text-muted)"
                             fontSize={10}
                             tickLine={false}
-                            label={{ value: 'Vol', angle: -90, position: 'insideLeft', fill: 'var(--text-secondary)', fontSize: 10 }}
+                            label={{ value: 'Vol', angle: -90, position: 'insideLeft', fill: 'var(--text-muted)', fontSize: 10 }}
                         />
                         <YAxis
                             yAxisId="right"
                             orientation="right"
-                            stroke="var(--accent-primary)"
+                            stroke="var(--accent-blue)"
                             fontSize={10}
                             tickLine={false}
                             domain={[-100, 100]} // Mood Score Range
-                            label={{ value: 'Mood Score', angle: 90, position: 'insideRight', fill: 'var(--accent-primary)', fontSize: 10 }}
+                            label={{ value: 'Mood Score', angle: 90, position: 'insideRight', fill: 'var(--accent-blue)', fontSize: 10 }}
                         />
                         <Tooltip
-                            contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+                            contentStyle={{ backgroundColor: 'var(--bg-panel)', border: '1px solid var(--border)' }}
                             cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                             trigger={isMobile ? 'click' : 'hover'}
                             isAnimationActive={false}
                         />
                         <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
 
-                        <Bar yAxisId="left" dataKey="bull" name="Bullish Vol" stackId="a" fill="var(--success)" radius={[0, 0, 4, 4]} barSize={20} />
-                        <Bar yAxisId="left" dataKey="bear" name="Bearish Vol" stackId="a" fill="var(--error)" radius={[4, 4, 0, 0]} barSize={20} />
+                        <Bar yAxisId="left" dataKey="bull" name="Bullish Vol" stackId="a" fill="var(--accent-green)" radius={[0, 0, 4, 4]} barSize={20} />
+                        <Bar yAxisId="left" dataKey="bear" name="Bearish Vol" stackId="a" fill="var(--accent-red)" radius={[4, 4, 0, 0]} barSize={20} />
 
                         <Line
                             yAxisId="right"
                             type="monotone"
                             dataKey="moodScore"
                             name="Mood Score"
-                            stroke="var(--accent-primary)"
+                            stroke="var(--accent-blue)"
                             strokeWidth={2}
-                            dot={{ fill: 'var(--accent-primary)', r: 3 }}
+                            dot={{ fill: 'var(--accent-blue)', r: 3 }}
                         />
                     </ComposedChart>
                 </ResponsiveContainer>

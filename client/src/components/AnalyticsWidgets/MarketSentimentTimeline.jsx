@@ -4,6 +4,7 @@ import {
     ComposedChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Brush, ReferenceArea, ReferenceLine
 } from 'recharts';
 import { format, startOfDay, addHours } from 'date-fns';
+import { Waves } from 'lucide-react';
 import { useChartBrush } from '../../hooks/useChartBrush';
 
 export function MarketSentimentTimeline() {
@@ -56,7 +57,7 @@ export function MarketSentimentTimeline() {
 
     if (chartData.length < 2) {
         return (
-            <div className="flex items-center justify-center p-8 text-gray-500 font-mono text-xs border rounded-lg bg-[var(--bg-card)] border-[var(--border-subtle)]">
+            <div className="flex items-center justify-center p-8 text-gray-500 font-mono text-xs border rounded-lg bg-[var(--bg-panel)] border-[var(--border)]">
                 AWAITING MACRO TIMELINE...
             </div>
         );
@@ -66,8 +67,8 @@ export function MarketSentimentTimeline() {
         if (active && payload && payload.length) {
             const p = payload[0].payload;
             return (
-                <div className="p-3 rounded shadow-lg border bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] min-w-[160px]">
-                    <div className="font-bold mb-2 text-xs text-[var(--text-secondary)]">{p.timeLabel}</div>
+                <div className="p-3 rounded shadow-lg border bg-[var(--bg-panel)] border-[var(--border)] text-[var(--text-main)] min-w-[160px]">
+                    <div className="font-bold mb-2 text-xs text-[var(--text-muted)]">{p.timeLabel}</div>
                     <div className="flex justify-between items-center py-1 text-xs font-mono border-b border-gray-700/50 mb-1">
                         <span className="font-bold tracking-wider">NET MOOD</span>
                         <span className={`font-bold ${p.net_flow > 0 ? 'text-[#10B981]' : p.net_flow < 0 ? 'text-[#EF4444]' : 'text-gray-400'}`}>
@@ -81,14 +82,14 @@ export function MarketSentimentTimeline() {
     };
 
     return (
-        <div className="flex flex-col w-full p-4 rounded-lg shadow-sm bg-[var(--bg-card)] border border-[var(--border-subtle)] mb-4" style={{ touchAction: 'pan-y' }}>
+        <div className="flex flex-col w-full p-4 rounded-lg shadow-sm bg-[var(--bg-panel)] border border-[var(--border)] mb-4" style={{ touchAction: 'pan-y' }}>
             {/* Header */}
             <div className="flex items-center justify-between mb-4">
                 <div className="flex gap-2 items-center">
-                    <span className="text-xl">🌊</span>
-                    <h3 className="text-sm font-bold uppercase text-[var(--text-secondary)] tracking-wider">Market Sentiment Analyzer</h3>
+                    <Waves size={20} className="text-accent-blue" />
+                    <h3 className="text-sm font-bold uppercase text-[var(--text-muted)] tracking-wider">Market Sentiment Analyzer</h3>
                 </div>
-                <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-[var(--text-tertiary)]">
+                <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-[var(--text-muted)]">
                     <span className="flex items-center gap-1"><div className="w-2 h-2 rounded bg-blue-500/20 border border-blue-500/50" /> ASIA</span>
                     <span className="flex items-center gap-1"><div className="w-2 h-2 rounded bg-yellow-500/20 border border-yellow-500/50" /> LONDON</span>
                     <span className="flex items-center gap-1"><div className="w-2 h-2 rounded bg-emerald-500/20 border border-emerald-500/50" /> NY AM</span>
@@ -117,19 +118,19 @@ export function MarketSentimentTimeline() {
                             scale="time" 
                             domain={['dataMin', 'dataMax']} 
                             tickFormatter={(unixTime) => format(new Date(unixTime), 'HH:mm')} 
-                            tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }}
+                            tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
                             minTickGap={60}
                             axisLine={false}
                             tickLine={false}
                         />
                         <YAxis 
                             domain={[-100, 100]} 
-                            tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }} 
+                            tick={{ fontSize: 10, fill: 'var(--text-muted)' }} 
                             axisLine={false} 
                             tickLine={false} 
                             width={35} 
                         />
-                        <ReferenceLine y={0} stroke="var(--border-subtle)" strokeDasharray="3 3" />
+                        <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
                         <Tooltip content={<CustomTooltip />} />
 
                         {timezones.map((tz, i) => (
@@ -168,7 +169,7 @@ export function MarketSentimentTimeline() {
                             dataKey="timestamp_ms" 
                             height={22}
                             travellerWidth={18}
-                            stroke="var(--text-tertiary)" 
+                            stroke="var(--text-muted)" 
                             fill="var(--bg-app)"
                             tickFormatter={(unixTime) => format(new Date(unixTime), 'HH:mm')}
                             onChange={handleBrushChange}

@@ -33,6 +33,7 @@ export const useTimeStore = create((set, get) => ({
     streamsHealth: null, // NEW: Tri-Stream Health
     selectedTicker: null, // Contextual ToolBox Target
     sidebarCollapsed: false, // Layout state
+    mobileMenuOpen: false, // New Mobile Layout state
     showPlayback: localStorage.getItem('tv_showPlayback') === null ? true : localStorage.getItem('tv_showPlayback') === 'true',
 
     // NEW: Genie Smart State
@@ -48,6 +49,7 @@ export const useTimeStore = create((set, get) => ({
     // 2. ACTIONS
     setSelectedTicker: (ticker) => set({ selectedTicker: ticker }),
     setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+    setMobileMenuOpen: (isOpen) => set({ mobileMenuOpen: isOpen }),
     setShowPlayback: (show) => {
         set({ showPlayback: !!show });
         localStorage.setItem('tv_showPlayback', String(!!show));

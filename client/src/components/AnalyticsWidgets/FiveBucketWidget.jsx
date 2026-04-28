@@ -50,7 +50,7 @@ export function FiveBucketWidget() {
                 count={buckets.bearish.length}
                 items={buckets.bearish}
                 icon={ArrowDown}
-                color="var(--error)"
+                color="var(--accent-red)"
                 bgColor="rgba(239, 68, 68, 0.1)"
             />
 
@@ -70,7 +70,7 @@ export function FiveBucketWidget() {
                 count={buckets.bullish.length}
                 items={buckets.bullish}
                 icon={ArrowUp}
-                color="var(--success)"
+                color="var(--accent-green)"
                 bgColor="rgba(16, 185, 129, 0.1)"
             />
 
@@ -103,7 +103,7 @@ const Bucket = ({ title, count, items, icon: Icon, color, bgColor, highlight }) 
     <div className={styles.bucket} style={{ borderColor: color, boxShadow: highlight ? `0 0 10px ${bgColor}` : 'none' }}>
         <div className={styles.header} style={{ backgroundColor: bgColor, color: color }}>
             <Icon size={16} strokeWidth={2.5} />
-            <span className={styles.title}>{title}</span>
+            <span className="widget-title">{title}</span>
             <span className={styles.count}>{count}</span>
         </div>
         <div className={styles.body}>
@@ -111,7 +111,7 @@ const Bucket = ({ title, count, items, icon: Icon, color, bgColor, highlight }) 
                 items.slice(0, 8).map((item, i) => ( // Limit visual display
                     <div key={i} className={styles.chip} style={{ borderLeftColor: color }}>
                         <span className={styles.ticker}>{item.cleanTicker || item.ticker}</span>
-                        {item.score !== 0 && <span className={styles.score} style={{ color: item.score > 0 ? 'var(--success)' : 'var(--error)' }}>{item.score}</span>}
+                        {item.score !== 0 && <span className={styles.score} style={{ color: item.score > 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>{item.score}</span>}
                     </div>
                 ))
             )}

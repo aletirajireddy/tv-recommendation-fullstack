@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTimeStore } from '../store/useTimeStore';
+import { Target, Layers, Activity, Ruler, Zap, Hexagon, Users, PanelLeftClose, PanelLeft, Brain, Bell, MonitorPlay } from 'lucide-react';
 import styles from './Sidebar.module.css';
 
 export const Sidebar = () => {
@@ -11,27 +12,35 @@ export const Sidebar = () => {
     const setSmartLevelsContext = useTimeStore(s => s.setSmartLevelsContext);
     const telegramEnabled = useTimeStore(s => s.telegramEnabled);
     const toggleTelegram = useTimeStore(s => s.toggleTelegram);
+    const mobileMenuOpen = useTimeStore(s => s.mobileMenuOpen);
+    const setMobileMenuOpen = useTimeStore(s => s.setMobileMenuOpen);
 
     const menuItems = [
-        { id: 'umpire',    label: '3rd Umpire', icon: '🎯' },
-        { id: 'levels',    label: 'Levels Monitor', icon: '📏' },
-        { id: 'cascade',   label: 'EMA Cascade', icon: '🪜' },
-        { id: 'dist',      label: 'Distance Board', icon: '📏' },
-        { id: 'alpha',     label: 'Alpha Squad', icon: '🎯' },
-        { id: 'fusion',    label: 'Fusion Command', icon: '💠' },
-        { id: 'scout',     label: 'Participation', icon: '📊' },
+        { id: 'umpire',    label: '3rd Umpire', icon: Target },
+        { id: 'levels',    label: 'Levels Monitor', icon: Layers },
+        { id: 'cascade',   label: 'EMA Cascade', icon: Activity },
+        { id: 'dist',      label: 'Distance Board', icon: Ruler },
+        { id: 'alpha',     label: 'Alpha Squad', icon: Zap },
+        { id: 'fusion',    label: 'Fusion Command', icon: Hexagon },
+        { id: 'scout',     label: 'Participation', icon: Users },
     ];
 
     const scrollTo = (id) => {
         const el = document.getElementById(`section-${id}`);
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (mobileMenuOpen) setMobileMenuOpen(false); // auto close on mobile
     };
 
     return (
-        <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
+        <>
+        {/* Mobile Backdrop */}
+        {mobileMenuOpen && (
+            <div className={styles.mobileBackdrop} onClick={() => setMobileMenuOpen(false)} />
+        )}
+        <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''} ${mobileMenuOpen ? styles.mobileOpen : ''}`}>
             <div className={styles.toggleRow}>
                 <button className={styles.toggleBtn} onClick={() => setCollapsed(!collapsed)}>
-                    {collapsed ? '→' : '←'}
+                    {collapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
                 </button>
             </div>
             
@@ -43,7 +52,7 @@ export const Sidebar = () => {
                         onClick={() => scrollTo(item.id)}
                         title={item.label}
                     >
-                        <span className={styles.icon}>{item.icon}</span>
+                        <span className={styles.icon}><item.icon size={16} strokeWidth={2.5} /></span>
                         {!collapsed && <span className={styles.label}>{item.label}</span>}
                     </button>
                 ))}
@@ -58,7 +67,7 @@ export const Sidebar = () => {
                                 checked={showPlayback} 
                                 onChange={(e) => setShowPlayback(e.target.checked)}
                             />
-                            <span>Playback HUD</span>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><MonitorPlay size={14} /> Playback HUD</span>
                         </label>
 
                         <div className={styles.divider} />
@@ -67,7 +76,7 @@ export const Sidebar = () => {
                             className={`${styles.settingBtn} ${useSmartLevelsContext ? styles.active : ''}`}
                             onClick={() => setSmartLevelsContext(!useSmartLevelsContext)}
                         >
-                            <span>🧠 AI Intelligence</span>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Brain size={14} /> AI Intelligence</span>
                             <span className={styles.status}>{useSmartLevelsContext ? 'ON' : 'OFF'}</span>
                         </button>
 
@@ -75,7 +84,7 @@ export const Sidebar = () => {
                             className={`${styles.settingBtn} ${telegramEnabled ? styles.active : ''}`}
                             onClick={toggleTelegram}
                         >
-                            <span>🔔 Telegram Alerts</span>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Bell size={14} /> Telegram Alerts</span>
                             <span className={styles.status}>{telegramEnabled ? 'ON' : 'OFF'}</span>
                         </button>
                     </div>
@@ -83,5 +92,6 @@ export const Sidebar = () => {
                 {!collapsed && <div className={styles.version}>v4.0.1 PRO</div>}
             </div>
         </aside>
+        </>
     );
 };

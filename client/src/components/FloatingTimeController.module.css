@@ -1,8 +1,8 @@
 .container {
     position: fixed;
     /* Left/Top handled by inline styles */
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 50px;
     padding: 15px 8px;
     display: flex;
@@ -19,7 +19,7 @@
     flex-direction: column;
     align-items: center;
     gap: 2px;
-    color: var(--accent-primary);
+    color: var(--accent-blue);
 }
 
 .icon {
@@ -35,7 +35,7 @@
 .label {
     font-size: 8px;
     text-transform: uppercase;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     letter-spacing: 1px;
 }
 
@@ -78,23 +78,23 @@
     appearance: none;
     width: 24px;
     height: 24px;
-    background: var(--accent-primary);
+    background: var(--accent-blue);
     border-radius: 50%;
-    border: 2px solid var(--bg-card);
+    border: 2px solid var(--bg-panel);
     cursor: grab;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .verticalSlider::-webkit-slider-thumb:active {
-    background: var(--text-primary);
+    background: var(--text-main);
     transform: scale(1.1);
 }
 
 .maxBtn {
     font-size: 10px;
     font-weight: 700;
-    color: var(--bg-card);
-    background: var(--accent-secondary);
+    color: var(--bg-panel);
+    background: var(--accent-orange);
     border: none;
     border-radius: 4px;
     padding: 4px 8px;
@@ -103,5 +103,5 @@
 }
 
 .maxBtn:hover {
-    background: var(--text-primary);
+    background: var(--text-main);
 }

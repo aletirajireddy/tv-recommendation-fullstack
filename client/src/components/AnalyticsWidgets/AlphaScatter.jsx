@@ -104,7 +104,7 @@ export function AlphaScatter() {
     return (
         <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             <div className={styles.header}>
-                <div className={styles.title}>
+                <div className="widget-title">
                     <Target size={18} />
                     <h3>ALPHA SQUAD <span style={{opacity: 0.5, fontSize: '0.8rem', fontWeight: 500}}>Trend vs Quality</span></h3>
                 </div>
@@ -127,14 +127,14 @@ export function AlphaScatter() {
                 ) : (
                     <ResponsiveContainer width="100%" height="100%">
                         <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: -20 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                             
                             {/* X-Axis: Trend Strength (-100 to 100) */}
                             <XAxis
                                 type="number"
                                 dataKey="x"
                                 name="Trend Strength"
-                                stroke="var(--text-tertiary)"
+                                stroke="var(--text-muted)"
                                 fontSize={10}
                                 domain={[-100, 100]}
                                 tickCount={5}
@@ -146,7 +146,7 @@ export function AlphaScatter() {
                                 type="number"
                                 dataKey="y"
                                 name="Setup Quality"
-                                stroke="var(--text-tertiary)"
+                                stroke="var(--text-muted)"
                                 fontSize={10}
                                 domain={[0, 100]}
                                 tickCount={5}
@@ -156,17 +156,17 @@ export function AlphaScatter() {
                             {/* Z-Axis helps scale the dot size slightly for verified vs unverified volume */}
                             <ZAxis type="number" dataKey="z" range={[40, 150]} />
                             
-                            <Tooltip cursor={{ strokeDasharray: '3 3', stroke: 'var(--border-focus)' }} content={<CustomTooltip />} isAnimationActive={false} trigger={isMobile ? 'click' : 'hover'} />
+                            <Tooltip cursor={{ strokeDasharray: '3 3', stroke: 'var(--accent-blue)' }} content={<CustomTooltip />} isAnimationActive={false} trigger={isMobile ? 'click' : 'hover'} />
                             
                             <Scatter name="Coins" data={data}>
                                 {data.map((entry, index) => {
                                     // Elite rendering logic:
                                     // Base color by Direction, Stroke by VolSpike, Opacity by Alpha Verification
                                     const baseColor = entry.bias === 'BULLISH' || entry.bias === 'BULL' || entry.bias === 'LONG' 
-                                        ? 'var(--success)' : (entry.bias === 'BEARISH' || entry.bias === 'BEAR' || entry.bias === 'SHORT' ? 'var(--error)' : 'var(--text-secondary)');
+                                        ? 'var(--accent-green)' : (entry.bias === 'BEARISH' || entry.bias === 'BEAR' || entry.bias === 'SHORT' ? 'var(--accent-red)' : 'var(--text-main)');
                                     
                                     const opacity = entry.isAlphaVerified ? 1 : 0.6;
-                                    const stroke = entry.volSpike ? 'var(--accent-primary)' : 'none';
+                                    const stroke = entry.volSpike ? 'var(--accent-blue)' : 'none';
                                     
                                     return (
                                         <Cell 

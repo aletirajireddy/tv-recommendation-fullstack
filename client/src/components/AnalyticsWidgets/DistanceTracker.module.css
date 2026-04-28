@@ -1,6 +1,6 @@
 .widget {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 10px;
     display: flex;
     flex-direction: column;
@@ -10,7 +10,7 @@
 }
 .header {
     padding: 12px 14px 8px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border);
 }
 .titleRow {
     display: flex;
@@ -21,7 +21,7 @@
 .title { display: flex; align-items: center; gap: 8px; }
 .titleIcon { font-size: 15px; color: #d6bcfa; }
 .titleText {
-    font-size: 13px; font-weight: 700; color: var(--text-primary); letter-spacing: 0.5px;
+    font-size: 13px; font-weight: 700; color: var(--text-main); letter-spacing: 0.5px;
 }
 .titleSub {
     font-size: 10px; color: #4a5568; font-weight: 400; letter-spacing: 0.3px;
@@ -69,7 +69,7 @@
 }
 .table thead th {
     position: sticky; top: 0;
-    background: var(--bg-card);
+    background: var(--bg-panel);
     color: var(--text-muted);
     font-size: 9px;
     text-transform: uppercase;
@@ -92,11 +92,11 @@
 .table td {
     padding: 5px 8px;
     text-align: right;
-    color: var(--text-secondary);
+    color: var(--text-muted);
 }
 .table td:first-child,
 .table td:nth-child(2) { text-align: left; }
-.tickerCell { color: var(--text-primary); font-weight: 700; }
+.tickerCell { color: var(--text-main); font-weight: 700; }
 .priceCell { color: #cbd5e0; }
 .tfCell {
     color: #d6bcfa;

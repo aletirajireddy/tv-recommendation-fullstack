@@ -2,7 +2,7 @@ import React, { useMemo, useEffect, useState } from 'react';
 import styles from './RecommendationsFeed.module.css';
 import { useTimeStore } from '../../store/useTimeStore';
 import GenieSmart from '../../services/GenieSmart';
-import { Lightbulb, TrendingUp, Anchor, Activity, AlertTriangle, Clock } from 'lucide-react';
+import { Lightbulb, TrendingUp, Anchor, Activity, AlertTriangle, Clock, Bell, Waves, CheckCircle2 } from 'lucide-react';
 
 const timeAgo = (dateStr) => {
     if (!dateStr) return '';
@@ -33,7 +33,7 @@ const StrategyCard = ({ card }) => {
                 <Icon size={18} className={styles.icon} />
                 <span className={styles.confidence}>{(card.confidence || 'UNKNOWN').toUpperCase()} CONFIDENCE</span>
             </div>
-            <h4 className={styles.title}>{card.title}</h4>
+            <h4 className="widget-title">{card.title}</h4>
             <p className={styles.description}>{card.description}</p>
 
             {card.tickers && card.tickers.length > 0 && (
@@ -45,7 +45,7 @@ const StrategyCard = ({ card }) => {
                                 {t.bias && <span className={(t.bias === 'LONG' || t.bias === 'BULL') ? styles.tagLong : styles.tagShort}>{t.bias}</span>}
                             </div>
                             {t.scanTime && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-tertiary)', fontSize: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)', fontSize: '10px' }}>
                                     <Clock size={10} />
                                     <span>{timeAgo(t.scanTime)}</span>
                                 </div>
@@ -60,22 +60,33 @@ const StrategyCard = ({ card }) => {
 
 // Sub-component for TLog Item
 const LogItem = ({ note }) => {
-    let color = 'var(--text-secondary)';
+    let color = 'var(--text-muted)';
+    let LogIcon = Activity;
 
     // Level-based Styling
-    if (note.level === 'ALERT' || note.message.includes('🚨')) color = '#ef4444';
-    else if (note.level === 'UPDATE' || note.message.includes('🌊')) color = '#3b82f6';
-    else if (note.message.includes('✅')) color = '#10b981';
+    if (note.level === 'ALERT' || note.message.includes('🚨')) {
+        color = 'var(--accent-red)';
+        LogIcon = Bell;
+    } else if (note.level === 'UPDATE' || note.message.includes('🌊')) {
+        color = 'var(--accent-blue)';
+        LogIcon = Waves;
+    } else if (note.message.includes('✅')) {
+        color = 'var(--accent-green)';
+        LogIcon = CheckCircle2;
+    }
 
     return (
         <div className={styles.logItem} style={{ borderLeft: `3px solid ${color}` }}>
             <div className={styles.logHeader}>
-                <span className={styles.logTrigger} style={{ color }}>{note.level}</span>
+                <span className={styles.logTrigger} style={{ color, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <LogIcon size={14} />
+                    {note.level}
+                </span>
                 <span className={styles.logTime}>{new Date(note.timestamp).toLocaleTimeString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
             </div>
             {/* Render Message with Basic Markdown stripping if needed, or just display as is since it has icons */}
             <div className={styles.logMessage} style={{ whiteSpace: 'pre-wrap' }}>
-                {note.message.replace(/\*\*/g, '')}
+                {note.message.replace(/\*\*/g, '').replace(/🚨|🌊|✅/g, '')}
             </div>
         </div>
     );

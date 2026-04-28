@@ -3,12 +3,12 @@ import { Activity } from 'lucide-react';
 
 export function LatencyCard({ ms }) {
     const isGood = ms < 5000; // < 5s is good
-    const color = isGood ? 'var(--success)' : 'var(--warning)';
+    const color = isGood ? 'var(--accent-green)' : 'var(--warning)';
 
     return (
         <div style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-subtle)',
+            background: 'var(--bg-panel)',
+            border: '1px solid var(--border)',
             borderRadius: '8px',
             padding: '1rem',
             display: 'flex',
@@ -19,7 +19,7 @@ export function LatencyCard({ ms }) {
             overflow: 'hidden'
         }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', zIndex: 1 }}>
-                <h3 style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <h3 style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     SYSTEM LATENCY
                     <span style={{
                         display: 'inline-block',
@@ -31,7 +31,7 @@ export function LatencyCard({ ms }) {
                     }} />
                 </h3>
                 <div style={{ fontSize: '1.5rem', fontWeight: 700, color: color, fontFamily: 'monospace' }}>
-                    {ms} <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>ms</span>
+                    {ms} <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>ms</span>
                 </div>
             </div>
             <Activity

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
-
+import { Swords, Zap, Flame } from 'lucide-react';
 import styles from './ScenarioBoard.module.css';
 
 const ScenarioBoard = () => {
@@ -48,7 +48,7 @@ const ScenarioBoard = () => {
     }, [activeScan?.id]);
 
     const ScenarioColumn = ({ title, type, items, color }) => (
-        <div className={styles.column} style={{ borderColor: color }}>
+        <div className={styles.column} style={{ borderColor: color + '44' }}>
             <div className={styles.columnHeader} style={{ backgroundColor: color }}>
                 <span>{title}</span>
                 <span className={styles.candidateCount}>{items.length} Candidates</span>
@@ -63,8 +63,8 @@ const ScenarioBoard = () => {
                     items.map((item, idx) => (
                         <div key={idx} className={styles.card} style={{ borderLeftColor: color }}>
                             <div className={styles.cardLeft}>
-                                <div className={styles.ticker}>{item.ticker}</div>
-                                <div className={styles.trigger}>
+                                <div className={styles.ticker} style={{ color: 'var(--text-main)' }}>{item.ticker}</div>
+                                <div className={styles.trigger} style={{ color: 'var(--text-muted)' }}>
                                     {item.trigger}
                                 </div>
                             </div>
@@ -73,10 +73,10 @@ const ScenarioBoard = () => {
                                 <div className={styles.meta}>
                                     <span>{item.scope}</span>
                                     {item.vol && (
-                                        <span title="Volume Spike Ignition" style={{ fontSize: '0.9rem', color: '#ffbd00' }}>⚡</span>
+                                        <Zap size={14} color="#ffbd00" title="Volume Spike Ignition" className="inline" />
                                     )}
                                     {item.heat > 0 && (
-                                        <span title={`${item.heat} Inst. Alerts`} style={{ fontSize: '0.9rem' }}>🔥</span>
+                                        <Flame size={14} color="#ff5252" title={`${item.heat} Inst. Alerts`} className="inline" />
                                     )}
                                 </div>
                             </div>
@@ -91,15 +91,15 @@ const ScenarioBoard = () => {
         <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             <div className={styles.boardHeader}>
                 <div className={styles.headerLeft}>
-                    <span className={styles.headerIcon}>⚔️</span>
-                    <h3 className={styles.title}>SCENARIO PLANNING</h3>
+                    <span className={styles.headerIcon}><Swords size={20} className="text-accent-blue" /></span>
+                    <h3 className="widget-title">SCENARIO PLANNING</h3>
                 </div>
                 {marketMood && (
                     <div className={styles.marketContext} style={{
-                        backgroundColor: marketMood.label.includes('BULLISH') || marketMood.label.includes('EUPHORIC') ? '#d4edda' :
-                            marketMood.label.includes('BEARISH') || marketMood.label.includes('PANIC') ? '#f8d7da' : '#e2e3e5',
-                        color: marketMood.label.includes('BULLISH') || marketMood.label.includes('EUPHORIC') ? '#155724' :
-                            marketMood.label.includes('BEARISH') || marketMood.label.includes('PANIC') ? '#721c24' : '#383d41'
+                        backgroundColor: 'var(--bg-panel)',
+                        color: marketMood.label.includes('BULLISH') || marketMood.label.includes('EUPHORIC') ? 'var(--accent-green)' :
+                            marketMood.label.includes('BEARISH') || marketMood.label.includes('PANIC') ? 'var(--accent-red)' : 'var(--text-main)',
+                        border: '1px solid var(--border)'
                     }}>
                         Current Context: {marketMood.label} ({marketMood.moodScore})
                     </div>
@@ -111,7 +111,7 @@ const ScenarioBoard = () => {
                     title="PLAN A: BULLISH BREAKOUT"
                     type="Breakout"
                     items={scenarios.planA}
-                    color="#00c853"
+                    color="var(--accent-green)"
                 />
 
                 <div className={styles.divider}></div>
@@ -120,7 +120,7 @@ const ScenarioBoard = () => {
                     title="PLAN B: BEARISH BREAKDOWN"
                     type="Breakdown"
                     items={scenarios.planB}
-                    color="#ff5252"
+                    color="var(--accent-red)"
                 />
             </div>
         </div>

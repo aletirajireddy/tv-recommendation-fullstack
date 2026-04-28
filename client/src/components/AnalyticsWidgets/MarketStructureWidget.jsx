@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
-import { ArrowDown, Minus, ArrowUp, Anvil, Zap } from 'lucide-react';
+import { ArrowDown, Minus, ArrowUp, Anvil, Zap, Target, Layout } from 'lucide-react';
 import styles from './MarketStructureWidget.module.css';
 
 /**
@@ -86,9 +86,9 @@ export const MarketStructureWidget = () => {
     return (
         <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             {/* Header for Consistence */}
-            <div className={styles.headerTitle}>
-                <h3>MARKET STRUCTURE DISTRIBUTION</h3>
-            </div>
+            <h3 className="widget-title" style={{ marginBottom: '12px' }}>
+                MARKET STRUCTURE DISTRIBUTION
+            </h3>
 
             <div className={styles.grid}>
                 {/* BUCKET 1: BEARISH */}
@@ -97,7 +97,7 @@ export const MarketStructureWidget = () => {
                     count={buckets.bearish.length}
                     items={buckets.bearish}
                     icon={ArrowDown}
-                    color="var(--error)"
+                    color="var(--accent-red)"
                     bgColor="rgba(239, 68, 68, 0.1)"
                 />
 
@@ -117,7 +117,7 @@ export const MarketStructureWidget = () => {
                     count={buckets.bullish.length}
                     items={buckets.bullish}
                     icon={ArrowUp}
-                    color="var(--success)"
+                    color="var(--accent-green)"
                     bgColor="rgba(16, 185, 129, 0.1)"
                 />
 
@@ -151,7 +151,7 @@ const Bucket = ({ title, count, items, icon: Icon, color, bgColor, highlight }) 
     <div className={styles.bucket} style={{ borderColor: color, boxShadow: highlight ? `0 0 10px ${bgColor}` : 'none' }}>
         <div className={styles.header} style={{ backgroundColor: bgColor, color: color }}>
             <Icon size={16} strokeWidth={2.5} />
-            <span className={styles.title}>{title}</span>
+            <span className="widget-title">{title}</span>
             <span className={styles.count}>{count}</span>
         </div>
         <div className={styles.body}>
@@ -169,11 +169,11 @@ const Bucket = ({ title, count, items, icon: Icon, color, bgColor, highlight }) 
                         <div key={i} className={styles.chip} style={{ borderLeftColor: color, boxShadow: chipGlow }}>
                             <span className={styles.ticker} title={isSmartSupport ? "Bouncing off Smart Support" : (isSmartResist ? "Rejecting from Smart Resistance" : "")}>
                                 {item.cleanTicker}
-                                {isSmartSupport && <span style={{marginLeft: '4px', filter: 'drop-shadow(0 0 2px rgba(59,130,246,0.8))'}}>🎯</span>}
-                                {isSmartResist && <span style={{marginLeft: '4px', filter: 'drop-shadow(0 0 2px rgba(239,68,68,0.8))'}}>🧱</span>}
+                                {isSmartSupport && <Target size={10} style={{ marginLeft: '4px', display: 'inline', color: 'var(--accent-blue)', filter: 'drop-shadow(0 0 2px rgba(59,130,246,0.8))' }} />}
+                                {isSmartResist && <Layout size={10} style={{ marginLeft: '4px', display: 'inline', color: 'var(--accent-red)', filter: 'drop-shadow(0 0 2px rgba(239,68,68,0.8))' }} />}
                             </span>
                             {(item.score !== undefined) && (
-                                <span className={styles.score} style={{ color: item.score >= 50 ? 'var(--success)' : 'var(--error)' }}>
+                                <span className={styles.score} style={{ color: item.score >= 50 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
                                     {item.score}
                                 </span>
                             )}

@@ -2,7 +2,7 @@ import React from 'react';
 import { useTimeStore } from '../store/useTimeStore';
 import { LevelReactionWidget } from './AnalyticsWidgets/LevelReactionWidget';
 import { EMACascadeMonitor } from './AnalyticsWidgets/EMACascadeMonitor';
-import { DistanceTracker } from './AnalyticsWidgets/DistanceTracker';
+import { X, LayoutDashboard } from 'lucide-react';
 import styles from './SelectionDrawer.module.css';
 
 export const SelectionDrawer = () => {
@@ -16,10 +16,15 @@ export const SelectionDrawer = () => {
             <div className={styles.drawer} onClick={e => e.stopPropagation()}>
                 <div className={styles.header}>
                     <div className={styles.titleGroup}>
-                        <span className={styles.titlePrefix}>Technical Toolbox</span>
+                        <div className="flex items-center gap-2">
+                            <LayoutDashboard size={16} className="text-accent-blue" />
+                            <span className={styles.titlePrefix}>Technical Toolbox</span>
+                        </div>
                         <h2 className={styles.tickerName}>{ticker}</h2>
                     </div>
-                    <button className={styles.closeBtn} onClick={() => setTicker(null)}>✕</button>
+                    <button className={styles.closeBtn} onClick={() => setTicker(null)}>
+                        <X size={20} />
+                    </button>
                 </div>
 
                 <div className={styles.content}>
@@ -29,9 +34,6 @@ export const SelectionDrawer = () => {
                     </div>
                     <div className={styles.widgetBox}>
                         <EMACascadeMonitor filterTicker={ticker} compact />
-                    </div>
-                    <div className={styles.widgetBox}>
-                        <DistanceTracker filterTicker={ticker} compact />
                     </div>
                 </div>
             </div>

@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+    darkMode: "class",
     content: [
         "./index.html",
         "./src/**/*.{js,ts,jsx,tsx}",
@@ -7,20 +8,32 @@ export default {
     theme: {
         extend: {
             colors: {
-                dark: {
-                    900: '#0a0a0a',
-                    800: '#121212',
-                    700: '#1e1e1e',
-                    600: '#2d2d2d',
-                },
-                brand: {
-                    accent: '#00c853', // Bullish green
-                    danger: '#ff5252', // Bearish red
-                    purple: '#ba68c8', // Retrace purple
-                }
+                primary: "var(--primary)",
+                "background-light": "var(--bg-app)",
+                "background-dark": "var(--bg-app)",
+                "panel-light": "var(--bg-panel)",
+                "panel-dark": "var(--bg-panel)",
+                "border-light": "var(--border)",
+                "border-dark": "var(--border)",
+                "text-light": "var(--text-main)",
+                "text-dark": "var(--text-main)",
+                "text-muted-light": "var(--text-muted)",
+                "text-muted-dark": "var(--text-muted)",
+                "accent-green": "var(--accent-green)",
+                "accent-red": "var(--accent-red)",
+                "accent-blue": "var(--accent-blue)",
+                "accent-orange": "var(--accent-orange)"
             },
             fontFamily: {
-                sans: ['Inter', 'sans-serif'],
+                display: ["Inter", "sans-serif"],
+                body: ["Inter", "sans-serif"],
+                sans: ["Inter", "sans-serif"]
+            },
+            borderRadius: {
+                DEFAULT: "0.25rem",
+            },
+            fontSize: {
+                'xxs': '0.65rem',
             }
         },
     },

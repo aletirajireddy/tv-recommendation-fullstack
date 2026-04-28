@@ -31,7 +31,7 @@ export function ScanResults() {
         <div className={styles.container}>
             {/* 1. GENIE OPPORTUNITIES */}
             <section className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                <div className={styles.header} style={{ borderBottomColor: 'var(--success)' }}>
+                <div className={styles.header} style={{ borderBottomColor: 'var(--accent-green)' }}>
                     <h2 className={styles.title}>GENIE OPPORTUNITIES</h2>
                     <span className={styles.countBadge} style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success-text)' }}>
                         {grouped.pass.length}
@@ -55,7 +55,7 @@ export function ScanResults() {
                                             <span className={styles.ticker} style={{ fontWeight: 800 }}>{item.ticker}</span>
                                             {item.bias && (
                                                 <span className={styles.miniBadge} style={{
-                                                    color: item.bias === 'BULLISH' ? 'var(--success)' : 'var(--error)'
+                                                    color: item.bias === 'BULLISH' ? 'var(--accent-green)' : 'var(--accent-red)'
                                                 }}>
                                                     {item.bias === 'BULLISH' ? '▲' : '▼'}
                                                 </span>
@@ -69,7 +69,7 @@ export function ScanResults() {
                                             ))}
                                         </div>
                                     </td>
-                                    <td style={{ textAlign: 'right', fontWeight: 700, color: (item.score > 0 ? 'var(--success)' : 'var(--text-primary)') }}>
+                                    <td style={{ textAlign: 'right', fontWeight: 700, color: (item.score > 0 ? 'var(--accent-green)' : 'var(--text-main)') }}>
                                         {item.score || 0}
                                     </td>
                                 </tr>

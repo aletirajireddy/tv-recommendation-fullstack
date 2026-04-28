@@ -1,6 +1,6 @@
 .container {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 16px;
     display: flex;
@@ -12,8 +12,8 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    color: var(--text-secondary);
-    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
     padding-bottom: 8px;
 }
 
@@ -30,7 +30,7 @@
     overflow-y: hidden;
     /* Custom Scrollbar */
     scrollbar-width: thin;
-    scrollbar-color: var(--border-subtle) transparent;
+    scrollbar-color: var(--border) transparent;
 }
 
 .svg {

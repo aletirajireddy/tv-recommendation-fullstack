@@ -13,14 +13,15 @@
 }
 
 .drawer {
-    width: 50vw;
+    width: 75vw;
     height: 100vh;
-    background: var(--bg-card);
+    background: var(--bg-panel);
     border-left: 1px solid var(--border-bright);
     box-shadow: -20px 0 60px rgba(0,0,0,0.1);
     display: flex;
     flex-direction: column;
     animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    overflow: hidden;
 }
 
 @keyframes slideInRight {
@@ -30,11 +31,11 @@
 
 .header {
     padding: 20px 24px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: var(--bg-card);
+    background: var(--bg-panel);
 }
 
 .titleGroup {
@@ -55,14 +56,14 @@
     margin: 0;
     font-size: 24px;
     font-weight: 700;
-    color: var(--text-primary);
+    color: var(--text-main);
     font-family: 'Outfit', sans-serif;
 }
 
 .closeBtn {
-    background: var(--bg-hover);
-    border: 1px solid var(--border-subtle);
-    color: var(--text-secondary);
+    background: var(--border);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
     width: 32px;
     height: 32px;
     border-radius: 50%;
@@ -75,8 +76,8 @@
 
 .closeBtn:hover {
     color: var(--white);
-    background: var(--error);
-    border-color: var(--error);
+    background: var(--accent-red);
+    border-color: var(--accent-red);
 }
 
 .content {
@@ -90,8 +91,8 @@
 }
 
 .widgetBox {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
 }

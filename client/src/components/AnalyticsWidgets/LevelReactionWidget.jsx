@@ -5,6 +5,7 @@ import {
     ComposedChart, Area, Line, XAxis, YAxis, ReferenceLine,
     Tooltip, ResponsiveContainer,
 } from 'recharts';
+import { Activity, RefreshCw, Radar, ArrowUp, ArrowDown, Zap, ArrowRight, MoveRight, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
 import styles from './LevelReactionWidget.module.css';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -181,12 +182,12 @@ function StreamDChips({ streamD, schema }) {
 // ─── Reaction meta ──────────────────────────────────────────────────────────
 
 const REACTION_META = {
-    BOUNCE:      { label: '↑ BOUNCE',      color: '#68d391', bg: 'rgba(104,211,145,0.12)' },
-    REJECT:      { label: '↓ REJECT',      color: '#fc8181', bg: 'rgba(252,129,129,0.12)' },
-    BREAK_BULL:  { label: '⚡ BREAK ▲',    color: '#f6ad55', bg: 'rgba(246,173,85,0.12)'  },
-    BREAK_BEAR:  { label: '⚡ BREAK ▼',    color: '#fc8181', bg: 'rgba(252,129,129,0.08)' },
-    TESTING:     { label: '→ TESTING',     color: '#63b3ed', bg: 'rgba(99,179,237,0.08)'  },
-    APPROACHING: { label: '⟶ APPROACH',    color: '#a0aec0', bg: 'rgba(160,174,192,0.06)' },
+    BOUNCE:      { label: <span className="flex items-center gap-1"><ArrowUp size={10} /> BOUNCE</span>,      color: '#68d391', bg: 'rgba(104,211,145,0.12)' },
+    REJECT:      { label: <span className="flex items-center gap-1"><ArrowDown size={10} /> REJECT</span>,    color: '#fc8181', bg: 'rgba(252,129,129,0.12)' },
+    BREAK_BULL:  { label: <span className="flex items-center gap-1"><Zap size={10} /> BREAK ▲</span>,    color: '#f6ad55', bg: 'rgba(246,173,85,0.12)'  },
+    BREAK_BEAR:  { label: <span className="flex items-center gap-1"><Zap size={10} /> BREAK ▼</span>,    color: '#fc8181', bg: 'rgba(252,129,129,0.08)' },
+    TESTING:     { label: <span className="flex items-center gap-1"><ArrowRight size={10} /> TESTING</span>,  color: '#63b3ed', bg: 'rgba(99,179,237,0.08)'  },
+    APPROACHING: { label: <span className="flex items-center gap-1"><MoveRight size={10} /> APPROACH</span>, color: '#a0aec0', bg: 'rgba(160,174,192,0.06)' },
 };
 
 const SIDE_COLOR = {
@@ -202,21 +203,21 @@ function LaneTooltip({ active, payload, coin }) {
     const sideCol = SIDE_COLOR[coin?.side] || SIDE_COLOR.SUPPORT;
     return (
         <div style={{
-            background: 'var(--bg-card)', border: `1px solid ${sideCol.line}40`,
+            background: 'var(--bg-panel)', border: `1px solid ${sideCol.line}40`,
             borderRadius: 6, padding: '6px 10px', fontSize: 11, lineHeight: 1.7,
             boxShadow: '0 4px 20px rgba(0,0,0,0.2)', minWidth: 140,
         }}>
             <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>{fmtTime(p.ts)}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Price</span>
-                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{smartFmt(p.price)}</span>
+                <span style={{ color: 'var(--text-muted)' }}>Price</span>
+                <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>{smartFmt(p.price)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Level</span>
+                <span style={{ color: 'var(--text-muted)' }}>Level</span>
                 <span style={{ color: sideCol.line }}>{smartFmt(coin?.levelPrice)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                <span style={{ color: 'var(--text-secondary)' }}>vs Level</span>
+                <span style={{ color: 'var(--text-muted)' }}>vs Level</span>
                 <span style={{ color: p.pct >= 0 ? '#68d391' : '#fc8181', fontWeight: 700 }}>
                     {p.pct > 0 ? '+' : ''}{p.pct?.toFixed(3)}%
                 </span>
@@ -308,7 +309,7 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading
                             color:       coin.direction === 'BULL' ? '#68d391' : coin.direction === 'BEAR' ? '#fc8181' : '#a0aec0',
                             borderColor: coin.direction === 'BULL' ? 'rgba(104,211,145,0.3)' : coin.direction === 'BEAR' ? 'rgba(252,129,129,0.3)' : 'rgba(160,174,192,0.2)',
                         }}>
-                        {coin.direction === 'BULL' ? '▲' : coin.direction === 'BEAR' ? '▼' : '—'} {coin.direction}
+                        {coin.direction === 'BULL' ? <ChevronUp size={10} /> : coin.direction === 'BEAR' ? <ChevronDown size={10} /> : '—'} {coin.direction}
                     </span>
                     {/* Trend flow */}
                     {coin.netTrend !== 0 && (
@@ -541,8 +542,8 @@ export function LevelReactionWidget({ filterTicker, compact }) {
             {/* ── Header ── */}
             <div className={styles.header}>
                 <div className={styles.titleRow}>
-                    <div className={styles.title}>
-                        <span className={styles.titleIcon}>⟳</span>
+                    <div className="widget-title">
+                        <span className={styles.titleIcon}><Activity size={16} className="text-accent-blue" /></span>
                         <span className={styles.titleText}>LEVEL REACTION MONITOR</span>
                         <span className={styles.titleSub}>Path · Touch · Verdict</span>
                     </div>
@@ -550,7 +551,9 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                         className={styles.refreshBtn}
                         onClick={() => reload()}
                         title="Refresh"
-                    >↺</button>
+                    >
+                        <RefreshCw size={14} />
+                    </button>
                 </div>
 
                 {/* Controls row */}
@@ -641,7 +644,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                 {/* Error as non-blocking banner — stale lanes stay visible beneath */}
                 {error && (
                     <div className={styles.errorBanner}>
-                        ⚠ {error} {data ? '— showing last data' : ''}
+                        <AlertTriangle size={14} /> {error} {data ? '— showing last data' : ''}
                     </div>
                 )}
                 {!data && loading ? (
@@ -651,7 +654,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                     </div>
                 ) : coins.length === 0 ? (
                     <div className={styles.emptyState}>
-                        <div style={{ fontSize: 28 }}>📡</div>
+                        <div className="flex justify-center mb-2"><Radar size={32} className="text-text-muted opacity-50" /></div>
                         <div>No coins within ±{maxDist}% of a structural level</div>
                         <div style={{ fontSize: 11, color: '#4a5568', marginTop: 4 }}>
                             Try increasing the max distance filter

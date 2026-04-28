@@ -11,7 +11,7 @@
     gap: 8px;
     font-size: 0.75rem;
     font-weight: 700;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     text-transform: uppercase;
 }
 
@@ -26,8 +26,8 @@
 }
 
 .card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 12px;
     border-left-width: 4px;
@@ -35,15 +35,15 @@
 }
 
 .bull {
-    border-left-color: var(--success);
+    border-left-color: var(--accent-green);
 }
 
 .bear {
-    border-left-color: var(--error);
+    border-left-color: var(--accent-red);
 }
 
 .neutral {
-    border-left-color: var(--text-tertiary);
+    border-left-color: var(--text-muted);
 }
 
 .cardHeader {
@@ -56,13 +56,13 @@
 .ticker {
     font-weight: 700;
     font-size: 0.9rem;
-    color: var(--text-primary);
+    color: var(--text-main);
 }
 
 .time {
     font-family: 'Roboto Mono', monospace;
     font-size: 0.7rem;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
 }
 
 .cardBody {
@@ -74,7 +74,7 @@
 .typeTag {
     font-size: 0.7rem;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     background: var(--gray-100);
     padding: 2px 6px;
     border-radius: 3px;
@@ -83,12 +83,12 @@
 .price {
     font-weight: 600;
     font-size: 0.8rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
 }
 
 .empty {
     text-align: center;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-size: 0.8rem;
     margin-top: 32px;
     font-weight: 500;

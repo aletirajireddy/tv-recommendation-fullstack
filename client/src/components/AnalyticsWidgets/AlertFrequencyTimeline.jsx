@@ -53,7 +53,7 @@ export function AlertFrequencyTimeline() {
 
     if (chartData.length < 2) {
         return (
-            <div className="flex items-center justify-center p-8 text-gray-500 font-mono text-xs border rounded-lg bg-[var(--bg-card)] border-[var(--border-subtle)]">
+            <div className="flex items-center justify-center p-8 text-gray-500 font-mono text-xs border rounded-lg bg-[var(--bg-panel)] border-[var(--border)]">
                 AWAITING ALERT DENSITY DATA...
             </div>
         );
@@ -63,8 +63,8 @@ export function AlertFrequencyTimeline() {
         if (active && payload && payload.length) {
             const p = payload[0].payload;
             return (
-                <div className="p-3 rounded shadow-lg border bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] min-w-[200px]">
-                    <div className="font-bold mb-2 text-xs text-[var(--text-secondary)]">{p.timeLabel}</div>
+                <div className="p-3 rounded shadow-lg border bg-[var(--bg-panel)] border-[var(--border)] text-[var(--text-main)] min-w-[200px]">
+                    <div className="font-bold mb-2 text-xs text-[var(--text-muted)]">{p.timeLabel}</div>
                     <div className="flex justify-between items-center py-1 text-xs font-mono">
                         <span className="text-[#10B981] font-bold">Bullish Alerts</span>
                         <span className="font-bold">{p.bull_count}</span>
@@ -73,9 +73,9 @@ export function AlertFrequencyTimeline() {
                         <span className="text-[#EF4444] font-bold">Bearish Alerts</span>
                         <span className="font-bold">{p.bear_count}</span>
                     </div>
-                    <div className="mt-2 pt-2 border-t border-[var(--border-subtle)]">
-                        <span className="text-[10px] text-[var(--text-tertiary)] block mb-1 uppercase tracking-wider">Involved Assets</span>
-                        <span className="text-[10px] font-mono text-[var(--text-secondary)] leading-tight">{p.coins}</span>
+                    <div className="mt-2 pt-2 border-t border-[var(--border)]">
+                        <span className="text-[10px] text-[var(--text-muted)] block mb-1 uppercase tracking-wider">Involved Assets</span>
+                        <span className="text-[10px] font-mono text-[var(--text-muted)] leading-tight">{p.coins}</span>
                     </div>
                 </div>
             );
@@ -84,14 +84,14 @@ export function AlertFrequencyTimeline() {
     };
 
     return (
-        <div className="flex flex-col w-full p-4 rounded-lg shadow-sm bg-[var(--bg-card)] border border-[var(--border-subtle)]" style={{ touchAction: 'pan-y' }}>
+        <div className="flex flex-col w-full p-4 rounded-lg shadow-sm bg-[var(--bg-panel)] border border-[var(--border)]" style={{ touchAction: 'pan-y' }}>
             {/* Header */}
             <div className="flex items-center justify-between mb-4">
                 <div className="flex gap-2 items-center">
                     <span className="text-xl">📊</span>
-                    <h3 className="text-sm font-bold uppercase text-[var(--text-secondary)] tracking-wider">Alert Frequency Analyzer</h3>
+                    <h3 className="text-sm font-bold uppercase text-[var(--text-muted)] tracking-wider">Alert Frequency Analyzer</h3>
                 </div>
-                <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-[var(--text-tertiary)]">
+                <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-[var(--text-muted)]">
                     <span className="flex items-center gap-1"><div className="w-2 h-2 rounded bg-blue-500/20 border border-blue-500/50" /> ASIA</span>
                     <span className="flex items-center gap-1"><div className="w-2 h-2 rounded bg-yellow-500/20 border border-yellow-500/50" /> LONDON</span>
                     <span className="flex items-center gap-1"><div className="w-2 h-2 rounded bg-emerald-500/20 border border-emerald-500/50" /> NY AM</span>
@@ -109,7 +109,7 @@ export function AlertFrequencyTimeline() {
                             scale="time" 
                             domain={['dataMin', 'dataMax']} 
                             tickFormatter={(unixTime) => format(new Date(unixTime), 'HH:mm')} 
-                            tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }}
+                            tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
                             minTickGap={60}
                             axisLine={false}
                             tickLine={false}
@@ -133,7 +133,7 @@ export function AlertFrequencyTimeline() {
                             dataKey="timestamp_ms" 
                             height={22}
                             travellerWidth={18}
-                            stroke="var(--text-tertiary)" 
+                            stroke="var(--text-muted)" 
                             fill="var(--bg-app)"
                             tickFormatter={(unixTime) => format(new Date(unixTime), 'HH:mm')}
                             onChange={handleBrushChange}

@@ -18,7 +18,7 @@ export function MonitorDetailModal() {
             <div className={styles.modalContent}>
                 <div className={styles.header}>
                     <div className={styles.titleInfo}>
-                        <Maximize2 size={18} color="var(--accent-primary)" />
+                        <Maximize2 size={18} color="var(--accent-blue)" />
                         <h2>MONITOR DETAIL VIEW</h2>
                         {activeScan && (
                             <span className={styles.scanId}>

@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
-import { RefreshCw, Navigation } from 'lucide-react';
+import { RefreshCw, Navigation, Zap, Flame, DollarSign, BarChart3 } from 'lucide-react';
 import {
     ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ZAxis, ReferenceLine
 } from 'recharts';
@@ -100,21 +100,22 @@ export const SmartLevelBreaker = () => {
                 <div className={styles.tooltip}>
                     <div className={styles.tooltipHeader}>
                         <h4>{p.ticker}</h4>
-                        <span style={{ color: p.type === 'pink' ? '#FF2E93' : '#FACC15', fontSize: '11px', fontWeight: 'bold' }}>
-                            {p.type === 'pink' ? '⚡ GAP RUNNER' : '🔥 MOMENTUM'}
+                        <span style={{ color: p.type === 'pink' ? '#FF2E93' : '#FACC15', fontSize: '11px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            {p.type === 'pink' ? <Zap size={14} /> : <Flame size={14} />}
+                            {p.type === 'pink' ? 'GAP RUNNER' : 'MOMENTUM'}
                         </span>
                     </div>
                     <div className={styles.tooltipBody}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '11px', fontWeight: 'bold' }}>
-                            <span>💰 {p.close ? `$${p.close}` : '--'}</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '11px', fontWeight: 'bold', alignItems: 'center' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><DollarSign size={12} /> {p.close ? `$${p.close}` : '--'}</span>
                             <span style={{ color: p.roc > 0 ? '#10B981' : '#EF4444' }}>{p.roc > 0 ? '+' : ''}{p.roc}%</span>
-                            <span style={{ color: '#FACC15' }}>📊 {p.volumeProxy}</span>
+                            <span style={{ color: '#FACC15', display: 'flex', alignItems: 'center', gap: '4px' }}><BarChart3 size={12} /> {p.volumeProxy}</span>
                         </div>
                         <p>Trend Flow: <span className={styles.highlight} style={{ color: p.x > 0 ? '#10B981' : '#EF4444' }}>{p.x > 0 ? '+' : ''}{p.x.toFixed(1)}</span></p>
                         <p>Current Bias: <span className={styles.highlight}>{p.direction}</span></p>
                         
                         <div className={styles.breakerSection}>
-                            <div className={styles.breakerTitle}>SPEED BREAKERS</div>
+                            <div className="widget-title">SPEED BREAKERS</div>
                             
                             {/* EMA 200 Dist Reference */}
                             {p.ema200Dist !== undefined && p.ema200Dist !== null && (
@@ -136,7 +137,7 @@ export const SmartLevelBreaker = () => {
                             {/* Institutional Speed Breakers (Smart Levels) */}
                             {p.smartLevels && p.smartLevels.length > 0 && (
                                 <div style={{ marginTop: '8px' }}>
-                                    <div className={styles.breakerTitle} style={{ color: '#8B5CF6' }}>INSTITUTIONAL ZONES</div>
+                                    <div className="widget-title" style={{ color: '#8B5CF6' }}>INSTITUTIONAL ZONES</div>
                                     {p.smartLevels.map((sl, i) => {
                                         const distPct = ((sl.price - p.close) / p.close) * 100;
                                         // Only show relevant nearby levels within 4% to avoid noise
@@ -164,8 +165,8 @@ export const SmartLevelBreaker = () => {
     return (
         <div className={`${styles.container} ${isPulsing ? 'animate-widget-glow' : ''}`}>
             <div className={styles.header}>
-                <div className={styles.title}>
-                    <Navigation size={18} style={{ color: 'var(--accent-primary)' }} />
+                <div className="widget-title">
+                    <Navigation size={18} style={{ color: 'var(--accent-blue)' }} />
                     <h3>SMART LEVEL BREAKER <span style={{ opacity: 0.5, fontSize: '0.8rem', fontWeight: 500 }}>Structural Channel Flow</span></h3>
                 </div>
                 <button className={styles.refreshBtn} onClick={() => refreshAll()} title="Refresh Geometry">
@@ -192,7 +193,7 @@ export const SmartLevelBreaker = () => {
                                 type="number" 
                                 dataKey="x" 
                                 domain={[-100, 100]} 
-                                stroke="var(--text-tertiary)" 
+                                stroke="var(--text-muted)" 
                                 fontSize={10} 
                                 tickFormatter={(val) => val === 0 ? 'Trend Shift' : val > 0 ? `BULL +${val}` : `BEAR ${val}`}
                                 tickCount={5}

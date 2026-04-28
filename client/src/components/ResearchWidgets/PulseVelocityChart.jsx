@@ -10,7 +10,7 @@ export function PulseVelocityChart({ data }) {
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: 'var(--text-tertiary)',
+                color: 'var(--text-muted)',
                 opacity: 0.6
             }}>
                 <div className="spinner" style={{ marginBottom: '10px' }}></div>
@@ -35,14 +35,14 @@ export function PulseVelocityChart({ data }) {
                 <AreaChart data={formattedData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                     <defs>
                         <linearGradient id="colorVelocity" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="var(--accent-primary)" stopOpacity={0.8} />
-                            <stop offset="95%" stopColor="var(--accent-primary)" stopOpacity={0} />
+                            <stop offset="5%" stopColor="var(--accent-blue)" stopOpacity={0.8} />
+                            <stop offset="95%" stopColor="var(--accent-blue)" stopOpacity={0} />
                         </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} opacity={0.3} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} opacity={0.3} />
                     <XAxis
                         dataKey="dateObj"
-                        stroke="var(--text-tertiary)"
+                        stroke="var(--text-muted)"
                         fontSize={10}
                         tickLine={false}
                         axisLine={false}
@@ -59,7 +59,7 @@ export function PulseVelocityChart({ data }) {
                         }}
                     />
                     <YAxis
-                        stroke="var(--text-tertiary)"
+                        stroke="var(--text-muted)"
                         fontSize={10}
                         tickLine={false}
                         axisLine={false}
@@ -67,19 +67,19 @@ export function PulseVelocityChart({ data }) {
                     />
                     <Tooltip
                         contentStyle={{
-                            backgroundColor: 'var(--bg-card)',
-                            borderColor: 'var(--border-subtle)',
-                            color: 'var(--text-primary)',
+                            backgroundColor: 'var(--bg-panel)',
+                            borderColor: 'var(--border)',
+                            color: 'var(--text-main)',
                             boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
                             borderRadius: '4px'
                         }}
-                        itemStyle={{ color: 'var(--accent-primary)' }}
+                        itemStyle={{ color: 'var(--accent-blue)' }}
                         formatter={(value) => [`${value} alerts/min`, 'Velocity']}
                     />
                     <Area
                         type="monotone"
                         dataKey="count"
-                        stroke="var(--accent-primary)"
+                        stroke="var(--accent-blue)"
                         strokeWidth={2}
                         fillOpacity={1}
                         fill="url(#colorVelocity)"

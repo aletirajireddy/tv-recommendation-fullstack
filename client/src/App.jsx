@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import styles from './App.module.css';
 import { GlobalHeader } from './components/GlobalHeader';
 import { Sidebar } from './components/Sidebar';
@@ -24,15 +24,17 @@ import { FloatingTimeController } from './components/FloatingTimeController';
 import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
 import { MonitorDetailModal } from './components/MonitorDetailModal';
 import { useTimeStore } from './store/useTimeStore';
+import { ThemeBuilder } from './components/ThemeBuilder';
 
 function App() {
   const isLive = useTimeStore(s => s.timeline.length > 0 ? s.currentIndex === s.timeline.length - 1 : false);
   const showPlayback = useTimeStore(s => s.showPlayback);
+  const [showThemeBuilder, setShowThemeBuilder] = useState(false);
 
   return (
     <div className={styles.appContainer}>
       <header className={styles.topBar}>
-        <GlobalHeader />
+        <GlobalHeader onOpenThemeBuilder={() => setShowThemeBuilder(true)} />
       </header>
 
       <div className={styles.viewLayout}>
@@ -141,6 +143,7 @@ function App() {
         </>
       )}
       <MonitorDetailModal />
+      {showThemeBuilder && <ThemeBuilder onClose={() => setShowThemeBuilder(false)} />}
     </div>
   );
 }
