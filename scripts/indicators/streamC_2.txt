@@ -1,0 +1,85 @@
+//@version=5
+indicator("Consolidation Breakout Filter_Signal", overlay=true)
+
+// === INPUT TOGGLES ===
+enableBB    = input(true, "Bollinger Bands Squeeze")
+enableATR   = input(true, "ATR Low Volatility Filter")
+enableVolume= input(true, "Low Volume Filter")
+enableADX   = input(true, "ADX Weak Trend Filter")
+enableMA    = input(true, "Flat MAs Filter")
+
+// === PARAMETERS ===
+lengthBB    = input(20, "BB Length")
+multBB      = input(2.0, "BB StdDev")
+squeezeThreshold = input(0.5, "BB Squeeze Threshold (0-1)")
+
+atrLength   = input(14, "ATR Length")
+volumeAvgLength = input(20, "Volume Avg Length")
+adxLength   = input(14, "ADX Length") 
+adxThreshold= input(20, "ADX Threshold (Weak Trend)")
+
+maLength1   = input(9, "Fast MA (EMA)")
+maLength2   = input(26, "Slow MA (EMA)")
+maFlatThreshold = input(0.5, "MA Flatness Threshold (%)")
+
+highlightColor = input(color.new(color.gray, 90), "Highlight Color")
+
+// === CALCULATIONS ===
+basis = ta.sma(close, lengthBB)
+dev   = multBB * ta.stdev(close, lengthBB)
+upperBB = basis + dev
+lowerBB = basis - dev
+bbWidth = (upperBB - lowerBB) / basis
+
+atr = ta.atr(atrLength)
+atrAvg = ta.sma(atr, atrLength)
+currentVolume = volume
+volumeAvg = ta.sma(volume, volumeAvgLength)
+
+[plusDI, minusDI, adx] = ta.dmi(adxLength, adxLength)
+
+emaFast = ta.ema(close, maLength1)
+emaSlow = ta.ema(close, maLength2)
+maDiffPct = math.abs(emaFast - emaSlow) / close * 100
+
+// === CONDITION CHECKS ===
+isSqueezed     = not enableBB or (bbWidth < squeezeThreshold)
+isLowVolatility= not enableATR or (atr < atrAvg) 
+isLowVolume   = not enableVolume or (currentVolume < volumeAvg)
+isWeakTrend   = not enableADX or (adx < adxThreshold)
+isMAFlat      = not enableMA or (maDiffPct < maFlatThreshold)
+
+inConsolidation = isSqueezed and isLowVolatility and isLowVolume and isWeakTrend and isMAFlat
+
+// Breakout Conditions
+breakoutUp   = close > upperBB and volume > volumeAvg * 1.5 and atr > atrAvg
+breakoutDown = close < lowerBB and volume > volumeAvg * 1.5 and atr > atrAvg
+
+// === NEW SIGNAL VARIABLE ===
+signal = breakoutUp ? 1 : breakoutDown ? -2 : 0
+
+// === DAILY DATA & BAR MOVE LOGIC ===
+[day_vol_cur, prev_close_d] = request.security(syminfo.tickerid, "D", [volume, close[1]], lookahead=barmerge.lookahead_on)
+
+today_volume = day_vol_cur
+today_change_pct = na(prev_close_d) or prev_close_d == 0.0 ? na : (close / prev_close_d - 1.0) * 100.0
+
+// Calculate the % move of the current breakout candle (Open to Close)
+bar_pct_move = (close - open) / open * 100.0
+bar_pct_move_round = math.round(bar_pct_move, 2)
+// === PLOTTING ===
+bgcolor(inConsolidation ? highlightColor : na, title="Consolidation Zone")
+
+plotshape(breakoutUp, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(breakoutDown, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+// 1. The visual signal plot
+plot(signal, "Signal Value", style=plot.style_histogram, color=signal > 0 ? color.green : signal < 0 ? color.red : color.gray, linewidth=4)
+
+// 2. The silent plots for the Webhook UI
+plot(today_volume, "Today Vol", display=display.none)
+plot(today_change_pct, "Today Chg %", display=display.none)
+plot(bar_pct_move_round, "Bar Move %", display=display.none)
+
+// === DEDICATED ALERT CONDITION ===
+alertcondition(signal != 0, title="Breakout Trigger", message="Breakout Detected")
