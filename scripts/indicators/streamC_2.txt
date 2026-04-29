@@ -66,7 +66,7 @@ today_change_pct = na(prev_close_d) or prev_close_d == 0.0 ? na : (close / prev_
 
 // Calculate the % move of the current breakout candle (Open to Close)
 bar_pct_move = (close - open) / open * 100.0
-bar_pct_move_round = math.round(bar_pct_move, 2)
+
 // === PLOTTING ===
 bgcolor(inConsolidation ? highlightColor : na, title="Consolidation Zone")
 
@@ -79,7 +79,7 @@ plot(signal, "Signal Value", style=plot.style_histogram, color=signal > 0 ? colo
 // 2. The silent plots for the Webhook UI
 plot(today_volume, "Today Vol", display=display.none)
 plot(today_change_pct, "Today Chg %", display=display.none)
-plot(bar_pct_move_round, "Bar Move %", display=display.none)
+plot(bar_pct_move, "Bar Move %", display=display.none)
 
 // === DEDICATED ALERT CONDITION ===
 alertcondition(signal != 0, title="Breakout Trigger", message="Breakout Detected")

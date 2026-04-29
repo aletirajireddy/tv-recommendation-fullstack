@@ -574,23 +574,23 @@ if custom_trigger
     array.push(j, '"timestamp": ' + t_time + ',') 
     array.push(j, '"price": ' + f_json_num(close) + ',')
 
-    array.push(j, '"today_change_pct": ' + f_json_num(math.round(today_change_pct, 2)) + ',')
+    array.push(j, '"today_change_pct": ' + f_json_num(today_change_pct) + ',')
     array.push(j, '"today_volume": ' + f_json_num(today_volume) + ',')
 
     
     // --- MOMENTUM ---
     array.push(j, '"momentum": {')
     array.push(j, '"direction": ' + f_json_num(dir_signal) + ',')
-    array.push(j, '"roc_pct": ' + f_json_num(math.round(m_roc_val, 2)) + ',')
-    array.push(j, '"trigger_roc": ' + f_json_num(math.round(roc_on_signal, 2)))
+    array.push(j, '"roc_pct": ' + f_json_num(m_roc_val) + ',')
+    array.push(j, '"trigger_roc": ' + f_json_num(roc_on_signal))
     array.push(j, '},')
     
     // --- RSIs ---
     array.push(j, '"rsi_matrix": {')
-    array.push(j, '"m5": ' + f_json_num(math.round(rsi_5, 2)) + ',')
-    array.push(j, '"m30": ' + f_json_num(math.round(rsi_30, 2)) + ',')
-    array.push(j, '"h1": ' + f_json_num(math.round(rsi_60, 2)) + ',')
-    array.push(j, '"h4": ' + f_json_num(math.round(rsi_240, 2)))
+    array.push(j, '"m5": ' + f_json_num(rsi_5) + ',')
+    array.push(j, '"m30": ' + f_json_num(rsi_30) + ',')
+    array.push(j, '"h1": ' + f_json_num(rsi_60) + ',')
+    array.push(j, '"h4": ' + f_json_num(rsi_240))
     array.push(j, '},')
     
     // --- EMA IDs ---
@@ -604,7 +604,7 @@ if custom_trigger
     
     // Mega spot gets a special object: "p" for price, "c" for cluster count
     if not na(nearest_mega_alert)
-        array.push(j, '"mega_spot": {"p": "' + str.tostring(math.round(nearest_mega_alert, 2)) + '", "c": ' + str.tostring(nearest_mega_count) + '},')
+        array.push(j, '"mega_spot": {"p": "' + str.tostring(nearest_mega_alert) + '", "c": ' + str.tostring(nearest_mega_count) + '},')
     else
         array.push(j, '"mega_spot": null,')
     

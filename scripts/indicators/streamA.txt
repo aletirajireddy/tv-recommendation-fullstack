@@ -1050,26 +1050,26 @@ if not na(ema_1h_50) and not na(ema_1h_200)
 // ALL 26 SCREENER OUTPUT COLUMNS
 // =============================================================================
 
-plot(f_round_price(close), "Close", display=display.none)
-plot(f_force_sign(roc_val), "ROC %", display=display.none)
+plot(close, "Close", display=display.none)
+plot(roc_val, "ROC %", display=display.none)
 plot(vol_spike_signal, "Vol Spike", display=display.none)
 plot(mom_score, "Mom Score", display=display.none)
 
-plot(f_force_sign(ema50_dist_pct), "1H EMA50 Dist %", display=display.none)
-plot(f_force_sign(ema200_dist_pct), "1H EMA200 Dist %", display=display.none)
+plot(ema50_dist_pct, "1H EMA50 Dist %", display=display.none)
+plot(ema200_dist_pct, "1H EMA200 Dist %", display=display.none)
 
-// plot(f_round_price(scr_near_support), "Support", display=display.none)
-plot(f_round_pct(scr_near_support_dist), "Support Dist %", display=display.none)
+// plot(scr_near_support, "Support", display=display.none)
+plot(scr_near_support_dist, "Support Dist %", display=display.none)
 plot(scr_near_support_str, "Support Stars", display=display.none)
 
-// plot(f_round_price(scr_near_resist), "Resistance", display=display.none)
-plot(f_round_pct(scr_near_resist_dist), "Resist Dist %", display=display.none)
+// plot(scr_near_resist, "Resistance", display=display.none)
+plot(scr_near_resist_dist, "Resist Dist %", display=display.none)
 plot(scr_near_resist_str, "Resist Stars", display=display.none)
 
-plot(f_round_pct(logic_support_dist), "Logic Support Dist %", display=display.none)
-plot(f_round_pct(logic_resist_dist), "Logic Resist Dist %", display=display.none)
+plot(logic_support_dist, "Logic Support Dist %", display=display.none)
+plot(logic_resist_dist, "Logic Resist Dist %", display=display.none)
 
-plot(f_round_pct(daily_range_pct), "Daily Range %", display=display.none)
+plot(daily_range_pct, "Daily Range %", display=display.none)
 plot(daily_trend, "Daily Trend", display=display.none)
 
 plot(freeze_mode, "Freeze Mode", display=display.none)
@@ -1078,7 +1078,7 @@ plot(breakout_signal, "Breakout Signal", display=display.none)
 plot(scope_count, "Cluster Scope Count", display=display.none)
 plot(scope_highest, "Cluster Scope Highest", display=display.none)
 plot(compress_count, "Cluster Compress Count", display=display.none)
-plot(compress_highest, "Cluster Compress Highest", display=display.none)
+plot(compress_highest, "Cluster Scope Highest", display=display.none)
 
 plot(net_trend_signal, "Net Trend Signal", display=display.none)
 
@@ -1087,7 +1087,7 @@ plot(retrace_opportunity, "Retrace Opportunity", display=display.none)
 plot(all_ema_flags, "All EMA Flags", display=display.none)
 plot(htf_200_flags, "HTF 200 Flags", display=display.none)
 
-plot(f_round_pct(mega_spot_distance_pct), "Mega Spot Dist %", display=display.none)
+plot(mega_spot_distance_pct, "Mega Spot Dist %", display=display.none)
 plot(ema_position_code, "EMA Position Code", display=display.none)
 
 // =============================================================================
