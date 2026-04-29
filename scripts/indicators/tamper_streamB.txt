@@ -241,10 +241,15 @@
                 const spans = Array.from(row.children).filter(el => el.tagName === 'SPAN');
 
                 if (spans.length >= 4) {
-                    price = spans[0].innerText.replace(/\s|\n/g, '').replace(/−/g, '-');
-                    change_pct = spans[2].innerText.replace(/\s|\n/g, '').replace(/−/g, '-');
+                    const priceText = spans[0].innerText.replace(/\s|\n/g, '').replace(/−/g, '-').replace(/,/g, '');
+                    const changeText = spans[2].innerText.replace(/\s|\n/g, '').replace(/−/g, '-').replace(/,/g, '').replace('%', '');
+                    price = parseFloat(priceText) || 0;
+                    change_pct = parseFloat(changeText) || 0;
                     const volSpan = spans[3].querySelector('[data-value]');
-                    if (volSpan) vol_raw = volSpan.getAttribute('data-value');
+                    if (volSpan) {
+                        const volText = volSpan.getAttribute('data-value').replace(/,/g, '');
+                        vol_raw = parseFloat(volText) || 0;
+                    }
                 }
 
                 watchlistSnapshot.push({ full, short, price, change_pct, vol_raw });
@@ -291,7 +296,8 @@
                     if (idx < telemetryHeaders.length) {
                         const fieldName = telemetryHeaders[idx];
                         const text = cell.innerText.trim();
-                        const cleanText = text.replace(/\s|\n|USDT/g, '').replace(/−/g, '-');
+                        // Handle negative signs, remove USDT suffix, and strip commas for parsing
+                        const cleanText = text.replace(/\s|\n|USDT/g, '').replace(/−/g, '-').replace(/,/g, '');
 
                         if (/^-?[\d.]+$/.test(cleanText) && cleanText !== "") {
                             rowData[fieldName] = parseFloat(cleanText);
