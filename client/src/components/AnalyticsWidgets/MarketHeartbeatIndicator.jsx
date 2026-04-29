@@ -8,6 +8,50 @@ import { useChartBrush } from '../../hooks/useChartBrush';
 import { Clock, Zap, Activity } from 'lucide-react';
 import styles from './MarketHeartbeatIndicator.module.css';
 
+function findClosestIdx(data, targetMs) {
+    let lo = 0, hi = data.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (data[mid].timestamp_ms < targetMs) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo > 0 && Math.abs(data[lo - 1].timestamp_ms - targetMs) < Math.abs(data[lo].timestamp_ms - targetMs)) return lo - 1;
+    return lo;
+}
+
+function CustomTooltip({ active, payload }) {
+    if (active && payload && payload.length) {
+        const p = payload[0].payload;
+        return (
+            <div className={styles.tooltip}>
+                <div className={styles.tooltipHeader}>
+                    <Clock size={10} />
+                    {p.timeLabel}
+                </div>
+
+                <div className={styles.tooltipRow}>
+                    <div className={styles.tooltipLabel}>
+                        <Zap size={12} color="#F59E0B" />
+                        <span>Intensity</span>
+                    </div>
+                    <span className={styles.tooltipValue} style={{ color: '#F59E0B' }}>{p.alertCount}</span>
+                </div>
+
+                <div className={styles.tooltipRow} style={{ borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: '4px', paddingTop: '4px' }}>
+                    <div className={styles.tooltipLabel}>
+                        <Activity size={12} color={p.rawMood > 0 ? '#10B981' : '#EF4444'} />
+                        <span>Genie Score</span>
+                    </div>
+                    <span className={styles.tooltipValue} style={{ color: p.rawMood > 0 ? '#10B981' : '#EF4444' }}>
+                        {p.rawMood > 0 ? '+' : ''}{p.rawMood}
+                    </span>
+                </div>
+            </div>
+        );
+    }
+    return null;
+}
+
 export function MarketHeartbeatIndicator() {
     const fullTimeline = useTimeStore(s => s.timeline);
     const currentIndex = useTimeStore(s => s.currentIndex);
@@ -39,15 +83,10 @@ export function MarketHeartbeatIndicator() {
         if (analyticsData?.time_spread) {
             analyticsData.time_spread.forEach(bucket => {
                 const bTimeMs = new Date(bucket.start_time || bucket.time).getTime();
-                let closestIdx = -1;
-                let minDiff    = Infinity;
+                const closestIdx = findClosestIdx(data, bTimeMs);
+                const minDiff = Math.abs(data[closestIdx].timestamp_ms - bTimeMs);
 
-                for (let i = 0; i < data.length; i++) {
-                    const diff = Math.abs(data[i].timestamp_ms - bTimeMs);
-                    if (diff < minDiff) { minDiff = diff; closestIdx = i; }
-                }
-
-                if (closestIdx !== -1 && minDiff < 30 * 60 * 1000) {
+                if (minDiff < 30 * 60 * 1000) {
                     data[closestIdx].alertCount += bucket.count;
                 }
             });
@@ -57,7 +96,8 @@ export function MarketHeartbeatIndicator() {
         const lastTime  = data[data.length - 1].timestamp_ms;
         const markers   = [];
 
-        let startDay = startOfDay(new Date(firstTime));
+        const sevenDaysAgo = lastTime - 7 * 24 * 3600000;
+        let startDay = startOfDay(new Date(Math.max(firstTime, sevenDaysAgo)));
         const endDay = startOfDay(new Date(lastTime));
 
         while (startDay.getTime() <= endDay.getTime()) {
@@ -76,39 +116,6 @@ export function MarketHeartbeatIndicator() {
     const { brushRange, handleBrushChange } = useChartBrush('tv_heartbeatBrush', chartData);
 
     if (chartData.length < 2) return null;
-
-    const CustomTooltip = ({ active, payload }) => {
-        if (active && payload && payload.length) {
-            const p = payload[0].payload;
-            return (
-                <div className={styles.tooltip}>
-                    <div className={styles.tooltipHeader}>
-                        <Clock size={10} />
-                        {p.timeLabel}
-                    </div>
-                    
-                    <div className={styles.tooltipRow}>
-                        <div className={styles.tooltipLabel}>
-                            <Zap size={12} color="#F59E0B" />
-                            <span>Intensity</span>
-                        </div>
-                        <span className={styles.tooltipValue} style={{ color: '#F59E0B' }}>{p.alertCount}</span>
-                    </div>
-
-                    <div className={styles.tooltipRow} style={{ borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: '4px', paddingTop: '4px' }}>
-                        <div className={styles.tooltipLabel}>
-                            <Activity size={12} color={p.rawMood > 0 ? '#10B981' : '#EF4444'} />
-                            <span>Genie Score</span>
-                        </div>
-                        <span className={styles.tooltipValue} style={{ color: p.rawMood > 0 ? '#10B981' : '#EF4444' }}>
-                            {p.rawMood > 0 ? '+' : ''}{p.rawMood}
-                        </span>
-                    </div>
-                </div>
-            );
-        }
-        return null;
-    };
 
     return (
         <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden', touchAction: 'none' }}>

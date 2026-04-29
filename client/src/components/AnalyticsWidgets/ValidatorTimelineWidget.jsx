@@ -210,10 +210,12 @@ export function ValidatorTimelineWidget() {
     const [expandedTrialId, setExpandedTrialId] = useState(null);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const pollRef = useRef(null);
+    const refTimeRef = useRef(refTime);
+    refTimeRef.current = refTime;
 
     const fetchTrials = useCallback(async () => {
         try {
-            const url = `/api/validator/trials?refTime=${encodeURIComponent(refTime)}&limit=12`;
+            const url = `/api/validator/trials?refTime=${encodeURIComponent(refTimeRef.current)}&limit=12`;
             const r = await fetch(url);
             if (r.ok) {
                 const data = await r.json();
@@ -221,7 +223,7 @@ export function ValidatorTimelineWidget() {
                 setResolved(data.resolved || []);
             }
         } catch { } finally { setLoading(false); }
-    }, [refTime]);
+    }, []);
 
     useEffect(() => {
         fetchTrials();
@@ -233,7 +235,7 @@ export function ValidatorTimelineWidget() {
         if (!isLive) return;
         const handler = () => { fetchTrials(); };
         socketService.on('validator-update', handler);
-        return () => socketService.off('validator-update');
+        return () => socketService.off('validator-update', handler);
     }, [isLive, fetchTrials]);
 
     return (

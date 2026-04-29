@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 /**
  * SpeedometerGauge - Institutional Market Mood Visualizer
@@ -36,27 +36,30 @@ export function SpeedometerGauge({ score = 0, label = 'NEUTRAL' }) {
     // Path for semi-circle
     const arcPath = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
 
-    // Generate Ticks
-    const ticks = [];
-    for (let i = -100; i <= 100; i += 20) {
-        const tickAngle = (i / 100) * 90;
-        // SVG rotate around cx, cy
-        // 0 degrees is UP, so we rotate a vertical line
-        const isMajor = i % 50 === 0;
-        const tickLength = isMajor ? 8 : 4;
-        ticks.push(
-            <line
-                key={`tick-${i}`}
-                x1={cx}
-                y1={cy - r + 12}
-                x2={cx}
-                y2={cy - r + 12 + tickLength}
-                stroke="rgba(255,255,255,0.4)"
-                strokeWidth={isMajor ? 2 : 1}
-                transform={`rotate(${tickAngle}, ${cx}, ${cy})`}
-            />
-        );
-    }
+    // Generate Ticks (memoized — these never change)
+    const ticks = useMemo(() => {
+        const arr = [];
+        for (let i = -100; i <= 100; i += 20) {
+            const tickAngle = (i / 100) * 90;
+            // SVG rotate around cx, cy
+            // 0 degrees is UP, so we rotate a vertical line
+            const isMajor = i % 50 === 0;
+            const tickLength = isMajor ? 8 : 4;
+            arr.push(
+                <line
+                    key={`tick-${i}`}
+                    x1={cx}
+                    y1={cy - r + 12}
+                    x2={cx}
+                    y2={cy - r + 12 + tickLength}
+                    stroke="rgba(255,255,255,0.4)"
+                    strokeWidth={isMajor ? 2 : 1}
+                    transform={`rotate(${tickAngle}, ${cx}, ${cy})`}
+                />
+            );
+        }
+        return arr;
+    }, []);
 
     return (
         <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

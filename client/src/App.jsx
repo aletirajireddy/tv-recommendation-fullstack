@@ -42,7 +42,7 @@ function App() {
     if (hasInstitutionalActivity && !isAlphaBannerVisible) {
        // Optional: you could auto-trigger here, but user asked for a toggle icon
     }
-  }, [hasInstitutionalActivity]);
+  }, [hasInstitutionalActivity, isAlphaBannerVisible]);
 
   return (
     <div className={styles.appContainer}>
@@ -159,15 +159,15 @@ function App() {
       
       {/* FLOATING ADS BANNER (ALPHA SQUAD) */}
       <div className={styles.alphaBannerWrapper}>
-          {isAlphaBannerVisible && (
-            <div className={styles.floatingBanner}>
-              <AlphaScatter onBannerClose={() => setIsAlphaBannerVisible(false)} />
-            </div>
-          )}
+          {/* Banner removed: AlphaScatter lives in section-alpha in the main layout.
+              The toggle button scrolls to it instead of duplicating the widget. */}
           
           <button 
             className={`${styles.alphaToggleBtn} ${hasInstitutionalActivity ? styles.alphaTogglePulse : ''}`}
-            onClick={() => setIsAlphaBannerVisible(!isAlphaBannerVisible)}
+            onClick={() => {
+              document.getElementById('section-alpha')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              setIsAlphaBannerVisible(!isAlphaBannerVisible);
+            }}
             title="Toggle Alpha Squad Banner"
           >
             <Target size={20} color={isAlphaBannerVisible ? 'var(--accent-blue)' : '#fff'} />
