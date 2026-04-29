@@ -130,7 +130,7 @@ export function TrialMiniChart({ trial }) {
     const pPad = (pMax - pMin) * 0.12 || pMin * 0.01;
 
     return (
-        <div style={{ height: 110, marginTop: 8 }}>
+        <div style={{ height: 120, width: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={series} margin={{ top: 6, right: 48, left: 0, bottom: 0 }}>
                     <XAxis
@@ -175,12 +175,12 @@ export function TrialMiniChart({ trial }) {
                     )}
                     {levels.smart_level > 0 && levels.smart_level !== levels.trigger && (
                         <ReferenceLine y={levels.smart_level} stroke="var(--warning)" strokeDasharray="5 3" strokeWidth={1.5}
-                            label={{ value: ohlc.level_type?.replace('EMA200_', '') || 'Level', fill: 'var(--warning)', fontSize: 8, position: 'right' }}
+                            label={{ value: ohlc.level_type?.replace('EMA200_', '') || 'Level', fill: '#FACC15', fontSize: 9, position: 'insideBottomRight' }}
                         />
                     )}
                     {levels.trigger > 0 && (
                         <ReferenceLine y={levels.trigger} stroke="var(--text-muted)" strokeDasharray="3 3" strokeWidth={1} opacity={0.3}
-                            label={{ value: 'T', fill: 'var(--text-muted)', fontSize: 8, position: 'right' }}
+                            label={{ value: 'T', fill: '#94A3B8', fontSize: 9, position: 'insideBottomRight' }}
                         />
                     )}
 

@@ -25,11 +25,24 @@ import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
 import { MonitorDetailModal } from './components/MonitorDetailModal';
 import { useTimeStore } from './store/useTimeStore';
 import { ThemeBuilder } from './components/ThemeBuilder';
+import { Target } from 'lucide-react';
 
 function App() {
   const isLive = useTimeStore(s => s.timeline.length > 0 ? s.currentIndex === s.timeline.length - 1 : false);
   const showPlayback = useTimeStore(s => s.showPlayback);
+  const alphaSquad = useTimeStore(s => s.alphaSquad);
   const [showThemeBuilder, setShowThemeBuilder] = useState(false);
+  
+  // Floating Banner State
+  const [isAlphaBannerVisible, setIsAlphaBannerVisible] = useState(false);
+  const hasInstitutionalActivity = alphaSquad && alphaSquad.length > 0;
+
+  // Auto-show banner only once per activity spike if not already visible
+  useEffect(() => {
+    if (hasInstitutionalActivity && !isAlphaBannerVisible) {
+       // Optional: you could auto-trigger here, but user asked for a toggle icon
+    }
+  }, [hasInstitutionalActivity]);
 
   return (
     <div className={styles.appContainer}>
@@ -143,6 +156,27 @@ function App() {
         </>
       )}
       <MonitorDetailModal />
+      
+      {/* FLOATING ADS BANNER (ALPHA SQUAD) */}
+      <div className={styles.alphaBannerWrapper}>
+          {isAlphaBannerVisible && (
+            <div className={styles.floatingBanner}>
+              <AlphaScatter onBannerClose={() => setIsAlphaBannerVisible(false)} />
+            </div>
+          )}
+          
+          <button 
+            className={`${styles.alphaToggleBtn} ${hasInstitutionalActivity ? styles.alphaTogglePulse : ''}`}
+            onClick={() => setIsAlphaBannerVisible(!isAlphaBannerVisible)}
+            title="Toggle Alpha Squad Banner"
+          >
+            <Target size={20} color={isAlphaBannerVisible ? 'var(--accent-blue)' : '#fff'} />
+            {hasInstitutionalActivity && !isAlphaBannerVisible && (
+                <span className={styles.alphaNotificationDot} />
+            )}
+          </button>
+      </div>
+
       {showThemeBuilder && <ThemeBuilder onClose={() => setShowThemeBuilder(false)} />}
     </div>
   );

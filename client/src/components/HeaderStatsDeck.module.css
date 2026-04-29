@@ -54,7 +54,14 @@
 /* SECTION SPECIFIC SIZING */
 
 /* Mood & Breadth: Fixed defaults or small flex */
-.sectionMood,
+.sectionMood {
+    flex: 0 0 auto;
+    width: 150px;
+    height: 100%;
+    padding: 0;
+    overflow: visible;
+}
+
 .sectionBreadth {
     flex: 0 1 auto;
     min-width: 120px;

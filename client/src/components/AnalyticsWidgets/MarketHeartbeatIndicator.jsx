@@ -5,6 +5,8 @@ import {
 } from 'recharts';
 import { format, startOfDay, addHours } from 'date-fns';
 import { useChartBrush } from '../../hooks/useChartBrush';
+import { Clock, Zap, Activity } from 'lucide-react';
+import styles from './MarketHeartbeatIndicator.module.css';
 
 export function MarketHeartbeatIndicator() {
     const fullTimeline = useTimeStore(s => s.timeline);
@@ -79,15 +81,28 @@ export function MarketHeartbeatIndicator() {
         if (active && payload && payload.length) {
             const p = payload[0].payload;
             return (
-                <div className="p-2 rounded shadow-lg border bg-[var(--bg-panel)] border-[var(--border)] text-[var(--text-main)] min-w-[150px] text-xs font-mono">
-                    <div className="font-bold mb-1 text-[var(--text-muted)]">{p.timeLabel}</div>
-                    <div className="flex justify-between items-center py-1">
-                        <span className="text-[#F59E0B] font-bold">Alert Intensity</span>
-                        <span className="font-bold">{p.alertCount}</span>
+                <div className={styles.tooltip}>
+                    <div className={styles.tooltipHeader}>
+                        <Clock size={10} />
+                        {p.timeLabel}
                     </div>
-                    <div className="flex justify-between items-center py-1 border-t border-[var(--border)]">
-                        <span className={p.rawMood > 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}>Genie Score</span>
-                        <span className="font-bold">{p.rawMood > 0 ? '+' : ''}{p.rawMood}</span>
+                    
+                    <div className={styles.tooltipRow}>
+                        <div className={styles.tooltipLabel}>
+                            <Zap size={12} color="#F59E0B" />
+                            <span>Intensity</span>
+                        </div>
+                        <span className={styles.tooltipValue} style={{ color: '#F59E0B' }}>{p.alertCount}</span>
+                    </div>
+
+                    <div className={styles.tooltipRow} style={{ borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: '4px', paddingTop: '4px' }}>
+                        <div className={styles.tooltipLabel}>
+                            <Activity size={12} color={p.rawMood > 0 ? '#10B981' : '#EF4444'} />
+                            <span>Genie Score</span>
+                        </div>
+                        <span className={styles.tooltipValue} style={{ color: p.rawMood > 0 ? '#10B981' : '#EF4444' }}>
+                            {p.rawMood > 0 ? '+' : ''}{p.rawMood}
+                        </span>
                     </div>
                 </div>
             );
@@ -96,22 +111,22 @@ export function MarketHeartbeatIndicator() {
     };
 
     return (
-        <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden', touchAction: 'pan-y' }}>
+        <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden', touchAction: 'none' }}>
             {/* Label */}
-            <div style={{ position: 'absolute', top: 4, left: 8, zIndex: 10, fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', letterSpacing: '0.5px' }}>
+            <div className={styles.chartLabel}>
                 MARKET HEARTBEAT
             </div>
 
             <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 24, right: 0, left: 0, bottom: 0 }}>
                         <defs>
                             <linearGradient id="hbBull" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%"  stopColor="#10B981" stopOpacity={0.6} />
+                                <stop offset="5%"  stopColor="#10B981" stopOpacity={0.4} />
                                 <stop offset="95%" stopColor="#10B981" stopOpacity={0.0} />
                             </linearGradient>
                             <linearGradient id="hbBear" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="5%"  stopColor="#EF4444" stopOpacity={0.0} />
-                                <stop offset="95%" stopColor="#EF4444" stopOpacity={0.6} />
+                                <stop offset="95%" stopColor="#EF4444" stopOpacity={0.4} />
                             </linearGradient>
                         </defs>
 
@@ -119,24 +134,23 @@ export function MarketHeartbeatIndicator() {
                         <YAxis yAxisId="mood"   domain={[-100, 100]}      hide />
                         <YAxis yAxisId="alerts" orientation="right" domain={[0, 'dataMax']} hide />
 
-                        <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
+                        <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }} />
 
                         {timezones.map((tz, i) => (
                             <ReferenceArea key={`hb-tz-${i}`} x1={tz.start} x2={tz.end} fill={tz.fill} strokeOpacity={0} ifOverflow="hidden" />
                         ))}
 
-                        <Area yAxisId="mood" type="step" dataKey="bullArea" stroke="#10B981" fill="url(#hbBull)" isAnimationActive={false} />
-                        <Area yAxisId="mood" type="step" dataKey="bearArea" stroke="#EF4444" fill="url(#hbBear)" isAnimationActive={false} />
-                        <Bar  yAxisId="alerts" dataKey="alertCount" fill="#F59E0B" barSize={3} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+                        <Area yAxisId="mood" type="step" dataKey="bullArea" stroke="#10B981" strokeWidth={1} fill="url(#hbBull)" isAnimationActive={false} />
+                        <Area yAxisId="mood" type="step" dataKey="bearArea" stroke="#EF4444" strokeWidth={1} fill="url(#hbBear)" isAnimationActive={false} />
+                        <Bar  yAxisId="alerts" dataKey="alertCount" fill="#F59E0B" barSize={2} radius={[1, 1, 0, 0]} isAnimationActive={false} />
 
-                        {/* Recharts Brush: desktop drag handles & optimized for mobile via touchAction */}
                         <Brush 
                             dataKey="timestamp_ms" 
-                            height={16}
-                            travellerWidth={18}
-                            stroke="var(--text-muted)" 
-                            fill="var(--bg-panel)"
-                            tickFormatter={() => ''} /* Hide text to save space */
+                            height={8}
+                            travellerWidth={2}
+                            stroke="rgba(255,255,255,0.2)" 
+                            fill="rgba(0,0,0,0.2)"
+                            tickFormatter={() => ''}
                             onChange={handleBrushChange}
                             startIndex={brushRange.startIndex}
                             endIndex={brushRange.endIndex}

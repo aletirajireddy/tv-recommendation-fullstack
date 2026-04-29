@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
-import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart, Target, Menu, Palette } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart, Target, Menu, Palette, History } from 'lucide-react';
 import styles from './GlobalHeader.module.css';
 import { format, formatDistanceToNow } from 'date-fns';
 import { HeaderStatsDeck } from './HeaderStatsDeck';
@@ -101,13 +101,11 @@ export function GlobalHeader({ onOpenThemeBuilder }) {
 
             <div className={styles.metaSection}>
                 {/* STATUS INDICATOR */}
-                <div className={isLive ? styles.activeStatus : styles.inactiveStatus}>
+                <div className={isLive ? styles.activeStatus : styles.inactiveStatus} title={isLive ? "STREAM ACTIVE" : "REPLAY MODE"}>
                     {isLive ? (
-                        <span style={{ color: 'var(--accent-green)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Wifi size={14} className={styles.pulseIcon} /> STREAM ACTIVE
-                        </span>
+                        <Wifi size={18} className={styles.pulseIcon} color="var(--accent-green)" />
                     ) : (
-                        <span style={{ color: 'var(--accent-orange)' }}>⏪ REPLAY MODE</span>
+                        <History size={18} color="var(--accent-orange)" />
                     )}
                 </div>
                 

@@ -4,7 +4,7 @@ import socketService from '../../services/SocketService';
 import { ValidatorSettingsModal } from './ValidatorSettingsModal';
 import { TrialExpandedModal } from './TrialExpandedModal';
 import { TrialMiniChart } from './TrialMiniChart';
-import { Target, Settings, Maximize2 } from 'lucide-react';
+import { Target, Settings, Maximize2, ChevronDown, ChevronRight } from 'lucide-react';
 import styles from './ValidatorTimelineWidget.module.css';
 
 function smartFmt(price) {
@@ -12,6 +12,11 @@ function smartFmt(price) {
     if (price >= 1000)  return price.toFixed(2);
     if (price >= 1)     return price.toFixed(4);
     return price.toFixed(6);
+}
+
+function cleanTicker(t) {
+    if (!t) return '';
+    return t.split(':')[1]?.replace('USDT.P', '') || t.replace('USDT.P', '');
 }
 
 function fmtTime(iso) {
@@ -97,6 +102,12 @@ function MasterContextStrip({ master }) {
     if (a.ema50Dist != null) items.push({ k: 'E50', v: `${a.ema50Dist > 0 ? '+' : ''}${a.ema50Dist.toFixed(1)}%` });
     if (a.ema200Dist != null) items.push({ k: 'E200', v: `${a.ema200Dist > 0 ? '+' : ''}${a.ema200Dist.toFixed(1)}%` });
     
+    // HTF Alignment
+    if (a.htfFlags != null) {
+        const isBull = a.htfFlags > 0;
+        items.push({ k: 'HTF', v: isBull ? 'BULL' : 'BEAR' });
+    }
+
     // Momentum & Volume
     if (a.momScore != null) items.push({ k: 'MOM', v: a.momScore });
     if (a.volSpike != null && a.volSpike > 1) items.push({ k: 'VOL', v: `x${Number(a.volSpike).toFixed(1)}` });
@@ -126,49 +137,56 @@ function TrialCard({ trial, isResolved, onExpand }) {
         <div className={cardCls} onClick={() => setSelectedTicker(trial.ticker)}>
             <div className={styles.trialMain}>
                 <div className={styles.trialInfo}>
-                    <div className={styles.trialHeader}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span className={styles.ticker}>{trial.ticker}</span>
-                            <span className={`${styles.badgeDir} ${isLong ? styles.badgeLong : styles.badgeShort}`}>
-                                {isLong ? 'LONG' : 'SHORT'}
-                            </span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div className={styles.infoRow}>
+                        {/* SECTION 1: IDENTITY */}
+                        <div className={styles.infoSection}>
+                            <div className={styles.tickerBlock}>
+                                <span className={styles.ticker}>{cleanTicker(trial.ticker)}</span>
+                                <span className={`${styles.badgeDir} ${isLong ? styles.badgeLong : styles.badgeShort}`}>
+                                    {isLong ? 'LONG' : 'SHORT'}
+                                </span>
+                            </div>
                             <div className={styles.moveTag}>
                                 <MoveTag pct={trial.final_move ?? trial.latest_move} />
                             </div>
-                            <button
-                                className={styles.expandBtnHeader}
-                                onClick={(e) => { e.stopPropagation(); onExpand(trial.trial_id); }}
-                                title="Forensic Details"
-                            >
-                                <Maximize2 size={14} />
-                            </button>
                         </div>
-                    </div>
 
-                    <div className={styles.trialMeta}>
-                        <div className={styles.metaGroup}>
-                            <span className={styles.metaLabel}>TRIGGER</span>
-                            <span className={styles.metaVal}>{smartFmt(Number(trial.trigger_price))}</span>
+                        {/* SECTION 2: META STATS */}
+                        <div className={styles.infoSection}>
+                            <div className={styles.metaRow}>
+                                <div className={styles.metaGroupCompact}>
+                                    <span className={styles.metaLabel}>TRG</span>
+                                    <span className={styles.metaVal}>{smartFmt(Number(trial.trigger_price))}</span>
+                                </div>
+                                <div className={styles.metaGroupCompact}>
+                                    <span className={styles.metaLabel}>TIME</span>
+                                    <span className={styles.metaVal}>{fmtTime(trial.detected_at)}</span>
+                                </div>
+                                <div className={styles.metaGroupCompact}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <StateBadge state={stateDisplay} verdict={isResolved ? trial.verdict : null} />
+                                        <CooldownProgress trial={trial} />
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div className={styles.metaGroup}>
-                            <span className={styles.metaLabel}>TIME</span>
-                            <span className={styles.metaVal}>{fmtTime(trial.detected_at)}</span>
-                        </div>
-                        <div className={styles.metaGroup}>
-                            <span className={styles.metaLabel}>STATUS</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <StateBadge state={stateDisplay} verdict={isResolved ? trial.verdict : null} />
-                                <CooldownProgress trial={trial} />
+
+                        {/* SECTION 3: ANALYTICS */}
+                        <div className={styles.infoSection}>
+                            <div className={styles.trialAnalytics}>
+                                <MasterContextStrip master={trial.master_state} />
+                                <RuleStrip rulesJson={trial.latest_rules} />
                             </div>
                         </div>
                     </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
-                        <MasterContextStrip master={trial.master_state} />
-                        <RuleStrip rulesJson={trial.latest_rules} />
-                    </div>
+                    <button
+                        className={styles.expandBtnHeader}
+                        onClick={(e) => { e.stopPropagation(); onExpand(trial.trial_id); }}
+                        title="Forensic Details"
+                    >
+                        <Maximize2 size={14} />
+                    </button>
                 </div>
 
                 <div className={styles.trialVisuals}>
@@ -177,6 +195,7 @@ function TrialCard({ trial, isResolved, onExpand }) {
             </div>
         </div>
     );
+
 }
 
 export function ValidatorTimelineWidget() {
@@ -189,6 +208,7 @@ export function ValidatorTimelineWidget() {
     const [showSettings, setShowSettings] = useState(false);
     const [loading, setLoading] = useState(true);
     const [expandedTrialId, setExpandedTrialId] = useState(null);
+    const [isCollapsed, setIsCollapsed] = useState(false);
     const pollRef = useRef(null);
 
     const fetchTrials = useCallback(async () => {
@@ -218,45 +238,48 @@ export function ValidatorTimelineWidget() {
 
     return (
         <div className={styles.widget}>
-            <div className={styles.header}>
-                <h4 className="widget-title">
+            <div className={`${styles.header} ${styles.collapsibleHeader}`} onClick={() => setIsCollapsed(!isCollapsed)}>
+                <h4 className="widget-title" style={{ cursor: 'pointer' }}>
+                    {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
                     <Target size={16} strokeWidth={2.5} className="text-accent-blue" /> 3RD UMPIRE
                     <div className={styles.badges}>
                         {isLive ? <span className={styles.badgeLive}>LIVE</span> : <span className={styles.badgeReplay}>REPLAY</span>}
                     </div>
                 </h4>
-                <div className={styles.headerActions}>
+                <div className={styles.headerActions} onClick={e => e.stopPropagation()}>
                     <button className={styles.iconBtn} onClick={() => setShowSettings(true)}>
                         <Settings size={14} />
                     </button>
                 </div>
             </div>
 
-            <div className={styles.validatorGrid}>
-                {/* ACTIVE COLUMN */}
-                <div className={styles.section}>
-                    <div className="widget-title">
-                        Active Trials <span className={styles.sectionCount}>{active.length}</span>
-                    </div>
-                    {loading ? <div className={styles.emptyState}>...</div> : (
-                        <div className={styles.trialList}>
-                            {active.map(t => <TrialCard key={t.trial_id} trial={t} isResolved={false} onExpand={setExpandedTrialId} />)}
-                            {active.length === 0 && <div className={styles.emptyState}>No Active Trials</div>}
+            {!isCollapsed && (
+                <div className={styles.validatorGrid}>
+                    {/* ACTIVE COLUMN */}
+                    <div className={styles.section}>
+                        <div className="widget-title">
+                            Active Trials <span className={styles.sectionCount}>{active.length}</span>
                         </div>
-                    )}
-                </div>
+                        {loading ? <div className={styles.emptyState}>...</div> : (
+                            <div className={styles.trialList}>
+                                {active.map(t => <TrialCard key={t.trial_id} trial={t} isResolved={false} onExpand={setExpandedTrialId} />)}
+                                {active.length === 0 && <div className={styles.emptyState}>No Active Trials</div>}
+                            </div>
+                        )}
+                    </div>
 
-                {/* VERDICTS COLUMN */}
-                <div className={styles.section}>
-                    <div className="widget-title">
-                        Recent Verdicts <span className={styles.sectionCount}>{resolved.length}</span>
-                    </div>
-                    <div className={styles.trialList}>
-                        {resolved.map(t => <TrialCard key={t.trial_id} trial={t} isResolved={true} onExpand={setExpandedTrialId} />)}
-                        {resolved.length === 0 && <div className={styles.emptyState}>No Verdicts</div>}
+                    {/* VERDICTS COLUMN */}
+                    <div className={styles.section}>
+                        <div className="widget-title">
+                            Recent Verdicts <span className={styles.sectionCount}>{resolved.length}</span>
+                        </div>
+                        <div className={styles.trialList}>
+                            {resolved.map(t => <TrialCard key={t.trial_id} trial={t} isResolved={true} onExpand={setExpandedTrialId} />)}
+                            {resolved.length === 0 && <div className={styles.emptyState}>No Verdicts</div>}
+                        </div>
                     </div>
                 </div>
-            </div>
+            )}
 
             {showSettings && <ValidatorSettingsModal onClose={() => setShowSettings(false)} />}
             {expandedTrialId && <TrialExpandedModal trialId={expandedTrialId} onClose={() => setExpandedTrialId(null)} />}

@@ -5,6 +5,7 @@ import GenieSmart from '../services/GenieSmart';
 import TimeService from '../services/TimeService';
 import styles from './HeaderStatsDeck.module.css';
 import { MarketHeartbeatIndicator } from './AnalyticsWidgets/MarketHeartbeatIndicator';
+import { SpeedometerGauge } from './SpeedometerGauge';
 
 export function HeaderStatsDeck() {
     // 1. CONSUME GENIE SMART STATE
@@ -24,14 +25,9 @@ export function HeaderStatsDeck() {
 
     return (
         <div className={styles.deckContainer}>
-            {/* 1. MOOD */}
+            {/* 1. MOOD GAUGE */}
                 <div className={`${styles.card} ${styles.sectionMood}`}>
-                    <div className={styles.cardLabel}>GENIE MOOD</div>
-                    <div className={`${styles.moodDisplay} ${styles.animatedValue}`} style={{ color: moodColor }}>
-                        <Activity size={18} strokeWidth={2.5} />
-                        <span className={styles.moodValue}>{moodLabel}</span>
-                        <span className={styles.moodScore}>{moodScore > 0 ? '+' : ''}{moodScore}</span>
-                    </div>
+                    <SpeedometerGauge score={moodScore} label={moodLabel} />
                 </div>
 
                 <div className={styles.divider} />
@@ -46,9 +42,6 @@ export function HeaderStatsDeck() {
                         <div className={styles.breadthItem} style={{ color: 'var(--accent-red)' }}>
                             <TrendingDown size={14} /> {stats.bearish}
                         </div>
-                        <div className={styles.breadthItem} style={{ color: 'var(--text-muted)' }}>
-                            <Minus size={14} /> {stats.neutral}
-                        </div>
                     </div>
                 </div>
 
@@ -58,15 +51,16 @@ export function HeaderStatsDeck() {
                 <div className={styles.card} style={{ flex: 1, minWidth: '400px', padding: '0', height: '100%', overflow: 'hidden' }}>
                     <MarketHeartbeatIndicator />
                 </div>            <div className={styles.divider} />
-            <TriStreamHealthCard />
+            <SystemHealthGrid />
             <div className={styles.divider} />
             <SystemTimeCard />
         </div>
     );
 }
 
-function TriStreamHealthCard() {
+function SystemHealthGrid() {
     const streamsHealth = useTimeStore(s => s.streamsHealth);
+    const timeline = useTimeStore(s => s.timeline);
 
     // Status Engine (<30m Green, 30-120m Yellow, >120m Red)
     const getStatusParams = (isoString) => {
@@ -87,25 +81,33 @@ function TriStreamHealthCard() {
     const sB = getStatusParams(streamsHealth?.streamB);
     const sC = getStatusParams(streamsHealth?.streamC);
 
+    // Stream D: Overall System Liveness (based on the latest timeline entry)
+    const latestScan = timeline.length > 0 ? timeline[timeline.length - 1] : null;
+    const sD = getStatusParams(latestScan?.timestamp);
+
+    const GridItem = ({ title, status }) => (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.1)', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.03)' }}>
+            <span style={{ color: 'var(--text-muted)' }}>{title}</span>
+            <span style={{ color: status.color, textShadow: `0 0 6px ${status.color}40` }}>{status.dot} {status.label}</span>
+        </div>
+    );
+
     return (
-        <div className={`${styles.card} ${styles.sectionSystem}`} style={{ minWidth: '200px', paddingRight: '12px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', fontSize: '11px', fontFamily: 'monospace', fontWeight: 700 }}>
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '3px' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>A: MACRO SCAN</span>
-                    <span style={{ color: sA.color }}>{sA.dot} {sA.label}</span>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '3px' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>B: SCOUT VELO</span>
-                    <span style={{ color: sB.color }}>{sB.dot} {sB.label}</span>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>C: INST ALERTS</span>
-                    <span style={{ color: sC.color }}>{sC.dot} {sC.label}</span>
-                </div>
-
+        <div className={`${styles.card} ${styles.sectionSystem}`} style={{ minWidth: '240px', paddingRight: '12px', justifyContent: 'center' }}>
+            <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: '1fr 1fr', 
+                gap: '6px 12px', 
+                width: '100%', 
+                fontSize: '10px', 
+                fontFamily: 'JetBrains Mono, monospace', 
+                fontWeight: 800,
+                letterSpacing: '0.5px'
+            }}>
+                <GridItem title="A:MACRO" status={sA} />
+                <GridItem title="B:SCOUT" status={sB} />
+                <GridItem title="C:ALERT" status={sC} />
+                <GridItem title="D:SYNC" status={sD} />
             </div>
         </div>
     );
@@ -125,23 +127,27 @@ function SystemTimeCard() {
     // "Ago" should always reflect SYSTEM LIVENESS (Latest packet), not Replay Position
     const relativeTime = latestScan ? TimeService.timeAgo(latestScan.timestamp) : '';
 
-    // Window calculation
-    const startTime = timeline.length > 0 ? TimeService.formatDateTime(timeline[0].timestamp) : '--';
-    const latestTimeStr = latestScan ? TimeService.formatTime(latestScan.timestamp) : '--'; // Renamed variable to avoid conflict
+    // Depth calculation
+    const getDepth = () => {
+        if (timeline.length < 2) return '--';
+        const ms = new Date(timeline[timeline.length - 1].timestamp) - new Date(timeline[0].timestamp);
+        const h = ms / 3600000;
+        return h > 48 ? `${Math.round(h/24)}d` : `${h.toFixed(1)}h`;
+    };
 
     return (
         <div className={`${styles.card} ${styles.sectionSystem}`}>
             <div className={styles.cardLabel} style={{ justifyContent: 'flex-end', gap: '8px' }}>
-                <span style={{ opacity: 0.6 }}>SYSTEM STATUS</span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: "var(--accent-green)" }}>
-                    <Wifi size={12} strokeWidth={3} />
-                    {relativeTime}
+                <span style={{ opacity: 0.6 }}>REPLAY ENG</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: "var(--accent-blue)" }}>
+                    <Activity size={12} strokeWidth={3} />
+                    LIVE
                 </span>
             </div>
             <div className={styles.timeDisplay} style={{ alignItems: 'flex-end' }}>
                 <div className={styles.timeRow}>
-                    <span className={styles.timeLabel}>WINDOW:</span>
-                    <span className={styles.timeValueSmall}>{startTime} - {latestTimeStr}</span>
+                    <span className={styles.timeLabel}>DEPTH:</span>
+                    <span className={styles.timeValueSmall} style={{ color: 'var(--text-muted)' }}>{getDepth()}</span>
                 </div>
                 <div className={styles.timeRow}>
                     <span className={styles.timeLabel}>REPLAY:</span>

@@ -1,12 +1,12 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import styles from './AlphaScatter.module.css';
-import { RefreshCw, Target, TrendingUp } from 'lucide-react';
+import { RefreshCw, Target, TrendingUp, X } from 'lucide-react';
 import {
     ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ZAxis
 } from 'recharts';
 
-export function AlphaScatter() {
+export function AlphaScatter({ onBannerClose }) {
     const activeScan = useTimeStore(s => s.activeScan);
     const refreshAll = useTimeStore(s => s.refreshAll);
     const alphaSquad = useTimeStore(s => s.alphaSquad);
@@ -108,9 +108,16 @@ export function AlphaScatter() {
                     <Target size={18} />
                     <h3>ALPHA SQUAD <span style={{opacity: 0.5, fontSize: '0.8rem', fontWeight: 500}}>Trend vs Quality</span></h3>
                 </div>
-                <button className={styles.refreshBtn} onClick={handleRefresh} title="Refresh Models">
-                    <RefreshCw size={14} />
-                </button>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                    <button className={styles.refreshBtn} onClick={handleRefresh} title="Refresh Models">
+                        <RefreshCw size={14} />
+                    </button>
+                    {onBannerClose && (
+                        <button className={styles.refreshBtn} onClick={onBannerClose} title="Dismiss Banner">
+                            <X size={16} />
+                        </button>
+                    )}
+                </div>
             </div>
 
             <div className={styles.chartArea}>
