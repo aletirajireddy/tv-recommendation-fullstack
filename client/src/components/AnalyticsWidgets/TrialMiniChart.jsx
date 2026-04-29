@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
-    AreaChart, Area, Line, LineChart, XAxis, YAxis, Tooltip,
+    Area, Bar, XAxis, YAxis, Tooltip,
     ReferenceLine, ReferenceArea, ResponsiveContainer, ComposedChart,
 } from 'recharts';
 
@@ -108,10 +108,25 @@ export function TrialMiniChart({ trial }) {
 
     const { candles, levels, phases } = ohlc;
 
-    // Build series: use close price per candle, tagged with the mid-bucket timestamp
+    // Map vol events onto the nearest candle bucket.
+    // candle.ts is the bucket start in ms; interval is 5 min = 300 000 ms.
+    const INTERVAL_MS = ohlc.interval_min ? ohlc.interval_min * 60_000 : 300_000;
+    const volMap = new Map();
+    for (const e of volEvents) {
+        const eMs = typeof e.ts === 'number' ? e.ts : new Date(e.ts).getTime();
+        let best = null, bestDiff = Infinity;
+        for (const c of candles) {
+            const diff = Math.abs(c.ts - eMs);
+            if (diff < bestDiff && diff <= INTERVAL_MS * 1.5) { bestDiff = diff; best = c.ts; }
+        }
+        if (best !== null) volMap.set(best, (volMap.get(best) || 0) + (e.strength || 1));
+    }
+
+    // Build series: close price (raw, unrounded) + vol strength per bucket
     const series = candles.map(c => ({
-        t: c.ts,
-        price: c.close,
+        t:           c.ts,
+        price:       c.close,   // actual candle close — no rounding, exact from DB
+        volStrength: volMap.get(c.ts) || 0,
     }));
 
     // Phase boundaries as timestamps
@@ -140,56 +155,65 @@ export function TrialMiniChart({ trial }) {
                         tick={{ fontSize: 9, fill: 'var(--text-muted)' }}
                         tickCount={3}
                     />
+                    {/* Price axis — exact close values, displayed via smartFmt labels only */}
                     <YAxis
+                        yAxisId="price"
                         domain={[pMin - pPad, pMax + pPad]}
                         tick={{ fontSize: 9, fill: 'var(--text-muted)' }}
                         tickFormatter={smartFmt}
                         width={55}
                         tickCount={4}
                     />
+                    {/* Volume axis — hidden, 5× inflated so bars sit in bottom ~20% */}
+                    <YAxis
+                        yAxisId="vol"
+                        orientation="right"
+                        domain={[0, dataMax => dataMax * 5]}
+                        hide
+                    />
                     <Tooltip
                         contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 10 }}
                         labelFormatter={(v) => fmtTime(v)}
-                        formatter={(v) => [smartFmt(v), 'Price']}
+                        formatter={(v, name) => name === 'Vol' ? [v.toFixed(1), 'Vol Strength'] : [smartFmt(v), 'Price']}
                     />
 
                     {/* Phase zones */}
                     {cooldownStart != null && cooldownEnd != null && (
-                        <ReferenceArea x1={cooldownStart} x2={cooldownEnd}
+                        <ReferenceArea yAxisId="price" x1={cooldownStart} x2={cooldownEnd}
                             fill="rgba(0,0,0,0.05)" stroke="none"
                             label={{ value: 'COOLDOWN', fill: 'var(--text-muted)', fontSize: 8, position: 'insideTopLeft' }}
                         />
                     )}
                     {watchStart != null && watchEnd != null && watchEnd > watchStart && (
-                        <ReferenceArea x1={watchStart} x2={watchEnd}
+                        <ReferenceArea yAxisId="price" x1={watchStart} x2={watchEnd}
                             fill="rgba(49, 130, 206, 0.04)" stroke="none"
                             label={{ value: 'WATCHING', fill: 'var(--accent-blue)', opacity: 0.6, fontSize: 8, position: 'insideTopLeft' }}
                         />
                     )}
 
-                    {/* Key price levels */}
+                    {/* Key price levels — raw values, no rounding */}
                     {levels.ema200_5m > 0 && (
-                        <ReferenceLine y={levels.ema200_5m} stroke="var(--accent-blue)" strokeDasharray="2 4" strokeWidth={1}
+                        <ReferenceLine yAxisId="price" y={levels.ema200_5m} stroke="var(--accent-blue)" strokeDasharray="2 4" strokeWidth={1}
                             label={{ value: '5m EMA', fill: 'var(--accent-blue)', fontSize: 8, position: 'right' }}
                         />
                     )}
                     {levels.smart_level > 0 && levels.smart_level !== levels.trigger && (
-                        <ReferenceLine y={levels.smart_level} stroke="var(--warning)" strokeDasharray="5 3" strokeWidth={1.5}
+                        <ReferenceLine yAxisId="price" y={levels.smart_level} stroke="var(--warning)" strokeDasharray="5 3" strokeWidth={1.5}
                             label={{ value: ohlc.level_type?.replace('EMA200_', '') || 'Level', fill: '#FACC15', fontSize: 9, position: 'insideBottomRight' }}
                         />
                     )}
                     {levels.trigger > 0 && (
-                        <ReferenceLine y={levels.trigger} stroke="var(--text-muted)" strokeDasharray="3 3" strokeWidth={1} opacity={0.3}
+                        <ReferenceLine yAxisId="price" y={levels.trigger} stroke="var(--text-muted)" strokeDasharray="3 3" strokeWidth={1} opacity={0.3}
                             label={{ value: 'T', fill: '#94A3B8', fontSize: 9, position: 'insideBottomRight' }}
                         />
                     )}
 
                     {/* Trigger vertical */}
                     {cooldownStart != null && (
-                        <ReferenceLine x={cooldownStart} stroke="#9f7aea" strokeDasharray="3 2" strokeWidth={1.5} />
+                        <ReferenceLine yAxisId="price" x={cooldownStart} stroke="#9f7aea" strokeDasharray="3 2" strokeWidth={1.5} />
                     )}
 
-                    {/* Volume spike pins — truth-aware source coloring */}
+                    {/* Volume spike source-color pins on the price axis */}
                     {volEvents
                         .map(e => ({ t: new Date(e.ts).getTime(), src: e.source }))
                         .filter(e => e.t >= (series[0]?.t ?? 0) && e.t <= (series.at(-1)?.t ?? Infinity))
@@ -197,10 +221,10 @@ export function TrialMiniChart({ trial }) {
                             const color = VOL_SRC_COLOR[e.src] || 'var(--text-muted)';
                             return (
                                 <ReferenceLine key={`vol-${i}`}
+                                    yAxisId="price"
                                     x={e.t}
-                                    stroke={color} strokeOpacity={0.4}
+                                    stroke={color} strokeOpacity={0.35}
                                     strokeDasharray="2 3" strokeWidth={1}
-                                    label={{ value: VOL_SRC_LABEL[e.src] || '▾', position: 'top', fill: color, fontSize: 8, opacity: 0.6 }}
                                 />
                             );
                         })
@@ -208,14 +232,27 @@ export function TrialMiniChart({ trial }) {
 
                     {/* Verdict vertical */}
                     {phases.resolved_ms != null && (
-                        <ReferenceLine x={phases.resolved_ms}
+                        <ReferenceLine yAxisId="price" x={phases.resolved_ms}
                             stroke={ohlc.verdict === 'CONFIRMED' ? 'var(--accent-green)' : 'var(--accent-red)'}
                             strokeDasharray="3 2" strokeWidth={1.5}
                         />
                     )}
 
-                    {/* Price area + line */}
+                    {/* Volume magnitude bars — amber, bottom-anchored via secondary hidden axis */}
+                    <Bar
+                        yAxisId="vol"
+                        dataKey="volStrength"
+                        name="Vol"
+                        fill="#F59E0B"
+                        barSize={4}
+                        radius={[2, 2, 0, 0]}
+                        isAnimationActive={false}
+                        opacity={0.80}
+                    />
+
+                    {/* Price area + line — exact close values, no rounding */}
                     <Area
+                        yAxisId="price"
                         type="monotone"
                         dataKey="price"
                         stroke={lineColor}

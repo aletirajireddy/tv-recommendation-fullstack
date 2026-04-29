@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-    ComposedChart, Line, XAxis, YAxis, ReferenceLine, ReferenceDot,
+    ComposedChart, Line, Bar, XAxis, YAxis, ReferenceLine, ReferenceDot,
     Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import styles from './EMACascadeMonitor.module.css';
@@ -164,10 +164,25 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     const setInterval_ = (v) => setIntervalMin(v);
     const load = reload;
 
-    /* ─── Build chart series with gap handling ─── */
+    /* ─── Build chart series with gap handling + volume strength ─── */
     const chartData = useMemo(() => {
         if (!data?.history?.length) return [];
         const gapSet = new Set((data.gaps || []).map(g => g.afterTs));
+
+        // Map each volume event to the nearest history bucket (±1.5× intervalMs).
+        // Accumulate strength so multiple events in one bucket stack up.
+        const intervalMs = (data.interval_min || 2) * 60 * 1000;
+        const volMap = new Map();
+        for (const e of (data.volEvents || [])) {
+            const eMs = typeof e.ts === 'number' ? e.ts : new Date(e.ts).getTime();
+            let best = null, bestDiff = Infinity;
+            for (const b of data.history) {
+                const diff = Math.abs(b.ts - eMs);
+                if (diff < bestDiff && diff <= intervalMs * 1.5) { bestDiff = diff; best = b.ts; }
+            }
+            if (best !== null) volMap.set(best, (volMap.get(best) || 0) + (e.strength || 1));
+        }
+
         return data.history.map(b => ({
             ts: b.ts,
             price: b.price,
@@ -182,6 +197,7 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
             bearDefense: b.bearDefense,
             regime: b.regime,
             isGap: gapSet.has(b.ts),
+            volStrength: volMap.get(b.ts) || 0,
         }));
     }, [data]);
 
@@ -383,6 +399,7 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                                         tickLine={false}
                                     />
                                     <YAxis
+                                        yAxisId="price"
                                         domain={yDomain}
                                         tick={{ fill: '#4a5568', fontSize: 9 }}
                                         tickFormatter={smartFmt}
@@ -390,10 +407,32 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                                         axisLine={{ stroke: 'rgba(255,255,255,0.05)' }}
                                         tickLine={false}
                                     />
+                                    {/* Secondary axis for volume bars — hidden, domain inflated
+                                        so bars occupy only ~20% of chart height */}
+                                    <YAxis
+                                        yAxisId="vol"
+                                        orientation="right"
+                                        domain={[0, dataMax => dataMax * 5]}
+                                        hide
+                                    />
                                     <Tooltip content={<CascadeTooltip />} />
+
+                                    {/* Volume magnitude bars — amber, bottom-anchored, scaled
+                                        to ~20% height via inflated secondary YAxis domain */}
+                                    <Bar
+                                        yAxisId="vol"
+                                        dataKey="volStrength"
+                                        fill="#F59E0B"
+                                        barSize={5}
+                                        radius={[2, 2, 0, 0]}
+                                        isAnimationActive={false}
+                                        opacity={0.80}
+                                        name="Vol"
+                                    />
 
                                     {/* Price line */}
                                     <Line
+                                        yAxisId="price"
                                         type="monotone" dataKey="price"
                                         stroke="#e2e8f0" strokeWidth={1.6}
                                         dot={false} isAnimationActive={false}
@@ -404,6 +443,7 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                                     {TFS.map(tf => (
                                         <Line
                                             key={tf}
+                                            yAxisId="price"
                                             type="monotone" dataKey={tf}
                                             stroke={TF_COLORS[tf]} strokeWidth={1.4}
                                             strokeDasharray={tf === 'h1' || tf === 'h4' ? '4 3' : ''}
@@ -413,20 +453,15 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                                         />
                                     ))}
 
-                                    {/* Volume event reference lines */}
+                                    {/* Volume event vertical markers — source-color pins on price axis */}
                                     {volEvents.map((e, idx) => (
                                         <ReferenceLine
                                             key={`vol-${idx}`}
+                                            yAxisId="price"
                                             x={new Date(e.ts).getTime()}
                                             stroke={VOL_SOURCE_COLOR[e.source] || '#a0aec0'}
-                                            strokeOpacity={0.4}
+                                            strokeOpacity={0.35}
                                             strokeDasharray="2 4"
-                                            label={{
-                                                value: '▾',
-                                                position: 'top',
-                                                fill: VOL_SOURCE_COLOR[e.source] || '#a0aec0',
-                                                fontSize: 10,
-                                            }}
                                         />
                                     ))}
 
@@ -436,6 +471,7 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                                         return (
                                             <ReferenceDot
                                                 key={`tr-${idx}`}
+                                                yAxisId="price"
                                                 x={t.ts} y={t.ema}
                                                 r={4}
                                                 fill={color}

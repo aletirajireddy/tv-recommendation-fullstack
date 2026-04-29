@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useTimeStore } from '../../store/useTimeStore';
 import {
-    ComposedChart, Area, Line, XAxis, YAxis, ReferenceLine,
+    ComposedChart, Area, Line, Bar, XAxis, YAxis, ReferenceLine,
     Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { Activity, RefreshCw, Radar, ArrowUp, ArrowDown, Zap, ArrowRight, MoveRight, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
@@ -240,26 +240,42 @@ const VOL_SRC_PRIORITY = { STREAM_C_ALERT: 3, STREAM_D_RVOL: 2, STREAM_A_EDGE: 1
 // Audit fix #1/#2: React.memo prevents re-render when parent filter state changes but
 // this lane's data (coin, volEvents, schema) is unchanged. useMemo inside avoids
 // rebuilding Recharts series on every render pass.
-const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading, schema, volEvents }) {
+const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, intervalMin, loading, schema, volEvents }) {
     const setSelectedTicker = useTimeStore(s => s.setSelectedTicker);
     const meta     = REACTION_META[coin.reaction]   || REACTION_META.APPROACHING;
     const sideCol  = SIDE_COLOR[coin.side]          || SIDE_COLOR.SUPPORT;
 
     // Audit fix #2: memoize series + Y domain — 16 lanes × map+minMax is hot path.
-    const series = useMemo(() => (
-        coin.history.length
+    // Also merges vol-event strength into each bucket so we can render volume bars.
+    const series = useMemo(() => {
+        // Build vol strength map: ts → sum of strengths
+        const safeVol = volEvents || [];
+        const intervalMs = (intervalMin || 5) * 60 * 1000;
+        const volMap = new Map();
+        for (const e of safeVol) {
+            const eMs = typeof e.ts === 'number' ? e.ts : new Date(e.ts).getTime();
+            let best = null, bestDiff = Infinity;
+            for (const h of coin.history) {
+                const diff = Math.abs(h.ts - eMs);
+                if (diff < bestDiff && diff <= intervalMs * 1.5) { bestDiff = diff; best = h.ts; }
+            }
+            if (best !== null) volMap.set(best, (volMap.get(best) || 0) + (e.strength || 1));
+        }
+
+        return coin.history.length
             ? coin.history.map(h => ({
-                ts:    h.ts,
-                price: h.price,
-                pct:   h.pct,
-                above: Math.max(0, h.pct),
-                below: Math.min(0, h.pct),
+                ts:          h.ts,
+                price:       h.price,
+                pct:         h.pct,
+                above:       Math.max(0, h.pct),
+                below:       Math.min(0, h.pct),
+                volStrength: volMap.get(h.ts) || 0,
             }))
             : [
-                { ts: Date.now() - windowMin * 60000, pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct) },
-                { ts: Date.now(),                     pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct) },
-            ]
-    ), [coin.history, coin.distPct, coin.close, windowMin]);
+                { ts: Date.now() - windowMin * 60000, pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct), volStrength: 0 },
+                { ts: Date.now(),                     pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct), volStrength: 0 },
+            ];
+    }, [coin.history, coin.distPct, coin.close, windowMin, intervalMin, volEvents]);
 
     const [yMin, yMax] = useMemo(() => {
         let pMin = -0.5, pMax = 0.5;
@@ -382,11 +398,20 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading
                                 tickCount={4}
                             />
                             <YAxis
+                                yAxisId="pct"
                                 domain={[yMin, yMax]}
                                 tick={{ fontSize: 9, fill: '#4a5568' }}
                                 tickFormatter={v => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`}
                                 width={42}
                                 tickCount={4}
+                            />
+                            {/* Hidden secondary axis for vol bars — domain inflated 5× so
+                                bars occupy only the bottom ~20% of chart height */}
+                            <YAxis
+                                yAxisId="vol"
+                                orientation="right"
+                                domain={[0, dataMax => dataMax * 5]}
+                                hide
                             />
                             <Tooltip
                                 content={<LaneTooltip coin={coin} />}
@@ -394,7 +419,7 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading
                             />
 
                             {/* Level = 0 line */}
-                            <ReferenceLine y={0}
+                            <ReferenceLine yAxisId="pct" y={0}
                                 stroke={sideCol.line} strokeWidth={1.5}
                                 strokeDasharray="none"
                                 label={{
@@ -405,24 +430,36 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading
                             />
 
                             {/* Touch zone bands ±0.3% */}
-                            <ReferenceLine y={0.3}  stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
-                            <ReferenceLine y={-0.3} stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
+                            <ReferenceLine yAxisId="pct" y={0.3}  stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
+                            <ReferenceLine yAxisId="pct" y={-0.3} stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
 
-                            {/* Volume-event pins — color-coded by source (truthful spike moments) */}
+                            {/* Volume-event pins — color-coded by source, on the pct axis */}
                             {safeVolEvents.map((e, idx) => {
                                 const m = VOL_SRC_META[e.source] || VOL_SRC_META.STREAM_A_EDGE;
                                 return (
                                     <ReferenceLine key={`vol-${idx}`}
+                                        yAxisId="pct"
                                         x={new Date(e.ts).getTime()}
-                                        stroke={m.color} strokeOpacity={0.55}
+                                        stroke={m.color} strokeOpacity={0.45}
                                         strokeDasharray="2 3" strokeWidth={1}
-                                        label={{ value: m.label, position: 'top', fill: m.color, fontSize: 9 }}
                                     />
                                 );
                             })}
 
+                            {/* Volume magnitude bars — bottom anchored, amber */}
+                            <Bar
+                                yAxisId="vol"
+                                dataKey="volStrength"
+                                fill="#F59E0B"
+                                barSize={4}
+                                radius={[2, 2, 0, 0]}
+                                isAnimationActive={false}
+                                opacity={0.80}
+                            />
+
                             {/* Green area — price ABOVE level */}
                             <Area
+                                yAxisId="pct"
                                 type="monotone" dataKey="above"
                                 stroke="none" fill="rgba(104,211,145,0.20)"
                                 isAnimationActive={false} dot={false}
@@ -431,6 +468,7 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading
 
                             {/* Red area — price BELOW level */}
                             <Area
+                                yAxisId="pct"
                                 type="monotone" dataKey="below"
                                 stroke="none" fill="rgba(252,129,129,0.22)"
                                 isAnimationActive={false} dot={false}
@@ -439,6 +477,7 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, loading
 
                             {/* Main price path */}
                             <Line
+                                yAxisId="pct"
                                 type="monotone" dataKey="pct"
                                 stroke={sideCol.line} strokeWidth={2}
                                 dot={false}
@@ -667,6 +706,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                                 key={coin.ticker}
                                 coin={coin}
                                 windowMin={windowMin}
+                                intervalMin={intervalMin}
                                 loading={false}
                                 schema={streamDSchema}
                                 volEvents={volEventsByTicker[coin.cleanTicker || coin.ticker]}
