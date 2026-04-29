@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
 import { ValidatorSettingsModal } from './ValidatorSettingsModal';
 import { TrialExpandedModal } from './TrialExpandedModal';
 import { TrialMiniChart } from './TrialMiniChart';
-import { Target, Settings, Maximize2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Target, Settings, Maximize2 } from 'lucide-react';
 import styles from './ValidatorTimelineWidget.module.css';
 
 function smartFmt(price) {
@@ -198,6 +198,114 @@ function TrialCard({ trial, isResolved, onExpand }) {
 
 }
 
+// ── Collapsed-mode live highlights ticker ─────────────────────────────────────
+// Shows a compact horizontal scrolling summary of active trials + recent
+// verdicts. Updates automatically whenever active/resolved state changes.
+function CollapsedHighlights({ active, resolved }) {
+    const items = useMemo(() => {
+        const out = [];
+        for (const t of active.slice(0, 8)) {
+            const ticker = cleanTicker(t.ticker);
+            const isLong = t.direction === 'LONG';
+            const move = t.latest_move ?? t.final_move;
+            const moveFmt = move != null ? `${move > 0 ? '+' : ''}${Number(move).toFixed(2)}%` : null;
+            const state = (t.replay_state || t.state || '').replace('_', ' ');
+            out.push({ key: t.trial_id, type: 'active', ticker, isLong, moveFmt, state });
+        }
+        for (const t of resolved.slice(0, 5)) {
+            const ticker = cleanTicker(t.ticker);
+            const isLong = t.direction === 'LONG';
+            const move = t.final_move ?? t.latest_move;
+            const moveFmt = move != null ? `${move > 0 ? '+' : ''}${Number(move).toFixed(2)}%` : null;
+            const confirmed = t.verdict === 'CONFIRMED';
+            out.push({ key: t.trial_id + '-r', type: 'resolved', ticker, isLong, moveFmt, confirmed, verdict: t.verdict });
+        }
+        return out;
+    }, [active, resolved]);
+
+    if (!items.length) return (
+        <div className={styles.collapsedEmpty}>No active trials · awaiting scan data…</div>
+    );
+
+    return (
+        <div className={styles.collapsedTicker}>
+            <span className={styles.tickerLabel}>LIVE</span>
+            <div className={styles.tickerTrack}>
+                {items.map(item => (
+                    <span key={item.key} className={styles.tickerChip}
+                        style={{ borderColor: item.isLong ? 'rgba(104,211,145,0.25)' : 'rgba(252,129,129,0.25)' }}>
+                        {/* Direction arrow */}
+                        <svg width="9" height="9" viewBox="0 0 9 9" fill="none"
+                            style={{ flexShrink: 0 }}
+                            aria-hidden="true">
+                            {item.isLong
+                                ? <polyline points="1,7 4.5,2 8,7" stroke="#68d391" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                                : <polyline points="1,2 4.5,7 8,2" stroke="#fc8181" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                            }
+                        </svg>
+
+                        {/* Coin ticker */}
+                        <span style={{ color: item.isLong ? '#68d391' : '#fc8181', fontWeight: 800 }}>
+                            {item.ticker}
+                        </span>
+
+                        {/* State or verdict */}
+                        {item.type === 'active' && (
+                            <span className={styles.tickerState}>{item.state}</span>
+                        )}
+                        {item.type === 'resolved' && (
+                            <span style={{
+                                fontSize: 8, fontWeight: 900, padding: '0 3px',
+                                borderRadius: 3,
+                                color: item.confirmed ? '#68d391' : '#fc8181',
+                                background: item.confirmed ? 'rgba(104,211,145,0.1)' : 'rgba(252,129,129,0.1)',
+                            }}>
+                                {item.confirmed ? '✓ CONF' : '✗ FAIL'}
+                            </span>
+                        )}
+
+                        {/* Move % */}
+                        {item.moveFmt && (
+                            <span style={{
+                                color: item.moveFmt.startsWith('+') ? '#68d391' : '#fc8181',
+                                fontWeight: 700, fontSize: 10,
+                            }}>
+                                {item.moveFmt}
+                            </span>
+                        )}
+                    </span>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+// ── Accessible collapse toggle button ─────────────────────────────────────────
+function CollapseButton({ collapsed, onToggle }) {
+    return (
+        <button
+            className={styles.collapseBtn}
+            onClick={onToggle}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? 'Expand 3rd Umpire panel' : 'Collapse 3rd Umpire panel'}
+            type="button"
+        >
+            <svg
+                width="14" height="14" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor"
+                strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                aria-hidden="true"
+                style={{
+                    transition: 'transform 0.25s ease',
+                    transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                }}
+            >
+                <polyline points="6 9 12 15 18 9" />
+            </svg>
+        </button>
+    );
+}
+
 export function ValidatorTimelineWidget() {
     const { currentIndex, timeline, activeScan } = useTimeStore();
     const isLive = timeline.length > 0 && currentIndex === timeline.length - 1;
@@ -240,20 +348,32 @@ export function ValidatorTimelineWidget() {
 
     return (
         <div className={styles.widget}>
-            <div className={`${styles.header} ${styles.collapsibleHeader}`} onClick={() => setIsCollapsed(!isCollapsed)}>
-                <h4 className="widget-title" style={{ cursor: 'pointer' }}>
-                    {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-                    <Target size={16} strokeWidth={2.5} className="text-accent-blue" /> 3RD UMPIRE
+            {/* ── Header row ── */}
+            <div className={styles.header}>
+                <CollapseButton collapsed={isCollapsed} onToggle={() => setIsCollapsed(c => !c)} />
+
+                <h4 className={`widget-title ${styles.widgetTitle}`}>
+                    <Target size={16} strokeWidth={2.5} className="text-accent-blue" />
+                    3RD UMPIRE
                     <div className={styles.badges}>
-                        {isLive ? <span className={styles.badgeLive}>LIVE</span> : <span className={styles.badgeReplay}>REPLAY</span>}
+                        {isLive
+                            ? <span className={styles.badgeLive}>LIVE</span>
+                            : <span className={styles.badgeReplay}>REPLAY</span>}
                     </div>
                 </h4>
-                <div className={styles.headerActions} onClick={e => e.stopPropagation()}>
-                    <button className={styles.iconBtn} onClick={() => setShowSettings(true)}>
+
+                <div className={styles.headerActions}>
+                    <button className={styles.iconBtn} onClick={() => setShowSettings(true)}
+                        aria-label="Validator settings">
                         <Settings size={14} />
                     </button>
                 </div>
             </div>
+
+            {/* ── Collapsed-mode live highlights ── */}
+            {isCollapsed && (
+                <CollapsedHighlights active={active} resolved={resolved} />
+            )}
 
             {!isCollapsed && (
                 <div className={styles.validatorGrid}>

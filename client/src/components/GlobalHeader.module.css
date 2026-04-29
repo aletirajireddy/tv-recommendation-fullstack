@@ -184,26 +184,26 @@
     font-family: 'Roboto Mono', monospace;
 }
 
-/* MOBILE LAYOUT (< 768px) */
+/* MOBILE LAYOUT (≤ 768px) — keep single row, clip overflow */
 @media (max-width: 768px) {
     .header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 12px;
+        flex-direction: row;
+        align-items: center;
+        height: 100%;
         overflow: hidden;
-        /* Prevent body scroll */
+        gap: 0;
     }
 
     .deckSection {
-        width: 100%;
-        /* overflow-x handled in child component styling */
+        flex: 1;
+        min-width: 0;   /* allow flex to shrink past content */
+        overflow: hidden;
+        height: 100%;
     }
 
     .metaSection {
-        width: 100%;
-        justify-content: space-between;
-        /* Spread controls */
-        padding: 0 4px;
+        flex-shrink: 0;
+        gap: 8px;
     }
 }
 

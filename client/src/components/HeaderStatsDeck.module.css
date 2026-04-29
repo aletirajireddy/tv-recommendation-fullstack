@@ -297,54 +297,51 @@
     }
 }
 
-/* MOBILE ADAPTIVE (< 1024px) */
+/* TABLET (1024px) — keep flex row, drop heartbeat width constraint */
 @media (max-width: 1024px) {
     .deckContainer {
-        display: block;
-        /* Stack blocks */
-        min-height: auto;
-        max-height: none;
-        overflow: visible;
-        padding-bottom: 0;
-        gap: 0;
-        overflow-x: visible;
-        /* No scroll, correct wrapping */
+        gap: 8px;
     }
 
-    .interactiveZone {
-        margin-right: 0;
-        margin-bottom: 12px;
-        width: 100%;
-        overflow-x: auto;
-        /* Allow stats to scroll if needed horizontally */
-        -webkit-overflow-scrolling: touch;
-        padding-bottom: 4px;
+    /* Hide the vertical separators to save space */
+    .deckContainer > .divider {
+        display: none;
+    }
+}
+
+/* MOBILE (≤ 768px) — slim single-row: just mood gauge + breadth */
+@media (max-width: 768px) {
+    .deckContainer {
+        gap: 8px;
+        height: 100%;
+        overflow: hidden;
     }
 
-    /* Hide the vertical separator between Zone and System */
-    .deckContainer>.divider {
+    /* Hide heartbeat chart — too complex for 54px header */
+    .sectionHeartbeat {
         display: none;
     }
 
+    /* Hide system health grid and time card on mobile */
+    .sectionSystemHealth,
     .sectionSystem {
-        width: 100%;
-        border-top: 1px solid var(--border);
-        padding-top: 12px;
-        margin-top: 4px;
-        justify-content: space-between;
-        /* Spread content */
-        flex-direction: row;
-        align-items: center;
-        background: transparent;
+        display: none;
     }
 
-    /* Adjust System Card Internal Layout for Row */
-    .sectionSystem .cardLabel {
-        justify-content: flex-start;
-        width: auto;
+    /* Keep mood gauge but shrink it */
+    .sectionMood {
+        width: 80px;
+        flex: 0 0 80px;
     }
 
-    .sectionSystem .timeDisplay {
-        align-items: flex-end;
+    /* Keep breadth compact */
+    .sectionBreadth {
+        flex: 0 0 auto;
+        min-width: 80px;
+    }
+
+    /* Hide all dividers */
+    .deckContainer > .divider {
+        display: none;
     }
 }

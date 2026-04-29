@@ -10,33 +10,112 @@
 
 .header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 8px;
+    padding-bottom: 10px;
     border-bottom: 1px solid var(--border);
-    padding-bottom: 12px;
+    margin-bottom: 10px;
 }
 
-.collapsibleHeader {
-    cursor: pointer;
-    transition: background-color 0.2s;
-    padding: 8px 12px;
-    margin: -8px -12px 12px -12px;
-    border-radius: 6px;
+.widgetTitle {
+    flex: 1;
+    min-width: 0;
 }
 
-.collapsibleHeader:hover {
-    background-color: var(--bg-panel);
-}
-
-.title {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 700;
+/* ── Accessible collapse toggle ── */
+.collapseBtn {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.2s, background 0.2s, border-color 0.2s;
+    padding: 0;
+}
+
+.collapseBtn:hover {
     color: var(--accent-blue);
-    font-family: 'Outfit', sans-serif;
+    background: var(--bg-active);
+    border-color: var(--accent-blue);
+}
+
+.collapseBtn:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+}
+
+/* ── Collapsed highlights ticker ── */
+.collapsedEmpty {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 8px 4px;
+    font-style: italic;
+}
+
+.collapsedTicker {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 2px;
+    overflow: hidden;
+}
+
+.tickerLabel {
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 1.5px;
+    color: var(--accent-green);
+    background: rgba(104, 211, 145, 0.08);
+    border: 1px solid rgba(104, 211, 145, 0.2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    text-transform: uppercase;
+}
+
+.tickerTrack {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    flex: 1;
+    padding-bottom: 2px;
+}
+
+.tickerTrack::-webkit-scrollbar { display: none; }
+
+.tickerChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    white-space: nowrap;
+    padding: 3px 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: default;
+    transition: background 0.15s;
+}
+
+.tickerChip:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.tickerState {
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .badges {
@@ -67,6 +146,9 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
+    /* Prevent tiles from escaping their panel */
+    overflow: hidden;
+    width: 100%;
 }
 
 @media (max-width: 1024px) {
@@ -102,13 +184,14 @@
 }
 
 /* ─── TRIAL TILES (High Density) ─── */
-.trialList { 
+.trialList {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    height: 600px;
+    max-height: 600px;
     overflow-y: auto;
-    padding-right: 8px;
+    overflow-x: hidden; /* Tiles must not escape horizontally */
+    padding-right: 4px;
 }
 
 .trialCard {
@@ -147,14 +230,35 @@
     align-items: center;
     justify-content: space-between;
     width: 100%;
-    gap: 12px;
+    min-width: 0;
+    gap: 8px;
+    overflow: hidden; /* Keep children inside card */
 }
 
 .infoSection {
     display: flex;
     align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
+    gap: 8px;
+    flex-shrink: 1; /* Allow sections to shrink */
+    min-width: 0;
+}
+
+/* On narrow viewports hide the analytics section (rule dots + master chips)
+   to prevent horizontal overflow */
+@media (max-width: 640px) {
+    .infoSection:nth-child(3) {
+        display: none;
+    }
+    .trialList {
+        max-height: 400px;
+    }
+}
+
+/* Tablet: allow analytics section to shrink */
+@media (max-width: 900px) {
+    .masterStrip {
+        display: none; /* only rule dots visible on small cards */
+    }
 }
 
 .tickerBlock {
