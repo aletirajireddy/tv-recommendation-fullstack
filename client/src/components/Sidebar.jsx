@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
 import { Target, Layers, Activity, Ruler, Zap, Hexagon, Users, PanelLeftClose, PanelLeft, Brain, Bell, MonitorPlay } from 'lucide-react';
 import styles from './Sidebar.module.css';
@@ -15,18 +15,45 @@ export const Sidebar = () => {
     const mobileMenuOpen = useTimeStore(s => s.mobileMenuOpen);
     const setMobileMenuOpen = useTimeStore(s => s.setMobileMenuOpen);
 
+    // Body scroll lock when mobile drawer is open + ESC to close
+    useEffect(() => {
+        if (!mobileMenuOpen) return;
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        const onKey = (e) => { if (e.key === 'Escape') setMobileMenuOpen(false); };
+        window.addEventListener('keydown', onKey);
+        return () => {
+            document.body.style.overflow = prev;
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [mobileMenuOpen, setMobileMenuOpen]);
+
+    // Each entry maps a nav id → its underlying widget chunk import.
+    // On hover/focus we trigger the dynamic import so the chunk is warm
+    // by the time the user actually navigates to it (zero-skeleton scroll).
     const menuItems = [
-        { id: 'umpire',    label: '3rd Umpire', icon: Target },
-        { id: 'levels',    label: 'Levels Monitor', icon: Layers },
-        { id: 'cascade',   label: 'EMA Cascade', icon: Activity },
-        { id: 'dist',      label: 'Distance Board', icon: Ruler },
-        { id: 'alpha',     label: 'Alpha Squad', icon: Zap },
-        { id: 'fusion',    label: 'Fusion Command', icon: Hexagon },
-        { id: 'scout',     label: 'Participation', icon: Users },
+        { id: 'umpire',  label: '3rd Umpire',     icon: Target,  prefetch: () => import('./AnalyticsWidgets/ValidatorTimelineWidget') },
+        { id: 'levels',  label: 'Levels Monitor', icon: Layers,  prefetch: () => import('./AnalyticsWidgets/LevelReactionWidget') },
+        { id: 'cascade', label: 'EMA Cascade',    icon: Activity, prefetch: () => import('./AnalyticsWidgets/EMACascadeMonitor') },
+        { id: 'dist',    label: 'Distance Board', icon: Ruler,   prefetch: () => import('./AnalyticsWidgets/DistanceTracker') },
+        { id: 'alpha',   label: 'Alpha Squad',    icon: Zap,     prefetch: () => import('./AnalyticsWidgets/AlphaScatter') },
+        { id: 'fusion',  label: 'Fusion Command', icon: Hexagon, prefetch: () => import('./AnalyticsWidgets/FusionDashboard') },
+        { id: 'scout',   label: 'Participation',  icon: Users,   prefetch: () => import('./AnalyticsWidgets/ParticipationPulseWidget') },
     ];
 
-    const scrollTo = (id) => {
-        const el = document.getElementById(`section-${id}`);
+    // Idempotent prefetch: webpack/vite cache the dynamic import promise,
+    // so calling repeatedly costs nothing after the first.
+    const prefetched = React.useRef(new Set());
+    const handlePrefetch = (item) => {
+        if (prefetched.current.has(item.id)) return;
+        prefetched.current.add(item.id);
+        try { item.prefetch?.(); } catch { /* ignore */ }
+    };
+
+    const scrollTo = (item) => {
+        // Ensure chunk is requested before scroll begins (avoids skeleton flash)
+        handlePrefetch(item);
+        const el = document.getElementById(`section-${item.id}`);
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         if (mobileMenuOpen) setMobileMenuOpen(false); // auto close on mobile
     };
@@ -46,10 +73,12 @@ export const Sidebar = () => {
             
             <nav className={styles.nav}>
                 {menuItems.map(item => (
-                    <button 
-                        key={item.id} 
-                        className={styles.navItem} 
-                        onClick={() => scrollTo(item.id)}
+                    <button
+                        key={item.id}
+                        className={styles.navItem}
+                        onClick={() => scrollTo(item)}
+                        onMouseEnter={() => handlePrefetch(item)}
+                        onFocus={() => handlePrefetch(item)}
                         title={item.label}
                     >
                         <span className={styles.icon}><item.icon size={16} strokeWidth={2.5} /></span>

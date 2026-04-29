@@ -48,9 +48,10 @@ export function HeaderStatsDeck() {
                 <div className={styles.divider} />
 
                 {/* 3. MARKET HEARTBEAT */}
-                <div className={styles.card} style={{ flex: 1, minWidth: '400px', padding: '0', height: '100%', overflow: 'hidden' }}>
+                <div className={`${styles.card} ${styles.sectionHeartbeat}`}>
                     <MarketHeartbeatIndicator />
-                </div>            <div className={styles.divider} />
+                </div>
+            <div className={styles.divider} />
             <SystemHealthGrid />
             <div className={styles.divider} />
             <SystemTimeCard />
@@ -93,7 +94,7 @@ function SystemHealthGrid() {
     );
 
     return (
-        <div className={`${styles.card} ${styles.sectionSystem}`} style={{ minWidth: '240px', paddingRight: '12px', justifyContent: 'center' }}>
+        <div className={`${styles.card} ${styles.sectionSystem} ${styles.sectionSystemHealth}`}>
             <div style={{ 
                 display: 'grid', 
                 gridTemplateColumns: '1fr 1fr', 

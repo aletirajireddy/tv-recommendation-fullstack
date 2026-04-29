@@ -1,9 +1,20 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
-import { LevelReactionWidget } from './AnalyticsWidgets/LevelReactionWidget';
-import { EMACascadeMonitor } from './AnalyticsWidgets/EMACascadeMonitor';
 import { X, LayoutDashboard } from 'lucide-react';
 import styles from './SelectionDrawer.module.css';
+
+// Lazy: drawer only opens on user action — no need to ship these on first paint.
+// Keeping the same chunks the App.jsx LazyWidgets use means the second open is free.
+const LevelReactionWidget = lazy(() =>
+    import('./AnalyticsWidgets/LevelReactionWidget').then(m => ({ default: m.LevelReactionWidget }))
+);
+const EMACascadeMonitor = lazy(() =>
+    import('./AnalyticsWidgets/EMACascadeMonitor').then(m => ({ default: m.EMACascadeMonitor }))
+);
+
+const DrawerFallback = () => (
+    <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>Loading…</div>
+);
 
 export const SelectionDrawer = () => {
     const ticker = useTimeStore(s => s.selectedTicker);
@@ -30,10 +41,14 @@ export const SelectionDrawer = () => {
                 <div className={styles.content}>
                     {/* Filtered Widgets - These widgets should ideally accept a ticker prop to filter their view */}
                     <div className={styles.widgetBox}>
-                        <LevelReactionWidget filterTicker={ticker} compact />
+                        <Suspense fallback={<DrawerFallback />}>
+                            <LevelReactionWidget filterTicker={ticker} compact />
+                        </Suspense>
                     </div>
                     <div className={styles.widgetBox}>
-                        <EMACascadeMonitor filterTicker={ticker} compact />
+                        <Suspense fallback={<DrawerFallback />}>
+                            <EMACascadeMonitor filterTicker={ticker} compact />
+                        </Suspense>
                     </div>
                 </div>
             </div>
