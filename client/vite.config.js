@@ -12,7 +12,11 @@ export default defineConfig({
   server: {
     port: DEV_PORT,
     host: true,           // Expose to network (Tailscale/LAN)
-    allowedHosts: true,   // Allow any host (fixes Tailscale block)
+    allowedHosts: [
+      'desktop-c92c19n.tailbf6529.ts.net',
+      'localhost',
+      '.ts.net'
+    ],
     proxy: {
       '/api': {
         target: `http://localhost:${API_PORT}`,

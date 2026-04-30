@@ -2291,6 +2291,10 @@ app.post('/api/settings/telegram', (req, res) => {
     res.json({ enabled: TelegramService.enabled });
 });
 
+// --- ANALYTICS CACHE (Institutional Speed) ---
+let _pulseCache = { ts: 0, data: null };
+const PULSE_CACHE_TTL = 10000; // 10s
+
 // 8. ANALYTICS PULSE (Real V3 Aggregation)
 app.get('/api/analytics/pulse', (req, res) => {
     try {
@@ -2479,7 +2483,7 @@ app.get('/api/analytics/pulse', (req, res) => {
             };
         });
 
-        res.json({
+        const responseData = {
             total_alerts,
             volume_intent,
             market_structure,
@@ -2487,7 +2491,14 @@ app.get('/api/analytics/pulse', (req, res) => {
             signals, // New Field
             predictions: [],
             insights: total_alerts > 0 ? [`${total_alerts} events in last ${hours}h`] : ["No recent activity"]
-        });
+        };
+
+        // Cache the result if this was a standard 24h query
+        if (hours === 24 && !req.query.refTime) {
+            _pulseCache = { ts: Date.now(), data: responseData };
+        }
+
+        res.json(responseData);
 
     } catch (e) {
         console.error("Pulse Analytics Error:", e);
@@ -3392,12 +3403,26 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 V3 Server running on port ${PORT} (All Interfaces)`);
 
-    // One-shot volume-events backfill from existing history.
     // Idempotent (UNIQUE INDEX on ticker+ts+source dedupes), so safe on every boot.
     setImmediate(() => {
         try { VolumeEventService.backfill({ verbose: true }); }
         catch (e) { console.error('VolumeEvent backfill error:', e.message); }
     });
+
+    // --- DAILY PRUNING ENGINE (Institutional Stability) ---
+    // Deletes history older than 30 days to keep the database lean and fast.
+    setInterval(() => {
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        console.log(`[Maintenance] 🧹 Pruning records older than ${thirtyDaysAgo}...`);
+        try {
+            db.transaction(() => {
+                const s = db.prepare('DELETE FROM scans WHERE timestamp < ?').run(thirtyDaysAgo);
+                const m = db.prepare('DELETE FROM master_coin_store WHERE timestamp < ?').run(thirtyDaysAgo);
+                const v = db.prepare('DELETE FROM volume_events WHERE ts < ?').run(thirtyDaysAgo);
+                console.log(`[Maintenance] ✅ Pruned: ${s.changes} scans, ${m.changes} snapshots, ${v.changes} volume events.`);
+            })();
+        } catch (e) { console.error('[Maintenance] Pruning error:', e.message); }
+    }, 24 * 60 * 60 * 1000); // Once every 24 hours
 });
 
 /**

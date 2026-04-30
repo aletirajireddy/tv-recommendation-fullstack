@@ -5,6 +5,13 @@ const path = require('path');
 const dbPath = path.resolve(__dirname, '..', 'dashboard_v3.db');
 const db = new Database(dbPath);
 
+// --- PERFORMANCE TUNING (Institutional Grade) ---
+db.exec('PRAGMA journal_mode = WAL;');     // Allows concurrent reads and writes
+db.exec('PRAGMA synchronous = NORMAL;');   // Faster writes while maintaining safety in WAL mode
+db.exec('PRAGMA cache_size = -64000;');    // 64MB Cache to keep hot indices in memory
+db.exec('PRAGMA temp_store = MEMORY;');     // Store temp tables in RAM
+db.exec('PRAGMA mmap_size = 300000000;');   // Memory-map the DB for near-instant reads
+
 console.log(`🔌 Connected to V3 Database: ${dbPath}`);
 
 // Enable WAL for concurrency and performance
@@ -370,6 +377,14 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_volume_events_source ON volume_events(so
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_volume_events_dedup
          ON volume_events(ticker, ts, source);`);
 
-console.log('✅ V3 Schema Initialized: scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles, validation_trials, validation_state_log, pattern_statistics, master_coin_store [+ timestamp policy migration]');
+db.exec(`CREATE INDEX IF NOT EXISTS idx_scans_timestamp ON scans(timestamp);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_smart_level_timestamp ON smart_level_events(timestamp);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_inst_interest_timestamp ON institutional_interest_events(timestamp);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_market_context_timestamp ON market_context_logs(timestamp);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_qualified_picks_timestamp ON qualified_picks(timestamp);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_qualified_picks_log_timestamp ON qualified_picks_log(timestamp);`);
+
+console.log('✅ V3 Schema Initialized (Optimized): scans, scan_results, pulse_events, qualified_picks, smart_level_events, institutional_interest_events, unified_alerts (view), ghost_approval_queue, coin_lifecycles, validation_trials, validation_state_log, pattern_statistics, master_coin_store [+ timestamp policy migration]');
+
 
 module.exports = db;

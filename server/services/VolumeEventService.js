@@ -269,18 +269,20 @@ class VolumeEventService {
         const t0 = Date.now();
         let cAlerts = 0, instAlerts = 0, aEdges = 0, dRvols = 0;
 
-        // PERF AUDIT FIX (C2/C3): each section wrapped in a single transaction.
-        // - Eliminates per-row implicit-commit fsyncs (3+ per row → 1 per section)
-        // - On a 50k-row table this drops backfill from minutes to seconds
-        // - Event loop is still blocked (better-sqlite3 is sync) but the duration
-        //   shrinks ~50-100×, so in practice the boot pause is unnoticeable.
+        // --- Delta Detection ---
+        // Only backfill data that isn't already in volume_events.
+        // This makes subsequent boots nearly instant.
+        const lastEvent = db.prepare('SELECT MAX(ts) as ts FROM volume_events').get();
+        const cutoff = lastEvent?.ts || '1970-01-01T00:00:00.000Z';
+
+        if (verbose) console.log(`[VolumeEvent] 🔄 Starting delta backfill (since ${cutoff})...`);
 
         // 1. Stream C alerts from smart_level_events
         try {
             const rows = db.prepare(
                 `SELECT ticker, timestamp, payload_hash, raw_data
-                 FROM smart_level_events ORDER BY id ASC`
-            ).all();
+                 FROM smart_level_events WHERE timestamp > ? ORDER BY id ASC`
+            ).all(cutoff);
             cAlerts = db.transaction(() => {
                 let n = 0;
                 for (const r of rows) {
@@ -300,8 +302,8 @@ class VolumeEventService {
         try {
             const rows = db.prepare(
                 `SELECT ticker, timestamp, payload_hash, raw_data
-                 FROM institutional_interest_events ORDER BY id ASC`
-            ).all();
+                 FROM institutional_interest_events WHERE timestamp > ? ORDER BY id ASC`
+            ).all(cutoff);
             instAlerts = db.transaction(() => {
                 let n = 0;
                 for (const r of rows) {
@@ -320,21 +322,20 @@ class VolumeEventService {
             })();
         } catch (e) { console.error('[VolumeEvent] backfill C/INST error:', e.message); }
 
-        // 3. Stream A edges from master_coin_store. Walk per-ticker chronologically.
+        // 3. Stream A edges from master_coin_store.
         try {
             const tickers = db.prepare(
-                `SELECT DISTINCT ticker FROM master_coin_store WHERE trigger_source = 'STREAM_A'`
-            ).all();
-            // Hoist the per-ticker statement once
+                `SELECT DISTINCT ticker FROM master_coin_store WHERE trigger_source = 'STREAM_A' AND timestamp > ?`
+            ).all(cutoff);
             const aStmt = db.prepare(
                 `SELECT timestamp, stream_a_state FROM master_coin_store
-                 WHERE ticker = ? AND trigger_source = 'STREAM_A'
+                 WHERE ticker = ? AND trigger_source = 'STREAM_A' AND timestamp > ?
                  ORDER BY timestamp ASC`
             );
             aEdges = db.transaction(() => {
                 let n = 0;
                 for (const { ticker } of tickers) {
-                    const rows = aStmt.all(ticker);
+                    const rows = aStmt.all(ticker, cutoff);
                     let prevSpike = false, lastEdgeMs = 0;
                     for (const r of rows) {
                         let s; try { s = JSON.parse(r.stream_a_state); } catch { continue; }
@@ -349,7 +350,6 @@ class VolumeEventService {
                         }
                         prevSpike = isSpike;
                     }
-                    this._streamAEdgeState.set(ticker, { lastFlagState: prevSpike, lastEdgeMs });
                 }
                 return n;
             })();
@@ -358,17 +358,17 @@ class VolumeEventService {
         // 4. Stream D RelVol crossings
         try {
             const tickers = db.prepare(
-                `SELECT DISTINCT ticker FROM master_coin_store WHERE trigger_source = 'STREAM_D'`
-            ).all();
+                `SELECT DISTINCT ticker FROM master_coin_store WHERE trigger_source = 'STREAM_D' AND timestamp > ?`
+            ).all(cutoff);
             const dStmt = db.prepare(
                 `SELECT timestamp, stream_d_state FROM master_coin_store
-                 WHERE ticker = ? AND trigger_source = 'STREAM_D'
+                 WHERE ticker = ? AND trigger_source = 'STREAM_D' AND timestamp > ?
                  ORDER BY timestamp ASC`
             );
             dRvols = db.transaction(() => {
                 let n = 0;
                 for (const { ticker } of tickers) {
-                    const rows = dStmt.all(ticker);
+                    const rows = dStmt.all(ticker, cutoff);
                     let lastFireMs = 0;
                     for (const r of rows) {
                         let d; try { d = JSON.parse(r.stream_d_state); } catch { continue; }
@@ -389,24 +389,22 @@ class VolumeEventService {
                         })) n++;
                         lastFireMs = tsMs;
                     }
-                    this._streamDRvolState.set(ticker, lastFireMs);
                 }
                 return n;
             })();
         } catch (e) { console.error('[VolumeEvent] backfill D error:', e.message); }
 
-        // PERF AUDIT FIX (L1): cap in-memory state Maps to prevent unbounded growth
-        // across the lifetime of long-running processes.
         this._evictIfOversize(this._streamAEdgeState, 2000);
         this._evictIfOversize(this._streamDRvolState, 2000);
 
         const dt = ((Date.now() - t0) / 1000).toFixed(1);
         if (verbose) {
-            console.log(`[VolumeEvent] ✅ Backfill complete in ${dt}s — `
-                + `Stream C/SL: ${cAlerts}, C/Inst: ${instAlerts}, A edges: ${aEdges}, D RelVol: ${dRvols}`);
+            console.log(`[VolumeEvent] ✅ Delta backfill complete in ${dt}s — `
+                + `C/SL: ${cAlerts}, C/Inst: ${instAlerts}, A edges: ${aEdges}, D RelVol: ${dRvols}`);
         }
         return { cAlerts, instAlerts, aEdges, dRvols };
     }
+
 
     /**
      * LRU-style trim: drops oldest insertion-order entries until size <= cap.

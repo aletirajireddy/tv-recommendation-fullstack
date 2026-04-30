@@ -147,14 +147,9 @@ export const useTimeStore = create((set, get) => ({
             // Rule #14 Guard: Live vs Replay
             if (isLive) {
                 set({ currentIndex: newTimeline.length - 1 });
-                loadScan(newScanMeta.id); // This triggers GenieSmart calculation inside loadScan
-
-                // Refresh analytics instantly because we are looking at the live edge
-                if (fetchAnalytics) fetchAnalytics();
-                if (fetchResearch) fetchResearch();
-                if (get().fetchStrategyLogs) get().fetchStrategyLogs();
-                if (get().fetchAlphaSquad) get().fetchAlphaSquad();
+                loadScan(newScanMeta.id); // This triggers GenieSmart calculation and data fetching inside loadScan
             }
+
         });
 
         // Handle Ledger Updates (The Picker)
