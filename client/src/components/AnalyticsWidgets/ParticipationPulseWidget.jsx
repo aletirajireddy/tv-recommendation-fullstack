@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
+import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { Activity, RefreshCw, Zap, TrendingUp, TrendingDown } from 'lucide-react';
 import {
     ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush
@@ -8,9 +9,11 @@ import { format } from 'date-fns';
 import { useChartBrush } from '../../hooks/useChartBrush';
 
 export function ParticipationPulseWidget() {
-    const participationPulse = useTimeStore(s => s.participationPulse);
+    const containerRef           = useRef(null);
+    const participationPulse     = useTimeStore(s => s.participationPulse);
     const fetchParticipationPulse = useTimeStore(s => s.fetchParticipationPulse);
-    const pulseLoading = useTimeStore(s => s.pulseLoading);
+    const pulseLoading           = useTimeStore(s => s.pulseLoading);
+    const lastDataPush           = useTimeStore(s => s.lastDataPush);
     const [isMobile, setIsMobile] = useState(false);
 
     useEffect(() => {
@@ -24,6 +27,11 @@ export function ParticipationPulseWidget() {
     useEffect(() => {
         fetchParticipationPulse();
     }, []);
+
+    // Viewport-priority: refresh immediately when market-context-update fires
+    // (lastDataPush bumps on every socket event including market-context-update).
+    // fetchParticipationPulse is debounced 300ms in the store — safe to call freely.
+    useDataInvalidation(containerRef, fetchParticipationPulse, lastDataPush);
 
     const [isPulsing, setIsPulsing] = useState(false);
     useEffect(() => {
@@ -111,7 +119,7 @@ export function ParticipationPulseWidget() {
     };
 
     return (
-        <div className={`flex flex-col w-full p-4 h-[350px] rounded-lg shadow-sm ${isPulsing ? 'animate-widget-glow' : ''}`} style={{ backgroundColor: 'var(--bg-panel)', color: 'var(--text-main)', border: '1px solid var(--border)', touchAction: 'pan-y' }}>
+        <div ref={containerRef} className={`flex flex-col w-full p-4 h-[350px] rounded-lg shadow-sm ${isPulsing ? 'animate-widget-glow' : ''}`} style={{ backgroundColor: 'var(--bg-panel)', color: 'var(--text-main)', border: '1px solid var(--border)', touchAction: 'pan-y' }}>
             
             <div className="flex items-center justify-between mb-2 pb-2" style={{ borderBottom: '1px solid var(--border)' }}>
                 <div className="flex items-center gap-2">

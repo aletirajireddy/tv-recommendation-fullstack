@@ -183,13 +183,19 @@ export const useTimeStore = create((set, get) => ({
             set({ lastDataPush: Date.now() });
         });
 
-        // Handle Stream D Volume/Validator updates — invalidate EMA/Level/Validator widgets
+        // Handle Stream D volume/price pushes — EMA/Level/DistanceTracker widgets reload
         SocketService.on('stream-d-update', (_data) => {
             set({ lastDataPush: Date.now() });
         });
 
-        // Handle validator state updates
+        // Handle validator state machine transitions (WATCHING→CONFIRMED/FAILED etc)
         SocketService.on('validator-update', (_data) => {
+            set({ lastDataPush: Date.now() });
+        });
+
+        // Handle ghost queue mutations (approve / approve-all / toggle-auto)
+        // GhostCoinWidget is viewport-wired to lastDataPush, so it reloads immediately.
+        SocketService.on('ghost-update', (_data) => {
             set({ lastDataPush: Date.now() });
         });
     },

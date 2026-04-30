@@ -773,7 +773,11 @@ app.post('/api/stream-d/technicals', (req, res) => {
                 } catch (e) { /* non-blocking */ }
             });
             console.log(`[Stream D] 📡 Scan processed: ${payload.results.length} coins | ts=${timestamp}`);
+            // Emit both events: scan-update keeps backward-compat; stream-d-update lets
+            // EMA/Level/DistanceTracker widgets distinguish a Stream-D push from a full scan-A push
+            // so they can prioritise their own targeted reloads.
             io.emit('scan-update', { source: 'STREAM_D', timestamp });
+            io.emit('stream-d-update', { timestamp });
         });
 
         res.json({ success: true, accepted: payload.results.length });
@@ -1692,6 +1696,7 @@ app.post('/api/ghosts/approve', (req, res) => {
         const { ticker } = req.body;
         if (!ticker) return res.status(400).json({ error: "Ticker required" });
         db.prepare("UPDATE ghost_approval_queue SET is_approved = 1 WHERE ticker = ?").run(ticker);
+        io.emit('ghost-update', { action: 'approve', ticker }); // push to all clients
         res.json({ success: true, ticker });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -1701,6 +1706,7 @@ app.post('/api/ghosts/approve', (req, res) => {
 app.post('/api/ghosts/approve-all', (req, res) => {
     try {
         db.prepare("UPDATE ghost_approval_queue SET is_approved = 1 WHERE is_approved = 0").run();
+        io.emit('ghost-update', { action: 'approve-all' }); // push to all clients
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -1712,6 +1718,7 @@ app.post('/api/ghosts/toggle-auto', (req, res) => {
         const { enabled } = req.body;
         const val = enabled ? '1' : '0';
         db.prepare("INSERT INTO system_settings (key, value) VALUES ('ghost_auto_approve', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(val);
+        io.emit('ghost-update', { action: 'toggle-auto', enabled }); // push to all clients
         res.json({ success: true, auto_approve: enabled });
     } catch (e) {
         res.status(500).json({ error: e.message });
