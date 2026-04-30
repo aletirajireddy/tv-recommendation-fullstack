@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
+import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import socketService from '../../services/SocketService';
 import { ValidatorSettingsModal } from './ValidatorSettingsModal';
 import { TrialExpandedModal } from './TrialExpandedModal';
@@ -307,7 +308,9 @@ function CollapseButton({ collapsed, onToggle }) {
 }
 
 export function ValidatorTimelineWidget() {
+    const containerRef = useRef(null);
     const { currentIndex, timeline, activeScan } = useTimeStore();
+    const lastDataPush = useTimeStore(s => s.lastDataPush);
     const isLive = timeline.length > 0 && currentIndex === timeline.length - 1;
     const refTime = activeScan?.timestamp || new Date().toISOString();
 
@@ -339,6 +342,7 @@ export function ValidatorTimelineWidget() {
         return () => clearInterval(pollRef.current);
     }, [fetchTrials, isLive]);
 
+    // Explicit socket subscription for validator state machine events
     useEffect(() => {
         if (!isLive) return;
         const handler = () => { fetchTrials(); };
@@ -346,8 +350,12 @@ export function ValidatorTimelineWidget() {
         return () => socketService.off('validator-update', handler);
     }, [isLive, fetchTrials]);
 
+    // Viewport-priority invalidation: also reload on scan-update / stream-d-update
+    // so validator data stays in sync with the rest of the dashboard push cycle.
+    useDataInvalidation(containerRef, fetchTrials, lastDataPush);
+
     return (
-        <div className={styles.widget}>
+        <div ref={containerRef} className={styles.widget}>
             {/* ── Header row ── */}
             <div className={styles.header}>
                 <CollapseButton collapsed={isCollapsed} onToggle={() => setIsCollapsed(c => !c)} />

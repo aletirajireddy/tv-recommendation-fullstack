@@ -45,12 +45,19 @@ class SocketService {
     }
 
     /**
-     * Unsubscribe from an event
-     * @param {string} eventName 
+     * Unsubscribe from an event.
+     * Always pass the same callback reference you gave to on() — otherwise
+     * socket.io removes ALL listeners for that event name.
+     * @param {string}   eventName
+     * @param {function} [callback] - the exact function reference passed to on()
      */
-    off(eventName) {
+    off(eventName, callback) {
         if (this.socket) {
-            this.socket.off(eventName);
+            if (callback) {
+                this.socket.off(eventName, callback);
+            } else {
+                this.socket.off(eventName);
+            }
         }
     }
 

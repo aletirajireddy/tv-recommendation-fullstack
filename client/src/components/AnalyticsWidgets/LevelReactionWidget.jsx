@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
 import {
     ComposedChart, Area, Line, Bar, XAxis, YAxis, ReferenceLine,
@@ -507,6 +508,9 @@ const INTERVALS = [
 ];
 
 export function LevelReactionWidget({ filterTicker, compact }) {
+    const containerRef = useRef(null);
+    const lastDataPush = useTimeStore(s => s.lastDataPush);
+
     const [windowMin,   setWindowMin]   = useState(60);
     const [intervalMin, setIntervalMin] = useState(5);
     const [maxDist,     setMaxDist]     = useState(5);
@@ -516,7 +520,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
     // Audit fix #5/#3/#6: combined async fetcher — level-reactions then volume-events
     // in one chained call so both share one AbortController. ref-pattern means the
     // polling interval is created once; dep changes trigger reload via useEffect.
-    const { data, loading, error, reload } = usePolledFetch(
+    const { data, loading, error, reload, reloadSilent } = usePolledFetch(
         async (signal) => {
             const tickerParam = filterTicker ? `&ticker=${filterTicker}` : '';
             const r = await fetch(
@@ -545,6 +549,10 @@ export function LevelReactionWidget({ filterTicker, compact }) {
         },
         { intervalMs: 90_000, deps: [windowMin, intervalMin, maxDist] }
     );
+
+    // Viewport-priority invalidation — react to every socket push without hammering
+    // the backend; off-screen instances defer until they enter the viewport.
+    useDataInvalidation(containerRef, reloadSilent, lastDataPush);
 
     // Stream D schema: fetched once on mount (intervalMs:0 = no polling).
     const { data: schemaData } = usePolledFetch(
@@ -577,7 +585,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
     }, {});
 
     return (
-        <div className={styles.widget}>
+        <div ref={containerRef} className={styles.widget}>
             {/* ── Header ── */}
             <div className={styles.header}>
                 <div className={styles.titleRow}>

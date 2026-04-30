@@ -36,6 +36,7 @@ export function usePolledFetch(fetcher, {
     deps = [],
     pauseOnHidden = true,
     refetchOnVisible = true,
+    invalidateOn = null, // external signal: when this value changes, do a silent reload
 } = {}) {
     const [data, setData]       = useState(null);
     const [loading, setLoading] = useState(true);
@@ -91,6 +92,16 @@ export function usePolledFetch(fetcher, {
     // Trigger reload when deps change (initial + on user-driven inputs)
     /* eslint-disable react-hooks/exhaustive-deps */
     useEffect(() => { reload(); }, deps);
+    /* eslint-enable react-hooks/exhaustive-deps */
+
+    // External invalidation signal — fires a silent reload without a spinner.
+    // Callers pass lastDataPush from useTimeStore; widgets that are visible react
+    // immediately, background-tab pause is already handled by pauseOnHidden.
+    /* eslint-disable react-hooks/exhaustive-deps */
+    useEffect(() => {
+        if (!invalidateOn) return; // 0 / null → skip
+        reloadSilent();
+    }, [invalidateOn]);
     /* eslint-enable react-hooks/exhaustive-deps */
 
     // Polling interval — created once, never torn down on dep changes.

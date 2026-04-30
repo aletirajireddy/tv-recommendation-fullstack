@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
     ComposedChart, Line, Bar, XAxis, YAxis, ReferenceLine, ReferenceDot,
     Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import styles from './EMACascadeMonitor.module.css';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
 import { Zap, ChevronUp, ChevronDown, Diamond, ArrowDown, RefreshCw } from 'lucide-react';
 
@@ -117,7 +118,10 @@ const INTERVALS = [
 ];
 
 export function EMACascadeMonitor({ filterTicker, compact }) {
+    const containerRef   = useRef(null);
     const selectedTicker = useTimeStore(s => s.selectedTicker);
+    const lastDataPush   = useTimeStore(s => s.lastDataPush);
+
     const [ticker,     setTicker]     = useState(filterTicker || selectedTicker || 'BTC');
     const [tickerInput,setTickerInput]= useState(filterTicker || selectedTicker || 'BTC');
     const [windowMin,  setWindowMin]  = useState(120);
@@ -133,16 +137,22 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
 
     // Audit fixes #4: ref-pattern fetcher (no interval churn on dep changes),
     // AbortController on every fetch (#3), pause when tab hidden (#6).
-    const { data, loading, error, reload } = usePolledFetch(
+    const { data, loading, error, reload, reloadSilent } = usePolledFetch(
         () => `/api/ema-cascade?ticker=${encodeURIComponent(ticker)}&window_min=${windowMin}&interval=${intervalMin}`,
         { intervalMs: 60_000, deps: [ticker, windowMin, intervalMin] }
     );
 
+    // Viewport-priority invalidation — visible widgets reload immediately on
+    // every socket push; off-screen widgets are deferred via stagger queue.
+    useDataInvalidation(containerRef, reloadSilent, lastDataPush);
+
     // Fetch dynamic quick tickers from active board (limit to 12)
-    const { data: boardData } = usePolledFetch(
+    const { data: boardData, reloadSilent: reloadBoardSilent } = usePolledFetch(
         () => `/api/ema-distance-board?limit=12&max_dist=100&active_min=60`,
         { intervalMs: 120_000, deps: [] }
     );
+    // Also invalidate the board ticker list on data push
+    useDataInvalidation(containerRef, reloadBoardSilent, lastDataPush);
 
     const dynamicTickers = useMemo(() => {
         if (!boardData?.board?.length) return FALLBACK_TICKERS;
@@ -246,7 +256,7 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
         : regime === 'BEAR' ? styles.regimeBear : styles.regimeMixed;
 
     return (
-        <div className={styles.widget}>
+        <div ref={containerRef} className={styles.widget}>
             {/* ── Header ── */}
             <div className={styles.header}>
                 <div className={styles.titleRow}>

@@ -25,6 +25,7 @@ export const useTimeStore = create((set, get) => ({
     fusionData: null, // New Fusion Dashboard Data
     participationPulse: [], // Phase 8: Inflow/Outflow Participation Data
     alphaSquad: [], // Phase 14: Time-Series Delta Alpha Quadrant
+    lastDataPush: 0, // Global invalidation signal — bumped on every socket push
     viewMode: 'analytics', // 'monitor' | 'analytics' | 'research' | 'fusion'
     telegramEnabled: true, // Method to Toggle Global Notifications
     useSmartLevelsContext: true, // Enable AI Smart Levels Context
@@ -139,14 +140,15 @@ export const useTimeStore = create((set, get) => ({
 
             set({
                 timeline: newTimeline,
-                lastSyncTime: new Date()
+                lastSyncTime: new Date(),
+                lastDataPush: Date.now(), // signal all widgets to refresh
             });
 
             // Rule #14 Guard: Live vs Replay
             if (isLive) {
                 set({ currentIndex: newTimeline.length - 1 });
                 loadScan(newScanMeta.id); // This triggers GenieSmart calculation inside loadScan
-                
+
                 // Refresh analytics instantly because we are looking at the live edge
                 if (fetchAnalytics) fetchAnalytics();
                 if (fetchResearch) fetchResearch();
@@ -161,21 +163,34 @@ export const useTimeStore = create((set, get) => ({
         });
 
         // Handle Stream C Webhook Updates (Fusion Dashboard)
-        SocketService.on('smart-level-update', (data) => {
+        SocketService.on('smart-level-update', (_data) => {
             const { timeline, currentIndex } = get();
             const isLive = currentIndex === timeline.length - 1;
             if (isLive) {
                 get().fetchFusionData();
             }
+            // bump global push signal so level/ema widgets pick up new smart-level data
+            set({ lastDataPush: Date.now() });
         });
 
         // Handle Stream B Market Context Updates (Telemetry)
-        SocketService.on('market-context-update', (data) => {
+        SocketService.on('market-context-update', (_data) => {
             const { timeline, currentIndex } = get();
             const isLive = currentIndex === timeline.length - 1;
             if (isLive) {
                 get().fetchParticipationPulse();
             }
+            set({ lastDataPush: Date.now() });
+        });
+
+        // Handle Stream D Volume/Validator updates — invalidate EMA/Level/Validator widgets
+        SocketService.on('stream-d-update', (_data) => {
+            set({ lastDataPush: Date.now() });
+        });
+
+        // Handle validator state updates
+        SocketService.on('validator-update', (_data) => {
+            set({ lastDataPush: Date.now() });
         });
     },
 
