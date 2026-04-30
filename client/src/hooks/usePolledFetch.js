@@ -37,8 +37,9 @@ export function usePolledFetch(fetcher, {
     pauseOnHidden = true,
     refetchOnVisible = true,
     invalidateOn = null, // external signal: when this value changes, do a silent reload
+    initialData = null,  // caller can pass [] for array endpoints to avoid null-check boilerplate
 } = {}) {
-    const [data, setData]       = useState(null);
+    const [data, setData]       = useState(initialData);
     const [loading, setLoading] = useState(true);
     const [error, setError]     = useState(null);
 

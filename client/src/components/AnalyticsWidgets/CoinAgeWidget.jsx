@@ -29,15 +29,16 @@ export function CoinAgeWidget() {
 
     // Push-first: primary trigger is lastDataPush (socket event); 5-min poll is
     // a safety net for missed socket events — NOT the main refresh mechanism.
-    const { data: coins = [], loading, reloadSilent } = usePolledFetch(
+    const { data: coins, loading, reloadSilent } = usePolledFetch(
         () => '/api/coins/age',
-        { intervalMs: 300_000 } // 5-min fallback
+        { intervalMs: 300_000, initialData: [] } // initialData:[] avoids null on first render
     );
 
     // Visible widget reloads immediately on push; off-screen deferred via stagger queue.
     useDataInvalidation(containerRef, reloadSilent, lastDataPush);
 
     if (loading && coins.length === 0) return null;
+    if (coins.length === 0) return null;
 
     // Grouping
     const grouped = {
