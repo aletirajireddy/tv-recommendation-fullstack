@@ -547,7 +547,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
             }
             return { ...d, volEventsByTicker };
         },
-        { intervalMs: 90_000, deps: [windowMin, intervalMin, maxDist] }
+        { intervalMs: 300_000, deps: [windowMin, intervalMin, maxDist] }
     );
 
     // Viewport-priority invalidation — react to every socket push without hammering

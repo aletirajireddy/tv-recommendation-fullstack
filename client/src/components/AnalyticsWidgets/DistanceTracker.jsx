@@ -91,7 +91,7 @@ export function DistanceTracker({ filterTicker, compact }) {
             const tParam = filterTicker ? `&ticker=${filterTicker}&max_dist=100` : `&max_dist=${maxDist}`;
             return `/api/ema-distance-board?limit=60${tParam}&active_min=60`;
         },
-        { intervalMs: 60_000, deps: [maxDist, filterTicker] }
+        { intervalMs: 300_000, deps: [maxDist, filterTicker] }
     );
 
     // Live socket updates — use reloadSilent so stale rows stay visible

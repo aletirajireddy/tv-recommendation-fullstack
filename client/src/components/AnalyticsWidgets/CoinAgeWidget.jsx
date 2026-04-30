@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useRef } from 'react';
 import styles from './CoinAgeWidget.module.css';
+import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useDataInvalidation } from '../../hooks/useDataInvalidation';
+import { useTimeStore } from '../../store/useTimeStore';
 
 const formatAge = (ms) => {
     const minutes = Math.floor(ms / 60000);
@@ -21,31 +24,20 @@ const getCategory = (ms) => {
 };
 
 export function CoinAgeWidget() {
-    const [coins, setCoins] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const containerRef = useRef(null);
+    const lastDataPush = useTimeStore(s => s.lastDataPush);
 
-    const fetchAgeData = async () => {
-        try {
-            const res = await fetch('/api/coins/age');
-            if (res.ok) {
-                const data = await res.json();
-                setCoins(data);
-            }
-        } catch (e) {
-            console.error("Failed to fetch coin age", e);
-        } finally {
-            setLoading(false);
-        }
-    };
+    // Push-first: primary trigger is lastDataPush (socket event); 5-min poll is
+    // a safety net for missed socket events — NOT the main refresh mechanism.
+    const { data: coins = [], loading, reloadSilent } = usePolledFetch(
+        () => '/api/coins/age',
+        { intervalMs: 300_000 } // 5-min fallback
+    );
 
-    useEffect(() => {
-        fetchAgeData();
-        const interval = setInterval(fetchAgeData, 10000); // 10s poll
-        return () => clearInterval(interval);
-    }, []);
+    // Visible widget reloads immediately on push; off-screen deferred via stagger queue.
+    useDataInvalidation(containerRef, reloadSilent, lastDataPush);
 
-    if (loading) return null;
-    if (coins.length === 0) return null;
+    if (loading && coins.length === 0) return null;
 
     // Grouping
     const grouped = {
@@ -69,7 +61,7 @@ export function CoinAgeWidget() {
     ];
 
     return (
-        <div className={styles.widgetWrapper}>
+        <div ref={containerRef} className={styles.widgetWrapper}>
             <h3 className="widget-title">COIN LIFECYCLE TRACKER (TIME IN SYSTEM)</h3>
             <div className={styles.grid}>
                 {categories.map(cat => (

@@ -1,13 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Ghost } from 'lucide-react';
 import styles from './GhostCoinWidget.module.css';
+import { useDataInvalidation } from '../../hooks/useDataInvalidation';
+import { useTimeStore } from '../../store/useTimeStore';
 
 export function GhostCoinWidget() {
+    const containerRef = useRef(null);
+    const lastDataPush = useTimeStore(s => s.lastDataPush);
     const [queue, setQueue] = useState([]);
     const [autoApprove, setAutoApprove] = useState(false);
     const [loading, setLoading] = useState(true);
 
-    const fetchQueue = async () => {
+    const fetchQueue = useCallback(async () => {
         try {
             const res = await fetch('/api/ghosts/queue');
             if (res.ok) {
@@ -20,13 +24,19 @@ export function GhostCoinWidget() {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         fetchQueue();
-        const interval = setInterval(fetchQueue, 5000); // Poll every 5s for UI live updates
+        // 30s safety-net — primary refresh is socket-push via useDataInvalidation.
+        // Ghost queue changes on: new scan push (new coins appear) OR user actions
+        // (approve/toggle handled by calling fetchQueue() directly after each action).
+        const interval = setInterval(fetchQueue, 30_000);
         return () => clearInterval(interval);
-    }, []);
+    }, [fetchQueue]);
+
+    // Viewport-priority: reload on every scan push so new ghost candidates appear instantly.
+    useDataInvalidation(containerRef, fetchQueue, lastDataPush);
 
     const toggleAutoApprove = async () => {
         const newValue = !autoApprove;
@@ -70,7 +80,7 @@ export function GhostCoinWidget() {
 
     if (queue.length === 0 && !autoApprove) {
         return (
-            <div className={`${styles.widget} ${styles.widgetEmpty}`}>
+            <div ref={containerRef} className={`${styles.widget} ${styles.widgetEmpty}`}>
                 <div className={styles.header}>
                     <h4>Ghost Approvals (0)</h4>
                     <div className={styles.toggleRow}>
@@ -87,7 +97,7 @@ export function GhostCoinWidget() {
     }
 
     return (
-        <div className={styles.widget}>
+        <div ref={containerRef} className={styles.widget}>
             <div className={styles.header}>
                 <h4>
                     <Ghost size={16} strokeWidth={2.5} className="text-accent-orange" /> Ghost Approvals ({queue.length})

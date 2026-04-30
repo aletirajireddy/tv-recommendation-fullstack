@@ -135,11 +135,11 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
         }
     }, [selectedTicker, filterTicker]);
 
-    // Audit fixes #4: ref-pattern fetcher (no interval churn on dep changes),
-    // AbortController on every fetch (#3), pause when tab hidden (#6).
+    // Socket push (useDataInvalidation below) is the primary refresh trigger.
+    // 5-min interval is only a safety-net for missed socket events.
     const { data, loading, error, reload, reloadSilent } = usePolledFetch(
         () => `/api/ema-cascade?ticker=${encodeURIComponent(ticker)}&window_min=${windowMin}&interval=${intervalMin}`,
-        { intervalMs: 60_000, deps: [ticker, windowMin, intervalMin] }
+        { intervalMs: 300_000, deps: [ticker, windowMin, intervalMin] }
     );
 
     // Viewport-priority invalidation — visible widgets reload immediately on
@@ -149,7 +149,7 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     // Fetch dynamic quick tickers from active board (limit to 12)
     const { data: boardData, reloadSilent: reloadBoardSilent } = usePolledFetch(
         () => `/api/ema-distance-board?limit=12&max_dist=100&active_min=60`,
-        { intervalMs: 120_000, deps: [] }
+        { intervalMs: 300_000, deps: [] }
     );
     // Also invalidate the board ticker list on data push
     useDataInvalidation(containerRef, reloadBoardSilent, lastDataPush);

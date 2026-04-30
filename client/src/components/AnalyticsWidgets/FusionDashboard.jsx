@@ -34,11 +34,13 @@ export default function FusionDashboard() {
   const fetchFusionData = useTimeStore(s => s.fetchFusionData);
   const [expandedRows, setExpandedRows] = useState({});
 
+  // Initial load on mount.
+  // Ongoing refresh is driven by the Zustand store: useTimeStore.initializeSocket()
+  // already calls fetchFusionData() on every 'smart-level-update' socket event, and
+  // lastDataPush bumps on every stream push. No additional setInterval needed here —
+  // that was generating 2 redundant API calls/min against already-fresh data.
   useEffect(() => {
     fetchFusionData();
-    // Auto-refresh every 30s
-    const interval = setInterval(fetchFusionData, 30000);
-    return () => clearInterval(interval);
   }, []);
 
   const toggleRow = (ticker) => {

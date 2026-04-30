@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useCallback, Component } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Component } from 'react';
 import styles from './DailyCalendarWidget.module.css';
+import { useDataInvalidation } from '../../hooks/useDataInvalidation';
+import { useTimeStore } from '../../store/useTimeStore';
 
 // Prevent a bad heatmap row from blanking the entire page.
 class DrillErrorBoundary extends Component {
@@ -33,8 +35,10 @@ class DrillErrorBoundary extends Component {
  * coins ripping, or vice versa).
  */
 export function DailyCalendarWidget() {
+    const containerRef  = useRef(null);
+    const lastDataPush  = useTimeStore(s => s.lastDataPush);
     const [calendar, setCalendar] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading]   = useState(true);
     const [drillDate, setDrillDate] = useState(null);
 
     const load = useCallback(async () => {
@@ -46,12 +50,16 @@ export function DailyCalendarWidget() {
 
     useEffect(() => {
         load();
-        const id = setInterval(load, 5 * 60 * 1000); // refresh every 5 min
+        // 5-min safety-net poll — socket push is the primary refresh trigger.
+        const id = setInterval(load, 5 * 60 * 1000);
         return () => clearInterval(id);
     }, [load]);
 
+    // Viewport-priority: reload immediately when a new scan push arrives.
+    useDataInvalidation(containerRef, load, lastDataPush);
+
     return (
-        <div className={styles.widget}>
+        <div ref={containerRef} className={styles.widget}>
             <div className={styles.header}>
                 <h3 className="widget-title">📅 Daily Performance Calendar (7d)</h3>
                 <span className={styles.hint}>Click any day for full coin heatmap →</span>
