@@ -134,6 +134,20 @@ function buildEarlyMessage(trial, priceMovePct, prefix) {
 }
 
 function attach(engine, telegramService) {
+    // Per-ticker verdict cooldown — prevents same coin generating a verdict alert
+    // more than once per 4-hour window.  Separate from the per-trial cooldown in
+    // UmpireEngine (which controls when a NEW trial can start) — this one controls
+    // when we bother the operator about it.
+    const tickerVerdictCooldown = new Map();   // ticker → lastVerdictAlertMs
+    const VERDICT_COOLDOWN_MS   = 4 * 60 * 60 * 1000;  // 4 hours
+
+    function isVerdictCoolingDown(ticker, verdict) {
+        // CONFIRMED verdicts always break through (they're high-value)
+        if (verdict === 'CONFIRMED') return false;
+        const last = tickerVerdictCooldown.get(ticker) || 0;
+        return (Date.now() - last) < VERDICT_COOLDOWN_MS;
+    }
+
     engine.on('verdict', ({ trial, verdict, ruleSnapshot, priceMovePct }) => {
         if (!isLiveMode()) return;
 
@@ -141,9 +155,18 @@ function attach(engine, telegramService) {
         try { Object.assign(cfg, JSON.parse(trial.config_snapshot || '{}')); } catch {}
         if (cfg['validator.telegram_phase2_enabled'] === false) return;
 
+        if (isVerdictCoolingDown(trial.ticker, verdict)) {
+            console.log(`[TelegramValidator] ⏳ Cooldown suppressed ${verdict} for ${trial.ticker}`);
+            return;
+        }
+        tickerVerdictCooldown.set(trial.ticker, Date.now());
+
         const prefix = telegramService.getPrefix ? telegramService.getPrefix() : '💻 [LOCAL]';
-        const msg = buildVerdictMessage({ ...trial, verdict }, ruleSnapshot, priceMovePct, prefix);
-        telegramService.sendAlert(msg, verdict === 'CONFIRMED' ? 'SUCCESS' : verdict === 'FAILED' ? 'WARN' : 'INFO');
+        const msg    = buildVerdictMessage({ ...trial, verdict }, ruleSnapshot, priceMovePct, prefix);
+
+        // Map to severity tier: CONFIRMED = CRITICAL, FAILED = HIGH, others = INFO
+        const tier = verdict === 'CONFIRMED' ? 'CRITICAL' : verdict === 'FAILED' ? 'HIGH' : 'INFO';
+        telegramService.sendAlert(msg, verdict === 'CONFIRMED' ? 'SUCCESS' : verdict === 'FAILED' ? 'WARN' : 'INFO', {}, tier);
     });
 
     engine.on('early_favorable', ({ trial, priceMovePct }) => {
@@ -153,12 +176,18 @@ function attach(engine, telegramService) {
         try { Object.assign(cfg, JSON.parse(trial.config_snapshot || '{}')); } catch {}
         if (cfg['validator.telegram_early_check_enabled'] === false) return;
 
+        // Early check: suppress if ticker had a verdict alert recently (avoid EARLY → verdict double-tap)
+        if (isVerdictCoolingDown(trial.ticker, 'EARLY_FAVORABLE')) {
+            console.log(`[TelegramValidator] ⏳ Cooldown suppressed EARLY_FAVORABLE for ${trial.ticker}`);
+            return;
+        }
+
         const prefix = telegramService.getPrefix ? telegramService.getPrefix() : '💻 [LOCAL]';
-        const msg = buildEarlyMessage(trial, priceMovePct, prefix);
-        telegramService.sendAlert(msg, 'INFO');
+        const msg    = buildEarlyMessage(trial, priceMovePct, prefix);
+        telegramService.sendAlert(msg, 'INFO', {}, 'HIGH');
     });
 
-    console.log('📣 Telegram Validator attached to Umpire Engine');
+    console.log('📣 Telegram Validator v2 attached to Umpire Engine (4h per-ticker cooldown active)');
 }
 
 module.exports = { attach, isLiveMode };

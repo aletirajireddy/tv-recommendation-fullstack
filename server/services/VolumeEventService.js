@@ -16,6 +16,12 @@
  */
 
 const db = require('../database');
+// Lazy-require to avoid circular dep at module load time
+let _telegram = null;
+function getTelegram() {
+    if (!_telegram) _telegram = require('./telegram');
+    return _telegram;
+}
 
 // Module-scope prepared statements — better-sqlite3 caches prepares but inline
 // calls still re-walk the cache + re-allocate the SQL string. Hoisting saves
@@ -34,8 +40,9 @@ class VolumeEventService {
         // RelVol gate so we don't re-fire the same Stream D crossing.
         this._streamDRvolState = new Map();   // ticker → lastFiredMs
         this.STREAM_A_REARM_MS = 15 * 60 * 1000;  // sticky window
-        this.STREAM_D_REARM_MS = 10 * 60 * 1000;
-        this.STREAM_D_RVOL_THRESHOLD = 2.0;
+        this.STREAM_D_REARM_MS = 30 * 60 * 1000;  // 30 min rearm (was 10 min — too aggressive for Telegram)
+        this.STREAM_D_RVOL_THRESHOLD = 1.8;        // threshold to record event
+        this.STREAM_D_TELEGRAM_THRESHOLD = 1.8;    // threshold to alert Telegram (HIGH: 1.8×, CRITICAL: 3×)
     }
 
     /**
@@ -134,14 +141,22 @@ class VolumeEventService {
         const last = this._streamDRvolState.get(ticker) || 0;
         if (tsMs - last < this.STREAM_D_REARM_MS) return;
 
+        const price = parseFloat(data.close || data.price || 0) || null;
         this.record({
             ticker,
             ts,
             source: 'STREAM_D_RVOL',
             strength: Math.min(5, rvol),
-            meta: { relVol: rvol },
+            meta: { relVol: rvol, price },
         });
         this._streamDRvolState.set(ticker, tsMs);
+
+        // Telegram alert — fire-and-forget (non-blocking)
+        if (rvol >= this.STREAM_D_TELEGRAM_THRESHOLD) {
+            try {
+                getTelegram().onRelVolSpike({ ticker, price, relVol: rvol });
+            } catch (e) { console.error('[VolumeEvent] Telegram relVol hook error:', e.message); }
+        }
     }
 
     /**

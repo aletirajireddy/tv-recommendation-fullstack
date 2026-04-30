@@ -574,6 +574,13 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
                         VALUES (?, ?, ?, 0)
                         ON CONFLICT(ticker) DO UPDATE SET reason = excluded.reason
                     `).run(cleanTicker, pruneReason, new Date().toISOString());
+
+                    // 📣 Telegram: ghost queued — new coin needs approval (Phase 1 gap fix)
+                    setImmediate(() => {
+                        try {
+                            TelegramService.onGhostQueued({ ticker: cleanTicker, reason: pruneReason });
+                        } catch (e) { console.error('[Ghost] Telegram hook error:', e.message); }
+                    });
                 }
                 ghostList.push({ ticker: cleanTicker, reason: pruneReason, state: 'WAITING' });
                 db.prepare("UPDATE coin_lifecycles SET status = 'GHOST' WHERE ticker = ?").run(cleanTicker);
@@ -667,6 +674,15 @@ app.post('/qualified-pick', (req, res) => {
 
         // Let the UI know a pick came in
         io.emit('ledger-update', { ticker, price, signal: type });
+
+        // 📣 Telegram: scout graduation alert — STABLE picks only (Phase 1 gap fix)
+        if (saveType === 'STABLE') {
+            setImmediate(() => {
+                try {
+                    TelegramService.onScoutGraduation({ ticker, price, type: saveType, volChange });
+                } catch (e) { console.error('[Scout] Telegram hook error:', e.message); }
+            });
+        }
 
         // 2. GENERATE FEEDBACK LOOP FOR COIN SCANNER (Stateful & Cumulative)
         // [PHASE 39]: 5+2 Engine
@@ -2826,6 +2842,16 @@ app.post('/api/webhook/smart-levels', (req, res) => {
                 `).run(ticker, parsedTimestamp, price, direction, bar_move_pct, today_change_pct, today_volume, JSON.stringify(payload), payloadHash, ingestionSource);
                 console.log(`[INST-INTEREST] 🏦 Institutional Webhook: ${ticker} | Dir: ${direction} | BarMove: ${bar_move_pct.toFixed(2)}%`);
                 io.emit('institutional-interest-update', { ticker, direction, timestamp: parsedTimestamp });
+
+                // 📣 Telegram: institutional bar move alert (Phase 1 gap fix)
+                setImmediate(() => {
+                    try {
+                        TelegramService.onInstitutionalBarMove({
+                            ticker, price, barMovePct: bar_move_pct,
+                            direction, volume: today_volume,
+                        });
+                    } catch (e) { console.error('[INST-INTEREST] Telegram hook error:', e.message); }
+                });
             }
         } else {
             // Path B: Legacy Smart Levels (default fallback)
@@ -3100,6 +3126,17 @@ app.get('/api/fusion/dashboard', (req, res) => {
 const umpire = new UmpireEngine({ io });
 telegramValidator.attach(umpire, TelegramService);
 umpire.start();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOURLY HEARTBEAT — system-alive digest + key market stats
+// Fires every 60 minutes. First fire is delayed 60s after boot so that
+// the startup notification doesn't immediately collide with it.
+// ─────────────────────────────────────────────────────────────────────────────
+setTimeout(() => {
+    setInterval(() => {
+        TelegramService.onHeartbeat().catch(e => console.error('[Heartbeat]', e.message));
+    }, 60 * 60 * 1000);
+}, 60 * 1000);
 
 // ============================================================================
 // LEVEL REACTION MONITOR — /api/level-reactions
