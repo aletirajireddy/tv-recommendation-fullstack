@@ -2,8 +2,113 @@
 
 **Project**: Ultra Scalper Dashboard
 **Widget Directory**: `client/src/components/AnalyticsWidgets/`
-**Last Updated**: April 27, 2026
+**Last Updated**: April 30, 2026
 **Purpose**: Full reference for each of the 6 analytics widgets — API contracts, response shapes, component props/state, render logic, and performance notes.
+
+---
+
+## Widget Operational Contract (v3.1+ — Push-First)
+
+> **This section supersedes the original polling-only contract below.**
+
+As of v3.1, all widgets follow the **push-first, poll-as-safety-net** pattern. The original polling-only contract (fixed `setInterval`) is still documented below for reference but no longer applies to any active widget.
+
+### Push-First Lifecycle
+
+```
+1. Mount        → initial fetch via usePolledFetch (data available immediately)
+2. Socket push  → lastDataPush signal changes → useDataInvalidation fires reloadSilent()
+3. Viewport     → if off-screen at push time, reload deferred; fires on scroll-into-view
+4. Safety net   → usePolledFetch interval (5 min default) catches any missed socket events
+5. Tab hidden   → polling paused (Page Visibility API); resumes on tab focus
+```
+
+### Standard Widget Implementation Pattern
+
+Every widget that reacts to live data must include:
+
+```jsx
+import { useRef } from 'react';
+import { useTimeStore } from '../../store/useTimeStore';
+import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useDataInvalidation } from '../../hooks/useDataInvalidation';
+
+function MyWidget() {
+    const containerRef  = useRef(null);
+    const lastDataPush  = useTimeStore(s => s.lastDataPush);
+
+    const { data, loading, reloadSilent } = usePolledFetch(
+        () => '/api/my-endpoint',
+        {
+            intervalMs:   300_000,   // 5-min safety net
+            initialData:  [],        // prevents null-crash on first render for array endpoints
+            invalidateOn: lastDataPush,
+        }
+    );
+
+    useDataInvalidation(containerRef, reloadSilent, lastDataPush);
+
+    return <div ref={containerRef}>{/* widget content */}</div>;
+}
+```
+
+### Key Rules
+
+| Rule | Reason |
+|------|--------|
+| Always attach `ref={containerRef}` to the root div | Required for IntersectionObserver to track visibility |
+| Use `initialData: []` for array endpoints | JS destructuring `= []` only covers `undefined`, not `null` — causes crash without this |
+| Use `reloadSilent` not full `reload` | Silent reload keeps stale data visible during refresh (no spinner flicker) |
+| Set `intervalMs: 300_000` (5 min) | Safety net only — socket push handles real-time updates |
+| Never use raw `setInterval` for data fetching | Causes redundant calls and can't be coordinated with viewport priority |
+
+### `usePolledFetch` API Reference
+
+```js
+usePolledFetch(fetcher, options)
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `intervalMs` | number | 60_000 | Safety-net polling interval |
+| `deps` | array | `[]` | Re-runs fetcher when deps change |
+| `pauseOnHidden` | boolean | `true` | Pauses when tab is hidden |
+| `refetchOnVisible` | boolean | `true` | Refetches when tab becomes visible |
+| `invalidateOn` | any | `null` | Calls `reloadSilent()` when this value changes |
+| `initialData` | any | `null` | Starting value for `data` state |
+
+Returns: `{ data, loading, error, reload, reloadSilent }`
+
+### `useDataInvalidation` API Reference
+
+```js
+useDataInvalidation(containerRef, reloadFn, invalidateOn)
+```
+
+| Arg | Type | Description |
+|-----|------|-------------|
+| `containerRef` | React ref | Ref attached to widget root element |
+| `reloadFn` | function | `reloadSilent` from `usePolledFetch` |
+| `invalidateOn` | any | Signal that triggers invalidation (usually `lastDataPush`) |
+
+**Behaviour table**:
+
+| Widget state when push fires | Action |
+|------------------------------|--------|
+| Visible (≥5% in viewport) | `reloadFn()` called immediately |
+| Off-screen | `pendingRef = true` (no call yet) |
+| Scrolls into view (pendingRef=true) | Enqueued into module stagger queue (150ms gaps) |
+| No IntersectionObserver support | Treated as always-visible |
+
+---
+
+## Original Operational Contract (v3.0 — kept for reference)
+
+1. **Polling**: Uses the `usePolledFetch` custom hook with a fixed interval.
+2. **Cancellation**: Each poll cycle creates a new `AbortController`. The previous in-flight request is aborted before the new one starts.
+3. **Tab Visibility**: Polling is paused when `document.hidden === true` (Page Visibility API). Resumes on tab focus.
+4. **Error Handling**: On fetch failure, stale data remains visible. A non-blocking error banner is appended above the widget.
+5. **Loading State**: Initial load shows a spinner. Subsequent refreshes do not show a loading indicator.
 
 ---
 

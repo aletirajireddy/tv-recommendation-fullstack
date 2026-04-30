@@ -1,8 +1,8 @@
 # TradingView Dashboard: System Architecture & Context Guide for AI
 
-**Version**: 3.0 (Includes Analytics Widget Layer, Volume Event Service, Ghost Scoring Engine, Performance Audit)
-**Last Updated**: April 27, 2026
-**Branch**: `feature/master-coin-store-v4_validator-context-calendar`
+**Version**: 3.2 (Adds Push-First Widget Architecture, MCP v2, Telegram Alert Overhaul, VolumeEvent Model)
+**Last Updated**: April 30, 2026
+**Branch**: `feature/perf-arch-hardening`
 **Purpose**: This document serves as the absolute "Single Source of Truth" regarding the architecture of the TV Dashboard. Any AI assistant entering this project must read this to understand how data flows, where truth is derived, and how the 4 core pillars interact safely.
 
 ---
@@ -651,3 +651,169 @@ pm2 start ecosystem.dev.config.js
 
 ### Env-Driven Port Config
 All three services read their port from `process.env.PORT` (defaults: 3000 / 5173 / 3001). Vite reads `VITE_API_PORT` and `VITE_MCP_PORT` for proxy targets (both default to the standard ports).
+
+---
+
+## Push-First Widget Architecture (v3.1+)
+
+### Problem Solved
+Pre-v3.1 every widget ran its own `setInterval` — 6 widgets × 10-30s polling = ~23 HTTP calls/min at idle, all independent of whether new data had actually arrived. This generated unnecessary load over Tailscale and caused UI lag.
+
+### Solution: Socket-Driven Invalidation
+Socket push is now the **primary data trigger**. Polling is a **5-minute safety net** for missed socket events only.
+
+```
+Socket event arrives (scan-update / stream-d-update / ghost-update / ...)
+        │
+        ▼
+useTimeStore.lastDataPush = Date.now()   ← monotonic signal bumped on every push
+        │
+        ├─► Visible widgets    → reloadSilent() immediately (no spinner flicker)
+        └─► Off-screen widgets → pendingRef = true → reload on viewport entry
+```
+
+### `useDataInvalidation` Hook (`client/src/hooks/useDataInvalidation.js`)
+Core hook that wires a widget container to the invalidation signal.
+
+```js
+useDataInvalidation(containerRef, reloadFn, invalidateOn)
+```
+
+**Arguments**:
+- `containerRef` — React ref attached to the widget's root `<div>`
+- `reloadFn` — the widget's `reloadSilent` function from `usePolledFetch`
+- `invalidateOn` — `lastDataPush` from `useTimeStore` (changes on every socket push)
+
+**Behaviour**:
+- Uses `IntersectionObserver` with 5% threshold to track viewport visibility
+- When `invalidateOn` changes AND widget is **visible** → calls `reloadFn()` immediately
+- When `invalidateOn` changes AND widget is **off-screen** → sets `pendingRef = true`
+- On scroll-into-view, if `pendingRef === true` → enqueues `reloadFn()` into stagger queue
+
+**Module-level stagger queue** (prevents backend flood when many off-screen widgets scroll into view simultaneously):
+```js
+// 150ms gap between each deferred reload — serialises the burst
+let _queue = [];
+let _timer = null;
+function _flush() {
+    if (_queue.length === 0) { _timer = null; return; }
+    const fn = _queue.shift();
+    try { fn(); } catch {}
+    _timer = setTimeout(_flush, 150);
+}
+```
+
+### `usePolledFetch` Extensions (`client/src/hooks/usePolledFetch.js`)
+
+Two new options added:
+
+| Option | Type | Purpose |
+|--------|------|---------|
+| `invalidateOn` | any | When this value changes, calls `reloadSilent()` immediately |
+| `initialData` | any | Sets the initial `data` state (avoids null-crash for array endpoints — pass `[]`) |
+
+```js
+const { data, loading, reloadSilent } = usePolledFetch(
+    () => '/api/coins/age',
+    { intervalMs: 300_000, initialData: [], invalidateOn: lastDataPush }
+);
+```
+
+### `lastDataPush` Signal (`client/src/store/useTimeStore.js`)
+A single monotonic timestamp bumped on every socket event:
+
+```js
+// Bumped in handlers for:
+SocketService.on('scan-update',            () => set({ lastDataPush: Date.now() }));
+SocketService.on('smart-level-update',     () => set({ lastDataPush: Date.now() }));
+SocketService.on('stream-d-update',        () => set({ lastDataPush: Date.now() }));
+SocketService.on('ghost-update',           () => set({ lastDataPush: Date.now() }));
+SocketService.on('market-context-update',  () => set({ lastDataPush: Date.now() }));
+SocketService.on('validator-update',       () => set({ lastDataPush: Date.now() }));
+```
+
+### Socket Events Reference
+
+| Event | Emitted by | Consumed by |
+|-------|-----------|------------|
+| `scan-update` | Stream A & D ingest | All widgets via `lastDataPush` |
+| `stream-d-update` | Stream D ingest (dedicated) | EMA cascade, distance tracker |
+| `smart-level-update` | Stream C smart-level path | Level reaction, validator widgets |
+| `ghost-update` | Ghost approve/prune/toggle-auto | GhostCoinWidget instant refresh |
+| `market-context-update` | Stream B market context | ParticipationPulseWidget |
+| `ledger-update` | `/qualified-pick` | Scout-related UI |
+| `institutional-interest-update` | Stream C institutional path | Analytics header |
+| `validator-update` | UmpireEngine verdict | ValidatorWidget |
+
+### Performance Impact
+
+| Metric | Before (v3.0) | After (v3.1) |
+|--------|--------------|-------------|
+| API calls/min at idle | ~23 | ~0 |
+| API calls per push cycle | ~23 | ~8–10 (staggered) |
+| Off-screen widget refreshes | always | deferred until visible |
+| Tailscale lag | noticeable | minimal |
+
+---
+
+## VolumeEventService — Discrete Event Model (v3.0+)
+
+### Problem Solved
+Stream A's `volSpike` flag stays sticky for ~15 minutes after a spike fires. Consumers could not tell "spiking right now" from "spiked 14 minutes ago". The 24h volume counter is monotonic and equally useless as an event signal.
+
+### Solution: `volume_events` Table
+Each volume spike is stored as a **discrete, timestamped event** keyed by `(ticker, ts, source)`. Duplicates are dropped via `INSERT OR IGNORE`.
+
+### Event Sources
+
+| Source | Trigger | Rearm Window |
+|--------|---------|-------------|
+| `STREAM_A_EDGE` | Rising edge of `volSpike` flag in Stream A (false → true transition) | 15 min (matches sticky window) |
+| `STREAM_C_ALERT` | Every Stream C webhook — TV alert moment is the authoritative spike | None (every alert is an event) |
+| `STREAM_D_RVOL` | `relativevolumecex` field crosses ≥ 1.8× in Stream D screener | 30 min |
+
+### Strength Field
+Normalised spike intensity:
+- `1.0` — baseline (Stream A edge, Stream C no bar_move)
+- `1.0–5.0` — derived from `bar_move_pct / 2 + 1` (Stream C institutional)
+- `relVol value` capped at 5.0 (Stream D)
+
+### Telegram Integration
+`STREAM_D_RVOL` events with `strength ≥ 1.8` also call `TelegramService.onRelVolSpike()`.  
+`STREAM_C_ALERT` institutional events with `bar_move_pct ≥ 1.5%` also call `TelegramService.onInstitutionalBarMove()`.
+
+### API
+```
+GET /api/volume-events?ticker=BTCUSDT.P&since=2026-04-30T00:00:00Z
+GET /api/volume-events?tickers=BTC,ETH&since=...   ← batch, single IN-clause query
+```
+
+---
+
+## MCP Server v2 — Summary
+
+See `MCP_REFERENCE.md` for the full 22-tool catalog.
+
+**Key changes from v1 (17 tools) to v2 (22 tools)**:
+
+| Category | New Tools |
+|----------|-----------|
+| Market overview | `get_market_regime`, `get_stream_health` |
+| EMA cascade | `get_stream_d_matrix` |
+| Volume & levels | `get_volume_events`, `get_smart_level_reactions` |
+| Enhanced | `analyze_target` (+Stream D, +trial, +volume events), `get_market_sentiment` (+10-tick trend), `get_validated_setups` (+rule_snapshot), `get_database_schema` (+descriptions) |
+
+All tools use a shared `normaliseStreamD()` helper for consistent EMA cascade parsing.
+
+---
+
+## Telegram Alert System — Summary
+
+See `TELEGRAM_ALERTS.md` for complete format specs and cooldown rules.
+
+**Key architecture points**:
+- 3 severity tiers: `CRITICAL` (always) / `HIGH` (quiet-hours suppressed) / `INFO` (dropped if quiet)
+- Quiet hours: 00:00–06:00 UTC. HIGH alerts queued → morning digest at 06:00 UTC
+- Per-ticker 4h global cooldown shared across all alert types
+- 4 alert pathways added in v3.2 that were previously silent: institutional bar moves, scout graduations, ghost queue additions, Stream D RelVol spikes
+- Hourly heartbeat confirms system liveness
