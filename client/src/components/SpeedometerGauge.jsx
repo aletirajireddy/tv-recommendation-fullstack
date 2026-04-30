@@ -122,8 +122,7 @@ export function SpeedometerGauge({ score = 0, label = 'NEUTRAL' }) {
                     fontSize="12"
                     fontFamily="Inter, sans-serif"
                     fontWeight="700"
-                    textTransform="uppercase"
-                    letterSpacing="1px"
+                    style={{ textTransform: 'uppercase', letterSpacing: '1px' }}
                 >
                     {label}
                 </text>

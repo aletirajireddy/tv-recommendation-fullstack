@@ -59,56 +59,75 @@ export function HeaderStatsDeck() {
     );
 }
 
+/** Pure-CSS status dot — no emoji, no layout reflow, no extra paint */
+function StatusDot({ color }) {
+    return (
+        <span style={{
+            display: 'inline-block',
+            width: 7, height: 7,
+            borderRadius: '50%',
+            background: color,
+            boxShadow: `0 0 5px ${color}99`,
+            flexShrink: 0,
+        }} />
+    );
+}
+
 function SystemHealthGrid() {
     const streamsHealth = useTimeStore(s => s.streamsHealth);
-    const timeline = useTimeStore(s => s.timeline);
+    const timeline      = useTimeStore(s => s.timeline);
 
-    // Status Engine (<30m Green, 30-120m Yellow, >120m Red)
+    // Status params: <30m green · 30-120m yellow · >120m red
     const getStatusParams = (isoString) => {
-        if (!isoString) return { label: '--', color: 'var(--text-muted)', dot: '⚪' };
-        
+        if (!isoString) return { label: '--', color: 'var(--text-muted)' };
         const mins = (Date.now() - new Date(isoString).getTime()) / 60000;
-        let diffStr = TimeService.timeAgo(isoString);
-        
-        // Strip out "AGO" for space conservation in the tight header block
-        diffStr = diffStr.replace(/ AGO/i, '');
-
-        if (mins < 30) return { label: diffStr, color: '#10B981', dot: '🟢' };
-        if (mins <= 120) return { label: diffStr, color: '#FACC15', dot: '🟡' }; 
-        return { label: diffStr, color: '#EF4444', dot: '🔴' }; 
+        const label = TimeService.timeAgo(isoString);   // "now" | "2m ago" | …
+        if (mins < 30)  return { label, color: '#10B981' };
+        if (mins <= 120) return { label, color: '#FACC15' };
+        return { label, color: '#EF4444' };
     };
 
     const sA = getStatusParams(streamsHealth?.streamA);
     const sB = getStatusParams(streamsHealth?.streamB);
     const sC = getStatusParams(streamsHealth?.streamC);
-
-    // Stream D: Overall System Liveness (based on the latest timeline entry)
     const latestScan = timeline.length > 0 ? timeline[timeline.length - 1] : null;
     const sD = getStatusParams(latestScan?.timestamp);
 
+    const streams = [
+        { key: 'A', title: 'A:MACRO', s: sA },
+        { key: 'B', title: 'B:SCOUT', s: sB },
+        { key: 'C', title: 'C:ALERT', s: sC },
+        { key: 'D', title: 'D:SYNC',  s: sD },
+    ];
+
+    /* ── Desktop: full 2×2 grid ── */
     const GridItem = ({ title, status }) => (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.1)', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.03)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.1)', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.03)', gap: 6 }}>
             <span style={{ color: 'var(--text-muted)' }}>{title}</span>
-            <span style={{ color: status.color, textShadow: `0 0 6px ${status.color}40` }}>{status.dot} {status.label}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: status.color }}>
+                <StatusDot color={status.color} />
+                {status.label}
+            </span>
         </div>
     );
 
     return (
         <div className={`${styles.card} ${styles.sectionSystem} ${styles.sectionSystemHealth}`}>
-            <div style={{ 
-                display: 'grid', 
-                gridTemplateColumns: '1fr 1fr', 
-                gap: '6px 12px', 
-                width: '100%', 
-                fontSize: '10px', 
-                fontFamily: 'JetBrains Mono, monospace', 
-                fontWeight: 800,
-                letterSpacing: '0.5px'
-            }}>
-                <GridItem title="A:MACRO" status={sA} />
-                <GridItem title="B:SCOUT" status={sB} />
-                <GridItem title="C:ALERT" status={sC} />
-                <GridItem title="D:SYNC" status={sD} />
+            {/* Desktop grid — hidden on mobile via CSS */}
+            <div className={styles.streamGrid}>
+                {streams.map(({ key, title, s }) => (
+                    <GridItem key={key} title={title} status={s} />
+                ))}
+            </div>
+
+            {/* Mobile compact dots — shown only on mobile via CSS */}
+            <div className={styles.streamDots} title="A·B·C·D stream health">
+                {streams.map(({ key, s }) => (
+                    <div key={key} className={styles.streamDotItem}>
+                        <span className={styles.streamDotLabel}>{key}</span>
+                        <StatusDot color={s.color} />
+                    </div>
+                ))}
             </div>
         </div>
     );

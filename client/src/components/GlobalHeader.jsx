@@ -33,11 +33,13 @@ export function GlobalHeader({ onOpenThemeBuilder }) {
         fetchTelegramStatus(); // Fetch Toggle State
         initializeSocket();
 
-        // Start Tri-Stream Polling
+        // Tri-Stream health — 30s is fine; status ages are shown in minutes so
+        // 10s precision adds no value and generates 6 extra HTTP calls/min through
+        // Tailscale / remote tunnels unnecessarily.
         fetchStreamsHealth();
         const healthPoll = setInterval(() => {
             fetchStreamsHealth();
-        }, 10000);
+        }, 30000);
         return () => clearInterval(healthPoll);
     }, []);
 

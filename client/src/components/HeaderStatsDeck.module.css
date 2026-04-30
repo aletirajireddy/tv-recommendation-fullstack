@@ -309,35 +309,86 @@
     }
 }
 
-/* MOBILE (≤ 768px) — slim single-row: just mood gauge + breadth */
+/* ── Stream health: desktop grid vs mobile dots ── */
+.streamGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 12px;
+    width: 100%;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+}
+
+/* Mobile compact dot column — hidden on desktop */
+.streamDots {
+    display: none;
+    flex-direction: column;
+    gap: 3px;
+    align-items: center;
+    justify-content: center;
+}
+
+.streamDotItem {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.streamDotLabel {
+    font-size: 8px;
+    font-weight: 900;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    line-height: 1;
+    width: 8px;
+}
+
+/* MOBILE (≤ 768px) — single row: gauge · heartbeat · stream dots */
 @media (max-width: 768px) {
     .deckContainer {
-        gap: 8px;
+        gap: 6px;
         height: 100%;
         overflow: hidden;
     }
 
-    /* Hide heartbeat chart — too complex for 54px header */
-    .sectionHeartbeat {
+    /* Shrink gauge — keep it but make it smaller */
+    .sectionMood {
+        width: 56px;
+        flex: 0 0 56px;
+    }
+
+    /* Hide breadth on mobile — heartbeat chart is more valuable */
+    .sectionBreadth {
         display: none;
     }
 
-    /* Hide system health grid and time card on mobile */
-    .sectionSystemHealth,
+    /* SHOW heartbeat on mobile — full flex width */
+    .sectionHeartbeat {
+        display: flex;
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 100%;
+        overflow: hidden;
+    }
+
+    /* Compact stream health — dots only, no text grid */
+    .sectionSystemHealth {
+        flex: 0 0 auto;
+        min-width: 0;
+        padding-right: 4px;
+        padding-left: 4px;
+        justify-content: center;
+    }
+
+    .streamGrid  { display: none; }      /* hide desktop grid */
+    .streamDots  { display: flex; }      /* show compact dots  */
+
+    /* Hide time/replay card on mobile */
     .sectionSystem {
         display: none;
-    }
-
-    /* Keep mood gauge but shrink it */
-    .sectionMood {
-        width: 80px;
-        flex: 0 0 80px;
-    }
-
-    /* Keep breadth compact */
-    .sectionBreadth {
-        flex: 0 0 auto;
-        min-width: 80px;
     }
 
     /* Hide all dividers */
