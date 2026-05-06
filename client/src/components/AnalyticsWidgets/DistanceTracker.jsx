@@ -1,9 +1,14 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, lazy, Suspense } from 'react';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
-import { Ruler, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Ruler, RefreshCw, AlertTriangle, Bell } from 'lucide-react';
 import styles from './DistanceTracker.module.css';
+
+// Lazy-load the modal so the chunk only ships when a user actually clicks "create alert"
+const SmartAlertCreateModal = lazy(() =>
+    import('../SmartAlerts/SmartAlertCreateModal').then(m => ({ default: m.SmartAlertCreateModal || m.default }))
+);
 
 const TFS = ['m1', 'm5', 'm15', 'h1', 'h4'];
 const TF_LABELS = { m1: '1m', m5: '5m', m15: '15m', h1: '1h', h4: '4h' };
@@ -40,12 +45,12 @@ const MAX_DISTS = [
 // Audit fix #11: React.memo on row — avoids full table re-render when only sort
 // state changes (rows array is already memoized; memo here guards against any
 // accidental parent re-renders).
-const DistRow = React.memo(function DistRow({ r }) {
+const DistRow = React.memo(function DistRow({ r, onCreateAlert }) {
     const setSelectedTicker = useTimeStore(s => s.setSelectedTicker);
     return (
         <tr key={r.ticker} className={`${r.anyStale ? styles.staleRow : ''} ${r.isSqueezed ? styles.squeezedRow : ''}`}>
-            <td 
-                className={styles.tickerCell} 
+            <td
+                className={styles.tickerCell}
                 onClick={() => setSelectedTicker(r.ticker)}
                 style={{ cursor: 'pointer' }}
             >
@@ -65,14 +70,27 @@ const DistRow = React.memo(function DistRow({ r }) {
                 if (d == null) {
                     return <td key={tf} className={styles.distEmpty}>—</td>;
                 }
+                const ema = r.emas?.[tf];
+                const atr = r.atrs?.[tf];
+                const canAlert = ema != null && r.price != null;
                 return (
-                    <td key={tf} className={distClass(Math.abs(d))}
-                        title={src ? `source: ${src}` : ''}>
+                    <td key={tf}
+                        className={`${distClass(Math.abs(d))} ${styles.alertableCell}`}
+                        title={canAlert
+                            ? `Click to create smart alert · src: ${src || '—'}${atr ? ` · ATR ${atr.toFixed(2)}%` : ''}`
+                            : (src ? `source: ${src}` : '')}
+                        onClick={canAlert ? () => onCreateAlert({
+                            ticker: r.ticker, cleanTicker: r.cleanTicker,
+                            timeframe: tf, price: r.price, ema, atr, distancePct: d,
+                        }) : undefined}
+                        style={canAlert ? { cursor: 'pointer' } : undefined}
+                    >
                         {src && (
                             <span className={styles.srcDot}
                                   style={{ background: SRC_COLOR[src] || '#718096' }} />
                         )}
                         {d > 0 ? '+' : ''}{d.toFixed(2)}%
+                        {canAlert && <Bell size={9} className={styles.alertHint} />}
                     </td>
                 );
             })}
@@ -84,6 +102,11 @@ export function DistanceTracker({ filterTicker, compact }) {
     const [maxDist, setMaxDist] = useState(compact ? 10 : 5);
     const [sortKey, setSortKey] = useState('minAbsDist');
     const [sortDir, setSortDir] = useState('asc');
+
+    // Smart-alert modal state
+    const [alertPrefill, setAlertPrefill] = useState(null);
+    const handleCreateAlert = (prefill) => setAlertPrefill(prefill);
+    const closeModal = () => setAlertPrefill(null);
 
     // Audit fix #4/#5/#6: ref-pattern poll
     const { data, loading, error, reload, reloadSilent } = usePolledFetch(
@@ -223,11 +246,22 @@ export function DistanceTracker({ filterTicker, compact }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {rows.map(r => <DistRow key={r.ticker} r={r} />)}
+                            {rows.map(r => <DistRow key={r.ticker} r={r} onCreateAlert={handleCreateAlert} />)}
                         </tbody>
                     </table>
                 )}
             </div>
+
+            {alertPrefill && (
+                <Suspense fallback={null}>
+                    <SmartAlertCreateModal
+                        open={!!alertPrefill}
+                        prefill={alertPrefill}
+                        onClose={closeModal}
+                        onCreated={() => { /* badge auto-updates via socket */ }}
+                    />
+                </Suspense>
+            )}
         </div>
     );
 }

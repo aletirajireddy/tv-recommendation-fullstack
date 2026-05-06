@@ -36,6 +36,7 @@ export const Sidebar = () => {
         { id: 'levels',  label: 'Levels Monitor', icon: Layers,  prefetch: () => import('./AnalyticsWidgets/LevelReactionWidget') },
         { id: 'cascade', label: 'EMA Cascade',    icon: Activity, prefetch: () => import('./AnalyticsWidgets/EMACascadeMonitor') },
         { id: 'dist',    label: 'Distance Board', icon: Ruler,   prefetch: () => import('./AnalyticsWidgets/DistanceTracker') },
+        { id: 'alerts',  label: 'Smart Alerts',   icon: Bell,    prefetch: () => import('./AnalyticsWidgets/SmartAlertsWidget') },
         { id: 'alpha',   label: 'Alpha Squad',    icon: Zap,     prefetch: () => import('./AnalyticsWidgets/AlphaScatter') },
         { id: 'fusion',  label: 'Fusion Command', icon: Hexagon, prefetch: () => import('./AnalyticsWidgets/FusionDashboard') },
         { id: 'scout',   label: 'Participation',  icon: Users,   prefetch: () => import('./AnalyticsWidgets/ParticipationPulseWidget') },

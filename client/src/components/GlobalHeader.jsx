@@ -4,6 +4,7 @@ import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineC
 import styles from './GlobalHeader.module.css';
 import { format, formatDistanceToNow } from 'date-fns';
 import { HeaderStatsDeck } from './HeaderStatsDeck';
+import { SmartAlertsBell } from './SmartAlerts/SmartAlertsBell';
 
 export function GlobalHeader({ onOpenThemeBuilder }) {
     const timeline = useTimeStore(s => s.timeline);
@@ -111,8 +112,11 @@ export function GlobalHeader({ onOpenThemeBuilder }) {
                     )}
                 </div>
                 
+                {/* SMART ALERTS BELL — badge-counted dropdown */}
+                <SmartAlertsBell />
+
                 {/* THEME BUILDER TOGGLE */}
-                <button 
+                <button
                     onClick={onOpenThemeBuilder}
                     className="p-1.5 rounded hover:bg-bg-panel text-text-muted transition-colors border border-transparent hover:border-border ml-2 flex items-center justify-center"
                     title="Theme Builder"

@@ -31,6 +31,7 @@ const ParticipationPulseWidget  = lazy(() => import('./components/AnalyticsWidge
 const CoinAgeWidget             = lazy(() => import('./components/AnalyticsWidgets/CoinAgeWidget').then(m => ({ default: m.CoinAgeWidget })));
 const GhostCoinWidget           = lazy(() => import('./components/AnalyticsWidgets/GhostCoinWidget').then(m => ({ default: m.GhostCoinWidget })));
 const AlphaScatter              = lazy(() => import('./components/AnalyticsWidgets/AlphaScatter').then(m => ({ default: m.AlphaScatter })));
+const SmartAlertsWidget         = lazy(() => import('./components/AnalyticsWidgets/SmartAlertsWidget').then(m => ({ default: m.SmartAlertsWidget })));
 
 function App() {
   const isLive = useTimeStore(s => s.timeline.length > 0 ? s.currentIndex === s.timeline.length - 1 : false);
@@ -123,6 +124,13 @@ function App() {
             </div>
           </div>
 
+
+          {/* SECTION: SMART ALERTS — created from DistanceTracker cell-clicks */}
+          <section id="section-alerts" className={styles.widgetSection}>
+            <LazyWidget minHeight={420}>
+              <SmartAlertsWidget />
+            </LazyWidget>
+          </section>
 
           {/* SECTION: FUSION COMMAND */}
           <section id="section-fusion" className={styles.widgetSection}>
