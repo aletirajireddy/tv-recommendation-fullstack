@@ -1,7 +1,7 @@
 {
   "name": "dashboard-mcp-server",
-  "version": "1.0.0",
-  "description": "MCP Server exposing Trade View Dashboard intel",
+  "version": "3.0.0",
+  "description": "MCP v3 server exposing Trade View Dashboard intel — Streamable HTTP + SSE, prompts, subscriptions, journal, bearer auth, tool result cache + rate-limit",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
