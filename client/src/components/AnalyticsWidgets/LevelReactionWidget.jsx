@@ -94,11 +94,12 @@ function streamDChipStyle(key, value) {
         return             { color: '#718096', bg: 'rgba(113,128,150,0.08)',         label: `RVol ${v.toFixed(1)}×` };
     }
 
-    // ATR / volatility
+    // ATR / volatility — suffix shows which TF is the source (1h preferred, 15m fallback)
     if (k.includes('atr') || k.includes('volatility')) {
-        if (v >= 5)       return { color: '#f6ad55', bg: 'rgba(246,173,85,0.12)',  label: `ATR ${v.toFixed(1)}%` };
-        if (v >= 2)       return { color: '#fefcbf', bg: 'rgba(254,252,191,0.08)', label: `ATR ${v.toFixed(1)}%` };
-        return             { color: '#718096', bg: 'rgba(113,128,150,0.07)',         label: `ATR ${v.toFixed(1)}%` };
+        const tfSuffix = /timeresolution60/i.test(key) ? '·1h' : /timeresolution15/i.test(key) ? '·15m' : '';
+        if (v >= 5)       return { color: '#f6ad55', bg: 'rgba(246,173,85,0.12)',  label: `ATR ${v.toFixed(1)}%${tfSuffix}` };
+        if (v >= 2)       return { color: '#fefcbf', bg: 'rgba(254,252,191,0.08)', label: `ATR ${v.toFixed(1)}%${tfSuffix}` };
+        return             { color: '#718096', bg: 'rgba(113,128,150,0.07)',         label: `ATR ${v.toFixed(1)}%${tfSuffix}` };
     }
 
     // EMA200 distance (ema200dist_5m, ema200_5m_dist …)
@@ -159,9 +160,12 @@ function pickStreamDChips(data, schema, visibleChips) {
         }
     }
 
-    // 3. ATR
+    // 3. ATR — prefer 1h (Timeresolution60) as the stable coin-level reference;
+    //    fall back to 15m (Timeresolution15), then any atr/volatility key.
     if (vc.ATR !== false) {
-        const atrKey = schema.find(k => kl(k).includes('atr'))
+        const atrKey = schema.find(k => /timeresolution60/i.test(k) && kl(k).includes('atr'))
+                    || schema.find(k => /timeresolution15/i.test(k) && kl(k).includes('atr'))
+                    || schema.find(k => kl(k).includes('atr'))
                     || schema.find(k => kl(k).includes('volatility'));
         if (atrKey && data[atrKey] != null) {
             const s = streamDChipStyle(atrKey, data[atrKey]);
@@ -197,11 +201,15 @@ function pickStreamDChips(data, schema, visibleChips) {
     return chips.slice(0, 4);
 }
 
-/** Extract raw ATR value from a coin's stream_d data + schema (for sorting). */
+/** Extract raw ATR value from a coin's stream_d data + schema (for sorting).
+ *  Prefers 1h ATR (Timeresolution60) — same reference TF as the ATR chip. */
 function getRawATR(coin, schema) {
     if (!coin?.stream_d?.data || !schema?.length) return null;
-    const atrKey = schema.find(k => k.toLowerCase().includes('atr'))
-                || schema.find(k => k.toLowerCase().includes('volatility'));
+    const kl = k => k.toLowerCase();
+    const atrKey = schema.find(k => /timeresolution60/i.test(k) && kl(k).includes('atr'))
+                || schema.find(k => /timeresolution15/i.test(k) && kl(k).includes('atr'))
+                || schema.find(k => kl(k).includes('atr'))
+                || schema.find(k => kl(k).includes('volatility'));
     if (!atrKey) return null;
     const v = parseFloat(coin.stream_d.data[atrKey]);
     return isNaN(v) ? null : v;

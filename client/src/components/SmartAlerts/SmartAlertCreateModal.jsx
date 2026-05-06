@@ -5,11 +5,17 @@
 // expiry window, recurring vs one-shot. Defaults are sensible so the user
 // can usually just hit "Create" without touching anything.
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Bell, Info } from 'lucide-react';
 import styles from './SmartAlertCreateModal.module.css';
 
 const TF_LABELS = { m1: '1m', m5: '5m', m15: '15m', h1: '1h', h4: '4h' };
+
+// Per-TF APPROACH defaults — mirrors server/services/smartAlerts/service.js.
+// Short TFs use a smaller multiplier because they fall back to 15m ATR
+// (which is ~3-4× larger than real 1m/5m ATR). This keeps "half a candle away"
+// semantics consistent across the whole watchlist.
+const APPROACH_ATR_DEFAULTS = { m1: 0.18, m5: 0.25, m15: 0.45, h1: 0.45, h4: 0.55 };
 const TRIGGER_INFO = {
     approach: { label: 'Approaching',  desc: 'Price within configured ATR distance' },
     touch:    { label: 'Touched',      desc: 'Price essentially at the EMA' },
@@ -25,8 +31,13 @@ const EXPIRY_OPTIONS = [
 
 export function SmartAlertCreateModal({ open, prefill, onClose, onCreated }) {
     const [triggers,    setTriggers]    = useState(['approach']);
-    const [approachAtr, setApproachAtr] = useState(0.5);
+    const [approachAtr, setApproachAtr] = useState(APPROACH_ATR_DEFAULTS[prefill?.timeframe] ?? 0.45);
     const [touchAtr,    setTouchAtr]    = useState(0.1);
+
+    // Re-sync defaults whenever the user clicks a different TF cell
+    useEffect(() => {
+        setApproachAtr(APPROACH_ATR_DEFAULTS[prefill?.timeframe] ?? 0.45);
+    }, [prefill?.timeframe, prefill?.ticker]);
     const [recurring,   setRecurring]   = useState(false);
     const [cooldownMin, setCooldownMin] = useState(15);
     const [expiryHours, setExpiryHours] = useState(24);
@@ -123,7 +134,9 @@ export function SmartAlertCreateModal({ open, prefill, onClose, onCreated }) {
                     <section className={styles.section}>
                         <div className={styles.sliderHeader}>
                             <label>Approach when distance ≤ <strong>{approachAtr.toFixed(2)}× ATR</strong></label>
-                            <span className={styles.hint}><Info size={11} /> Fraction of ATR — bigger = earlier alert</span>
+                            <span className={styles.hint}>
+                                <Info size={11} /> Default for {TF_LABELS[timeframe] || timeframe}: {(APPROACH_ATR_DEFAULTS[timeframe] ?? 0.45).toFixed(2)}× · bigger = earlier alert
+                            </span>
                         </div>
                         <input type="range" min="0.1" max="2" step="0.05"
                             value={approachAtr} onChange={(e) => setApproachAtr(parseFloat(e.target.value))}

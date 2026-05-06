@@ -121,7 +121,7 @@ async function evaluateAll(reason = 'scan-update') {
             firedType = 'touch';
         } else if (triggers.includes('cross') && a.last_side && newSide && a.last_side !== newSide && (a.last_side === 'above' || a.last_side === 'below') && (newSide === 'above' || newSide === 'below')) {
             firedType = 'cross';
-        } else if (triggers.includes('approach') && distAtr != null && distAtr <= (params.approach_atr ?? service.DEFAULT_APPROACH_ATR)) {
+        } else if (triggers.includes('approach') && distAtr != null && distAtr <= (params.approach_atr ?? service.defaultApproachAtr(a.timeframe))) {
             firedType = 'approach';
         }
 

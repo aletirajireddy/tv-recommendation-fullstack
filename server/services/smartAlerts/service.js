@@ -9,10 +9,19 @@ const db = require('./db');
 const TFS              = ['m1', 'm5', 'm15', 'h1', 'h4'];
 const VALID_TRIGGERS   = ['approach', 'touch', 'cross'];
 const VALID_TYPES      = ['EMA200']; // v1 — extend here as future types land
-const DEFAULT_APPROACH_ATR = 0.50;   // |Δ| ≤ 0.50 × ATR  → approaching
-const DEFAULT_TOUCH_ATR    = 0.10;   // |Δ| ≤ 0.10 × ATR  → touched
+// Per-TF approach defaults — calibrated for the ATR source each TF uses.
+// Short TFs (1m/5m) fall back to 15m ATR which is ~3-4× their real ATR,
+// so we scale the multiplier down proportionally to keep "half a candle away"
+// semantics consistent across the whole watchlist.
+const DEFAULT_APPROACH_ATR_BY_TF = { m1: 0.18, m5: 0.25, m15: 0.45, h1: 0.45, h4: 0.55 };
+const DEFAULT_APPROACH_ATR = 0.45;   // fallback for unknown TF
+const DEFAULT_TOUCH_ATR    = 0.10;   // |Δ| ≤ 0.10 × ATR  → touched (same across TFs)
 const DEFAULT_COOLDOWN_MIN = 15;     // recurring alerts re-arm after 15min
 const DEFAULT_EXPIRY_HOURS = 24;     // 0 = never
+
+function defaultApproachAtr(tf) {
+    return DEFAULT_APPROACH_ATR_BY_TF[tf] ?? DEFAULT_APPROACH_ATR;
+}
 
 const stmts = {
     insertAlert: db.prepare(`
@@ -273,6 +282,7 @@ module.exports = {
     listEvaluable, recordEvaluation, recordTrigger, recordExpiry,
     // Constants + helpers
     TFS, VALID_TRIGGERS, VALID_TYPES,
-    DEFAULT_APPROACH_ATR, DEFAULT_TOUCH_ATR, DEFAULT_COOLDOWN_MIN, DEFAULT_EXPIRY_HOURS,
-    deltaPct, deltaAtr, sideOf,
+    DEFAULT_APPROACH_ATR_BY_TF, DEFAULT_APPROACH_ATR, DEFAULT_TOUCH_ATR,
+    DEFAULT_COOLDOWN_MIN, DEFAULT_EXPIRY_HOURS,
+    defaultApproachAtr, deltaPct, deltaAtr, sideOf,
 };
