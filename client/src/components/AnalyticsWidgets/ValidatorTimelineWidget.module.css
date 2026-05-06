@@ -231,16 +231,19 @@
     justify-content: space-between;
     width: 100%;
     min-width: 0;
-    gap: 8px;
+    gap: 6px;
     overflow: hidden; /* Keep children inside card */
+    flex-wrap: nowrap; /* Force single line — no stacking under TIME / NEUTRAL TIMEOUT */
 }
 
 .infoSection {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     flex-shrink: 1; /* Allow sections to shrink */
     min-width: 0;
+    flex-wrap: nowrap;
+    white-space: nowrap;
 }
 
 /* On narrow viewports hide the analytics section (rule dots + master chips)
@@ -270,13 +273,15 @@
 .metaRow {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 10px;
+    flex-wrap: nowrap;
 }
 
 .metaGroupCompact {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
+    white-space: nowrap;
 }
 
 .trialAnalytics {
@@ -315,13 +320,13 @@
 
 .ticker {
     font-weight: 900;
-    font-size: 14px;
+    font-size: 12px;
     color: var(--white);
     font-family: 'Outfit', sans-serif;
     letter-spacing: -0.2px;
 }
 
-.badgeDir { font-size: 9px; font-weight: 800; padding: 1px 4px; border-radius: 3px; }
+.badgeDir { font-size: 8px; font-weight: 800; padding: 1px 3px; border-radius: 3px; }
 .badgeLong { background: rgba(104, 211, 145, 0.1); color: var(--accent-green); }
 .badgeShort { background: rgba(252, 129, 129, 0.1); color: var(--accent-red); }
 
@@ -338,7 +343,7 @@
 }
 
 .metaLabel {
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 800;
     color: var(--text-muted);
     text-transform: uppercase;
@@ -346,10 +351,11 @@
 }
 
 .metaVal {
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 700;
     color: var(--white);
     font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
 }
 
 .badgeState {
@@ -357,8 +363,9 @@
     font-weight: 700;
     padding: 1px 4px;
     border-radius: 3px;
-    margin-top: 4px;
+    margin-top: 0;
     display: inline-block;
+    white-space: nowrap;
 }
 
 .stateCooldown { background: rgba(246, 173, 85, 0.1); color: var(--warning); }
@@ -368,10 +375,11 @@
 
 .moveTag {
     font-weight: 900;
-    font-size: 13px;
+    font-size: 11px;
     background: rgba(0,0,0,0.1);
-    padding: 2px 6px;
+    padding: 1px 5px;
     border-radius: 4px;
+    white-space: nowrap;
 }
 
 .expandBtnHeader {
@@ -407,13 +415,14 @@
 }
 
 .masterChip {
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 700;
     background: rgba(0, 0, 0, 0.05);
-    padding: 2px 5px;
-    border-radius: 4px;
+    padding: 1px 4px;
+    border-radius: 3px;
     color: var(--text-muted);
     border: 1px solid var(--border);
+    white-space: nowrap;
 }
 
 .masterChipVal { 

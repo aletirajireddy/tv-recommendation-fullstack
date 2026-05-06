@@ -11,6 +11,11 @@ const LevelReactionWidget = lazy(() =>
 const EMACascadeMonitor = lazy(() =>
     import('./AnalyticsWidgets/EMACascadeMonitor').then(m => ({ default: m.EMACascadeMonitor }))
 );
+// Re-introduced for single-coin view per user request — was previously commented out.
+// Filtered to the selected ticker so the table is short and immediately useful.
+const DistanceTracker = lazy(() =>
+    import('./AnalyticsWidgets/DistanceTracker').then(m => ({ default: m.default || m.DistanceTracker }))
+);
 
 const DrawerFallback = () => (
     <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>Loading…</div>
@@ -25,21 +30,24 @@ export const SelectionDrawer = () => {
     return (
         <div className={styles.drawerOverlay} onClick={() => setTicker(null)}>
             <div className={styles.drawer} onClick={e => e.stopPropagation()}>
+                {/* Compact single-line header — saves ~28px vertical space so charts
+                    inside the scrollable body get a taller render box and don't clip. */}
                 <div className={styles.header}>
                     <div className={styles.titleGroup}>
-                        <div className="flex items-center gap-2">
-                            <LayoutDashboard size={16} className="text-accent-blue" />
-                            <span className={styles.titlePrefix}>Technical Toolbox</span>
-                        </div>
+                        <LayoutDashboard size={14} className="text-accent-blue" />
+                        <span className={styles.titlePrefix}>Toolbox</span>
+                        <span className={styles.titleSep}>·</span>
                         <h2 className={styles.tickerName}>{ticker}</h2>
                     </div>
-                    <button className={styles.closeBtn} onClick={() => setTicker(null)}>
-                        <X size={20} />
+                    <button className={styles.closeBtn} onClick={() => setTicker(null)} aria-label="Close">
+                        <X size={16} />
                     </button>
                 </div>
 
                 <div className={styles.content}>
-                    {/* Filtered Widgets - These widgets should ideally accept a ticker prop to filter their view */}
+                    {/* widgetBox no longer clips children — see CSS — so any chart that
+                        renders taller than its initial estimate (Recharts ResponsiveContainer
+                        on first paint) can grow without cropping. */}
                     <div className={styles.widgetBox}>
                         <Suspense fallback={<DrawerFallback />}>
                             <LevelReactionWidget filterTicker={ticker} compact />
@@ -48,6 +56,11 @@ export const SelectionDrawer = () => {
                     <div className={styles.widgetBox}>
                         <Suspense fallback={<DrawerFallback />}>
                             <EMACascadeMonitor filterTicker={ticker} compact />
+                        </Suspense>
+                    </div>
+                    <div className={styles.widgetBox}>
+                        <Suspense fallback={<DrawerFallback />}>
+                            <DistanceTracker filterTicker={ticker} compact />
                         </Suspense>
                     </div>
                 </div>
