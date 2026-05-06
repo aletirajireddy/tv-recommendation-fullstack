@@ -15,6 +15,9 @@ const MasterStoreService = require('./services/MasterStoreService');
 const TimestampResolver = require('./services/TimestampResolver');
 const GhostScoringEngine = require('./services/GhostScoringEngine');
 const VolumeEventService = require('./services/VolumeEventService');
+const smartAlertsService   = require('./services/smartAlerts/service');
+const smartAlertsEvaluator = require('./services/smartAlerts/evaluator');
+const smartAlertsRouter    = require('./routes/smartAlerts');
 
 const app = express();
 const server = http.createServer(app);
@@ -47,6 +50,10 @@ app.use(compression({
 // ============================================================================
 // V3 ROUTES
 // ============================================================================
+
+// Smart Alerts (EMA200-based smart alert system, ATR-normalised triggers)
+app.use('/api/smart-alerts', smartAlertsRouter);
+smartAlertsEvaluator.init({ io, db });
 
 // ─── Price parsing helper ────────────────────────────────────────────────────
 // TradingView screeners and Tampermonkey sometimes send prices as formatted
@@ -230,6 +237,14 @@ app.post('/scan-report', (req, res) => {
             timestamp: payload.timestamp, // Critical for header sync
             mood: payload.market_sentiment?.moodScore,
             count: payload.results.length
+        });
+
+        // D2. SMART ALERTS — fire-and-forget evaluation pass against fresh EMA/ATR data.
+        // Runs out-of-band so it never blocks the scan ingestion path. Each alert is
+        // evaluated against the latest Stream D snapshot per ticker (batched).
+        setImmediate(() => {
+            smartAlertsEvaluator.evaluateAll('scan-update')
+                .catch(err => console.error('[SmartAlerts] eval error:', err.message));
         });
 
         // E. PROACTIVE AI ENGINE (Section 9 RFC)
@@ -835,6 +850,13 @@ app.post('/api/stream-d/technicals', (req, res) => {
             // so they can prioritise their own targeted reloads.
             io.emit('scan-update', { source: 'STREAM_D', timestamp });
             io.emit('stream-d-update', { timestamp });
+
+            // Smart Alerts — Stream D push is the freshest EMA/ATR signal, so
+            // re-evaluate. setImmediate keeps it off the request hot-path.
+            setImmediate(() => {
+                smartAlertsEvaluator.evaluateAll('stream-d-update')
+                    .catch(err => console.error('[SmartAlerts] eval error:', err.message));
+            });
         });
 
         res.json({ success: true, accepted: payload.results.length });
@@ -1388,13 +1410,18 @@ app.get('/api/ema-distance-board', (req, res) => {
 
         const TFS = ['m1','m5','m15','h1','h4'];
         const TF_BY_RES = { 1: 'm1', 5: 'm5', 15: 'm15', 60: 'h1', 240: 'h4' };
+        // TF ordering for ATR nearest-fallback (closest in resolution wins).
+        const TF_RES_MIN = { m1: 1, m5: 5, m15: 15, h1: 60, h4: 240 };
         const TTL = MasterStoreService.constructor.SOURCE_TTL_MS;
 
         const board = [];
         for (const r of latestRows) {
             const tfPicks = { m1: null, m5: null, m15: null, h1: null, h4: null };
+            // Per-TF ATR% (parallel to tfPicks). Sourced from Stream D below.
+            const tfAtrs  = { m1: null, m5: null, m15: null, h1: null, h4: null };
+            let volatilityDay = null; // last-resort fallback (1d volatility %)
 
-            // Stream D — multi-TF EMA matrix
+            // Stream D — multi-TF EMA matrix + ATR matrix (single pass)
             const dRow = dByTicker.get(r.ticker);
             if (dRow) {
                 let d; try { d = JSON.parse(dRow.stream_d_state); } catch { d = null; }
@@ -1403,19 +1430,57 @@ app.get('/api/ema-distance-board', (req, res) => {
                     const dAge  = nowMs - dTsMs;
                     const dStale = dAge > (TTL.STREAM_D || 6 * 60 * 1000);
                     for (const k of Object.keys(d)) {
-                        const m = k.match(/^ema_200Timeresolution(\d+)$/i);
-                        if (!m) continue;
-                        const slot = TF_BY_RES[parseInt(m[1], 10)];
-                        if (!slot) continue;
-                        const num = parseFloat(d[k]);
-                        if (!isNaN(num)) {
-                            tfPicks[slot] = { price: num, source: 'STREAM_D', ts: dRow.timestamp, ageMs: dAge, stale: dStale };
+                        // EMA200 per TF
+                        const mEma = k.match(/^ema_200Timeresolution(\d+)$/i);
+                        if (mEma) {
+                            const slot = TF_BY_RES[parseInt(mEma[1], 10)];
+                            if (!slot) continue;
+                            const num = parseFloat(d[k]);
+                            if (!isNaN(num)) {
+                                tfPicks[slot] = { price: num, source: 'STREAM_D', ts: dRow.timestamp, ageMs: dAge, stale: dStale };
+                            }
+                            continue;
+                        }
+                        // ATR% per TF — `averagetruerangepercent_14Timeresolution<N>`
+                        const mAtr = k.match(/^averagetruerangepercent_\d+Timeresolution(\d+)$/i);
+                        if (mAtr) {
+                            const slot = TF_BY_RES[parseInt(mAtr[1], 10)];
+                            if (!slot) continue;
+                            const num = parseFloat(d[k]);
+                            if (!isNaN(num)) tfAtrs[slot] = num;
+                            continue;
                         }
                     }
                     if (!tfPicks.m1 && d.ema_200 != null) {
                         const num = parseFloat(d.ema_200);
                         if (!isNaN(num)) tfPicks.m1 = { price: num, source: 'STREAM_D', ts: dRow.timestamp, ageMs: dAge, stale: dStale };
                     }
+                    // Daily volatility fallback for TFs with no ATR signal
+                    if (d.volatilityInterval1d != null) {
+                        const v = parseFloat(d.volatilityInterval1d);
+                        if (!isNaN(v)) volatilityDay = v;
+                    }
+                }
+            }
+
+            // Nearest-TF ATR fallback: if a TF has no ATR, copy from the closest TF
+            // that does (by resolution distance). If still none, scale daily volatility.
+            const tfsWithAtr = TFS.filter(tf => tfAtrs[tf] != null);
+            if (tfsWithAtr.length) {
+                for (const tf of TFS) {
+                    if (tfAtrs[tf] != null) continue;
+                    const target = TF_RES_MIN[tf];
+                    let best = tfsWithAtr[0], bestDelta = Math.abs(TF_RES_MIN[best] - target);
+                    for (const cand of tfsWithAtr) {
+                        const delta = Math.abs(TF_RES_MIN[cand] - target);
+                        if (delta < bestDelta) { bestDelta = delta; best = cand; }
+                    }
+                    tfAtrs[tf] = tfAtrs[best];
+                }
+            } else if (volatilityDay != null) {
+                // Scale 1d vol → per-TF estimate via sqrt-time ratio (1d = 1440m)
+                for (const tf of TFS) {
+                    tfAtrs[tf] = +(volatilityDay * Math.sqrt(TF_RES_MIN[tf] / 1440)).toFixed(3);
                 }
             }
 
@@ -1466,6 +1531,9 @@ app.get('/api/ema-distance-board', (req, res) => {
                 lastTs: r.last_ts,
                 price: px,
                 dists, sources, ages,
+                atrs: tfAtrs,                 // per-TF ATR% (with nearest-TF fallback)
+                emas: { m1: tfPicks.m1?.price ?? null, m5: tfPicks.m5?.price ?? null,
+                        m15: tfPicks.m15?.price ?? null, h1: tfPicks.h1?.price ?? null, h4: tfPicks.h4?.price ?? null },
                 minAbsDist: minAbs, minTf, liveTfCount, anyStale,
             });
         }
