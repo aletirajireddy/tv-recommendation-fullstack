@@ -168,12 +168,16 @@ function pickStreamDChips(data, schema, visibleChips) {
     }
 
     // 3. ATR — show A15 (15m) and A60 (1h) as separate chips when both available.
-    //    One toggle controls both; short labels save space; tooltip explains each.
+    //    Search data's OWN keys (not the shared schema) so we only find fields
+    //    that are actually present for this coin — avoids the schema/data mismatch
+    //    where schema has a key from another coin but this coin's data doesn't.
     if (vc.ATR !== false) {
-        const atr15Key = schema.find(k => /timeresolution15/i.test(k) && kl(k).includes('atr'));
-        const atr60Key = schema.find(k => /timeresolution60/i.test(k) && kl(k).includes('atr'));
+        const dataKeys = Object.keys(data);
+        const atr15Key = dataKeys.find(k => /timeresolution15/i.test(k) && /averagetruerange/i.test(k));
+        const atr60Key = dataKeys.find(k => /timeresolution60/i.test(k) && /averagetruerange/i.test(k));
+        // Fallback: first atr-named key, then volatility key — only when neither TF-specific found
         const fallbackKey = (!atr15Key && !atr60Key)
-            ? (schema.find(k => kl(k).includes('atr')) || schema.find(k => kl(k).includes('volatility')))
+            ? (dataKeys.find(k => kl(k).includes('atr')) || dataKeys.find(k => kl(k).includes('volatility')))
             : null;
 
         const atrSlots = [
@@ -182,7 +186,7 @@ function pickStreamDChips(data, schema, visibleChips) {
             { key: fallbackKey, shortLabel: 'ATR', tfDesc: ''  },
         ];
         for (const { key, shortLabel, tfDesc } of atrSlots) {
-            if (!key || data[key] == null) continue;
+            if (!key) continue;
             const v = parseFloat(data[key]);
             if (isNaN(v)) continue;
             const color = v >= 5 ? '#f6ad55' : v >= 2 ? '#fefcbf' : '#718096';
@@ -223,17 +227,18 @@ function pickStreamDChips(data, schema, visibleChips) {
     return chips.slice(0, 5); // up to 5 — accommodates both A15 + A60 ATR chips
 }
 
-/** Extract raw ATR value from a coin's stream_d data + schema (for sorting).
- *  Prefers 1h ATR (Timeresolution60) — same reference TF as the ATR chip. */
-function getRawATR(coin, schema) {
-    if (!coin?.stream_d?.data || !schema?.length) return null;
-    const kl = k => k.toLowerCase();
-    const atrKey = schema.find(k => /timeresolution60/i.test(k) && kl(k).includes('atr'))
-                || schema.find(k => /timeresolution15/i.test(k) && kl(k).includes('atr'))
-                || schema.find(k => kl(k).includes('atr'))
-                || schema.find(k => kl(k).includes('volatility'));
-    if (!atrKey) return null;
-    const v = parseFloat(coin.stream_d.data[atrKey]);
+/** Extract raw ATR value from a coin's stream_d data for sorting.
+ *  Searches the coin's OWN data keys — prefers 1h (Timeresolution60), then 15m. */
+function getRawATR(coin) {
+    const d = coin?.stream_d?.data;
+    if (!d) return null;
+    const keys = Object.keys(d);
+    const key = keys.find(k => /timeresolution60/i.test(k) && /averagetruerange/i.test(k))
+             || keys.find(k => /timeresolution15/i.test(k) && /averagetruerange/i.test(k))
+             || keys.find(k => k.toLowerCase().includes('atr'))
+             || keys.find(k => k.toLowerCase().includes('volatility'));
+    if (!key) return null;
+    const v = parseFloat(d[key]);
     return isNaN(v) ? null : v;
 }
 
@@ -713,8 +718,8 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                 av = a.distPct != null ? Math.abs(a.distPct) : null;
                 bv = b.distPct != null ? Math.abs(b.distPct) : null;
             } else if (sortBy === 'ATR') {
-                av = getRawATR(a, streamDSchema);
-                bv = getRawATR(b, streamDSchema);
+                av = getRawATR(a);
+                bv = getRawATR(b);
             } else if (sortBy === 'RVol') {
                 av = getRawRVol(a, streamDSchema);
                 bv = getRawRVol(b, streamDSchema);
