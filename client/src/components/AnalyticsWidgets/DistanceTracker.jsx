@@ -42,6 +42,21 @@ const MAX_DISTS = [
     { label: '±10%', value: 10 },
 ];
 
+const LS_DIST_KEY = 'distanceTracker_prefs';
+
+function loadDistPrefs(defaultMaxDist) {
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_DIST_KEY));
+        if (s && typeof s === 'object') return {
+            maxDist: defaultMaxDist,
+            sortKey: 'minAbsDist',
+            sortDir: 'asc',
+            ...s,
+        };
+    } catch {}
+    return { maxDist: defaultMaxDist, sortKey: 'minAbsDist', sortDir: 'asc' };
+}
+
 // Audit fix #11: React.memo on row — avoids full table re-render when only sort
 // state changes (rows array is already memoized; memo here guards against any
 // accidental parent re-renders).
@@ -99,9 +114,25 @@ const DistRow = React.memo(function DistRow({ r, onCreateAlert }) {
 });
 
 export function DistanceTracker({ filterTicker, compact }) {
-    const [maxDist, setMaxDist] = useState(compact ? 10 : 5);
-    const [sortKey, setSortKey] = useState('minAbsDist');
-    const [sortDir, setSortDir] = useState('asc');
+    const defaultMaxDist = compact ? 10 : 5;
+    const [distPrefs, setDistPrefs] = useState(() => loadDistPrefs(defaultMaxDist));
+    const { maxDist, sortKey, sortDir } = distPrefs;
+
+    const updateDistPref = (key, val) => {
+        setDistPrefs(prev => {
+            const next = { ...prev, [key]: val };
+            try { localStorage.setItem(LS_DIST_KEY, JSON.stringify(next)); } catch {}
+            return next;
+        });
+    };
+    const setMaxDist = (v) => updateDistPref('maxDist', v);
+    const setSortKey = (v) => updateDistPref('sortKey', v);
+    const setSortDir = (v) => updateDistPref('sortDir', v);
+
+    const resetDist = () => {
+        try { localStorage.removeItem(LS_DIST_KEY); } catch {}
+        setDistPrefs({ maxDist: defaultMaxDist, sortKey: 'minAbsDist', sortDir: 'asc' });
+    };
 
     // Smart-alert modal state
     const [alertPrefill, setAlertPrefill] = useState(null);
@@ -142,7 +173,7 @@ export function DistanceTracker({ filterTicker, compact }) {
     }, [reloadSilent]);
 
     const handleSort = (key) => {
-        if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
         else { setSortKey(key); setSortDir('asc'); }
     };
 
@@ -200,11 +231,12 @@ export function DistanceTracker({ filterTicker, compact }) {
                             </button>
                         ))}
                     </div>
-                    <div className={styles.controlGroup} style={{ marginLeft: 'auto' }}>
-                        <span className={styles.controlLabel}>
-                            {data?.count != null ? `${data.count} coins` : ''}
-                        </span>
-                    </div>
+                    {data?.count != null && (
+                        <span className={styles.controlLabel}>{data.count} coins</span>
+                    )}
+                    <button className={styles.resetBtn} onClick={resetDist} title="Reset filter and sort to defaults">
+                        ↺ Reset
+                    </button>
                 </div>
             </div>
 

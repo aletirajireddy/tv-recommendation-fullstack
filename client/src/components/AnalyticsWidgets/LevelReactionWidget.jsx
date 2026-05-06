@@ -15,8 +15,11 @@ import styles from './LevelReactionWidget.module.css';
 const CHIP_TYPES = ['RSI', 'RVol', 'ATR', 'EMA200', 'Dist'];
 const CHIP_LABELS = { RSI: 'RSI', RVol: 'RVol', ATR: 'ATR', EMA200: 'EMA200', Dist: 'Dist %' };
 
-const LS_CHIPS_KEY = 'levelReaction_chips';
-const LS_SORT_KEY  = 'levelReaction_sort';
+const LS_CHIPS_KEY   = 'levelReaction_chips';
+const LS_SORT_KEY    = 'levelReaction_sort';
+const LS_FILTERS_KEY = 'levelReaction_filters';
+
+const DEFAULT_FILTERS = { windowMin: 60, intervalMin: 5, maxDist: 5, filterSide: 'ALL', filterReact: 'ALL' };
 
 function loadChipPrefs() {
     try {
@@ -31,6 +34,13 @@ function loadSortPrefs() {
         if (s?.by) return s;
     } catch {}
     return { by: 'Dist', dir: 'asc' };
+}
+function loadFilterPrefs() {
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_FILTERS_KEY));
+        if (s && typeof s === 'object') return { ...DEFAULT_FILTERS, ...s };
+    } catch {}
+    return { ...DEFAULT_FILTERS };
 }
 
 /**
@@ -239,6 +249,22 @@ function getRawATR(coin) {
              || keys.find(k => /timeresolution15/i.test(k) && /averagetruerange/i.test(k))
              || keys.find(k => k.toLowerCase().includes('atr'))
              || keys.find(k => k.toLowerCase().includes('volatility'));
+    if (!key) return null;
+    const v = parseFloat(d[key]);
+    return isNaN(v) ? null : v;
+}
+
+/** Sort by a specific ATR timeframe resolution ('15' or '60'). Falls back to
+ *  the other TF if the preferred one is absent, then any atr key. */
+function getRawATRByTF(coin, res) {
+    const d = coin?.stream_d?.data;
+    if (!d) return null;
+    const keys = Object.keys(d);
+    const pref = res === '60' ? /timeresolution60/i : /timeresolution15/i;
+    const fall = res === '60' ? /timeresolution15/i : /timeresolution60/i;
+    const key = keys.find(k => pref.test(k) && /averagetruerange/i.test(k))
+             || keys.find(k => fall.test(k) && /averagetruerange/i.test(k))
+             || keys.find(k => k.toLowerCase().includes('atr'));
     if (!key) return null;
     const v = parseFloat(d[key]);
     return isNaN(v) ? null : v;
@@ -613,11 +639,24 @@ export function LevelReactionWidget({ filterTicker, compact }) {
     const containerRef = useRef(null);
     const lastDataPush = useTimeStore(s => s.lastDataPush);
 
-    const [windowMin,   setWindowMin]   = useState(60);
-    const [intervalMin, setIntervalMin] = useState(5);
-    const [maxDist,     setMaxDist]     = useState(5);
-    const [filterSide,  setFilterSide]  = useState('ALL');
-    const [filterReact, setFilterReact] = useState('ALL');
+    // ── All filter state — persisted to localStorage as one object ────────────
+    const [filters, setFilters] = useState(loadFilterPrefs);
+    const { windowMin, intervalMin, maxDist, filterSide, filterReact } = filters;
+
+    const updateFilter = useCallback((key, val) => {
+        setFilters(prev => {
+            const next = { ...prev, [key]: val };
+            try { localStorage.setItem(LS_FILTERS_KEY, JSON.stringify(next)); } catch {}
+            return next;
+        });
+    }, []);
+
+    // Setters keep the same names so existing JSX doesn't change
+    const setWindowMin   = (v) => updateFilter('windowMin', v);
+    const setIntervalMin = (v) => updateFilter('intervalMin', v);
+    const setMaxDist     = (v) => updateFilter('maxDist', v);
+    const setFilterSide  = (v) => updateFilter('filterSide', v);
+    const setFilterReact = (v) => updateFilter('filterReact', v);
 
     // ── Chip visibility — persisted to localStorage ─────────────────────────
     const [visibleChips, setVisibleChips] = useState(loadChipPrefs);
@@ -643,6 +682,16 @@ export function LevelReactionWidget({ filterTicker, compact }) {
             try { localStorage.setItem(LS_SORT_KEY, JSON.stringify(next)); } catch {}
             return next;
         });
+    }, []);
+
+    // ── Reset all — clears every persisted preference back to factory defaults ─
+    const resetAll = useCallback(() => {
+        [LS_CHIPS_KEY, LS_SORT_KEY, LS_FILTERS_KEY].forEach(k => {
+            try { localStorage.removeItem(k); } catch {}
+        });
+        setFilters({ ...DEFAULT_FILTERS });
+        setVisibleChips({ RSI: true, RVol: true, ATR: true, EMA200: true, Dist: true });
+        setSortPrefs({ by: 'Dist', dir: 'asc' });
     }, []);
 
     // Audit fix #5/#3/#6: combined async fetcher — level-reactions then volume-events
@@ -721,19 +770,22 @@ export function LevelReactionWidget({ filterTicker, compact }) {
             if (sortBy === 'Dist') {
                 av = a.distPct != null ? Math.abs(a.distPct) : null;
                 bv = b.distPct != null ? Math.abs(b.distPct) : null;
-            } else if (sortBy === 'ATR') {
-                av = getRawATR(a);
-                bv = getRawATR(b);
+            } else if (sortBy === 'ATR60') {
+                av = getRawATRByTF(a, '60');
+                bv = getRawATRByTF(b, '60');
+            } else if (sortBy === 'ATR15') {
+                av = getRawATRByTF(a, '15');
+                bv = getRawATRByTF(b, '15');
             } else if (sortBy === 'RVol') {
                 av = getRawRVol(a);
                 bv = getRawRVol(b);
             }
             if (av == null && bv == null) return 0;
-            if (av == null) return 1;   // nulls last regardless of dir
+            if (av == null) return 1;
             if (bv == null) return -1;
             return sortDir === 'asc' ? av - bv : bv - av;
         });
-    }, [coins, sortBy, sortDir, streamDSchema]);
+    }, [coins, sortBy, sortDir]);
 
     return (
         <div ref={containerRef} className={styles.widget}>
@@ -840,12 +892,12 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                 <div className={styles.chipToggleRow}>
                     <span className={styles.controlLabel}>Chips</span>
                     {CHIP_TYPES.map(type => {
-                        const isVisible  = visibleChips[type] !== false;
-                        const isSortable = ['Dist', 'ATR', 'RVol'].includes(type);
+                        const isVisible    = visibleChips[type] !== false;
+                        // ATR gets two dedicated sort buttons (A15 / A60); others get one
+                        const isSortable   = ['Dist', 'RVol'].includes(type);
                         const isActiveSort = sortBy === type;
                         return (
                             <span key={type} className={styles.chipToggleGroup}>
-                                {/* Toggle visibility */}
                                 <button
                                     className={`${styles.chipToggleBtn} ${isVisible ? styles.chipToggleBtnOn : styles.chipToggleBtnOff}`}
                                     onClick={() => toggleChip(type)}
@@ -853,29 +905,46 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                                 >
                                     {CHIP_LABELS[type]}
                                 </button>
-                                {/* Sort button — only for sortable types when visible */}
+                                {/* Single sort button for Dist / RVol */}
                                 {isSortable && isVisible && (
                                     <button
                                         className={`${styles.sortBtn} ${isActiveSort ? styles.sortBtnActive : ''}`}
                                         onClick={() => handleSortClick(type)}
-                                        title={isActiveSort
-                                            ? `Sorted by ${CHIP_LABELS[type]} ${sortDir === 'asc' ? '▲' : '▼'} — click to flip`
-                                            : `Sort by ${CHIP_LABELS[type]}`}
+                                        title={isActiveSort ? `Sorted by ${CHIP_LABELS[type]} — click to flip` : `Sort by ${CHIP_LABELS[type]}`}
                                     >
-                                        {isActiveSort
-                                            ? (sortDir === 'asc' ? '▲' : '▼')
-                                            : <ArrowUpDown size={8} />}
+                                        {isActiveSort ? (sortDir === 'asc' ? '▲' : '▼') : <ArrowUpDown size={8} />}
                                     </button>
+                                )}
+                                {/* ATR gets two sort buttons — A15 (15m) and A60 (1h) */}
+                                {type === 'ATR' && isVisible && (
+                                    <>
+                                        <button
+                                            className={`${styles.sortBtn} ${sortBy === 'ATR15' ? styles.sortBtnActive : ''}`}
+                                            onClick={() => handleSortClick('ATR15')}
+                                            title="Sort by 15m ATR — short-TF volatility">
+                                            {sortBy === 'ATR15' ? (sortDir === 'asc' ? '▲' : '▼') : '15'}
+                                        </button>
+                                        <button
+                                            className={`${styles.sortBtn} ${sortBy === 'ATR60' ? styles.sortBtnActive : ''}`}
+                                            onClick={() => handleSortClick('ATR60')}
+                                            title="Sort by 1h ATR — coin-level volatility reference">
+                                            {sortBy === 'ATR60' ? (sortDir === 'asc' ? '▲' : '▼') : '60'}
+                                        </button>
+                                    </>
                                 )}
                             </span>
                         );
                     })}
-                    {/* Sort label */}
-                    {['Dist','ATR','RVol'].includes(sortBy) && (
+                    {/* Active sort label */}
+                    {['Dist','ATR15','ATR60','RVol'].includes(sortBy) && (
                         <span className={styles.sortIndicatorLabel}>
-                            sorted by {CHIP_LABELS[sortBy]} {sortDir === 'asc' ? '▲' : '▼'}
+                            sorted by {sortBy === 'ATR15' ? 'A15' : sortBy === 'ATR60' ? 'A60' : CHIP_LABELS[sortBy]} {sortDir === 'asc' ? '▲' : '▼'}
                         </span>
                     )}
+                    {/* Reset all — clears every persisted preference */}
+                    <button className={styles.resetBtn} onClick={resetAll} title="Reset all filters, chips and sort to defaults">
+                        ↺ Reset
+                    </button>
                 </div>
             </div>
 

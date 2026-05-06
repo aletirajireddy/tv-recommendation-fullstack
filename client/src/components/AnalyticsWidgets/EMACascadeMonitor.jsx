@@ -117,6 +117,17 @@ const INTERVALS = [
     { label: '5m', value: 5 },
 ];
 
+const LS_CASCADE_KEY = 'emaCascade_prefs';
+const CASCADE_DEFAULTS = { windowMin: 120, intervalMin: 2 };
+
+function loadCascadePrefs() {
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_CASCADE_KEY));
+        if (s && typeof s === 'object') return { ...CASCADE_DEFAULTS, ...s };
+    } catch {}
+    return { ...CASCADE_DEFAULTS };
+}
+
 export function EMACascadeMonitor({ filterTicker, compact }) {
     const containerRef   = useRef(null);
     const selectedTicker = useTimeStore(s => s.selectedTicker);
@@ -124,8 +135,24 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
 
     const [ticker,     setTicker]     = useState(filterTicker || selectedTicker || 'BTC');
     const [tickerInput,setTickerInput]= useState(filterTicker || selectedTicker || 'BTC');
-    const [windowMin,  setWindowMin]  = useState(120);
-    const [intervalMin,setIntervalMin]= useState(2);
+
+    const [cascadePrefs, setCascadePrefs] = useState(loadCascadePrefs);
+    const { windowMin, intervalMin } = cascadePrefs;
+
+    const updateCascadePref = (key, val) => {
+        setCascadePrefs(prev => {
+            const next = { ...prev, [key]: val };
+            try { localStorage.setItem(LS_CASCADE_KEY, JSON.stringify(next)); } catch {}
+            return next;
+        });
+    };
+    const setWindowMin   = (v) => updateCascadePref('windowMin', v);
+    const setIntervalMin = (v) => updateCascadePref('intervalMin', v);
+
+    const resetCascade = () => {
+        try { localStorage.removeItem(LS_CASCADE_KEY); } catch {}
+        setCascadePrefs({ ...CASCADE_DEFAULTS });
+    };
 
     // Sync with global selection
     useEffect(() => {
@@ -316,6 +343,10 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                             </button>
                         ))}
                     </div>
+
+                    <button className={styles.resetBtn} onClick={resetCascade} title="Reset window and bucket to defaults">
+                        ↺ Reset
+                    </button>
                 </div>
             </div>
 
