@@ -80,35 +80,42 @@ function streamDChipStyle(key, value) {
 
     // RSI fields: rsi14_5m, rsi14_15m, rsi14_1h, rsi14_4h …
     if (k.includes('rsi')) {
-        if (v <= 30)      return { color: '#68d391', bg: 'rgba(104,211,145,0.15)', label: `RSI ${v.toFixed(0)}` };
-        if (v <= 45)      return { color: '#9ae6b4', bg: 'rgba(154,230,180,0.10)', label: `RSI ${v.toFixed(0)}` };
-        if (v <= 55)      return { color: '#a0aec0', bg: 'rgba(160,174,192,0.08)', label: `RSI ${v.toFixed(0)}` };
-        if (v <= 70)      return { color: '#fbb6a2', bg: 'rgba(251,182,162,0.10)', label: `RSI ${v.toFixed(0)}` };
-        return             { color: '#fc8181', bg: 'rgba(252,129,129,0.15)', label: `RSI ${v.toFixed(0)}` };
+        const zone = v <= 30 ? 'Oversold — strong buy pressure zone'
+                   : v <= 45 ? 'Mildly oversold — slight buy bias'
+                   : v <= 55 ? 'Neutral — no directional edge'
+                   : v <= 70 ? 'Mildly overbought — slight sell bias'
+                   : 'Overbought — strong sell pressure zone';
+        const tooltip = `RSI ${v.toFixed(0)} · ${zone}`;
+        if (v <= 30)      return { color: '#68d391', bg: 'rgba(104,211,145,0.15)', label: `RSI ${v.toFixed(0)}`, tooltip };
+        if (v <= 45)      return { color: '#9ae6b4', bg: 'rgba(154,230,180,0.10)', label: `RSI ${v.toFixed(0)}`, tooltip };
+        if (v <= 55)      return { color: '#a0aec0', bg: 'rgba(160,174,192,0.08)', label: `RSI ${v.toFixed(0)}`, tooltip };
+        if (v <= 70)      return { color: '#fbb6a2', bg: 'rgba(251,182,162,0.10)', label: `RSI ${v.toFixed(0)}`, tooltip };
+        return             { color: '#fc8181', bg: 'rgba(252,129,129,0.15)', label: `RSI ${v.toFixed(0)}`, tooltip };
     }
 
     // Relative volume: relVol, rel_volume, relativeVolume …
     if (k.includes('relvol') || k.includes('rel_vol') || k.includes('relativevol')) {
-        if (v >= 2.5)     return { color: '#f6ad55', bg: 'rgba(246,173,85,0.15)',  label: `RVol ${v.toFixed(1)}×` };
-        if (v >= 1.5)     return { color: '#fefcbf', bg: 'rgba(254,252,191,0.10)', label: `RVol ${v.toFixed(1)}×` };
-        return             { color: '#718096', bg: 'rgba(113,128,150,0.08)',         label: `RVol ${v.toFixed(1)}×` };
-    }
-
-    // ATR / volatility — suffix shows which TF is the source (1h preferred, 15m fallback)
-    if (k.includes('atr') || k.includes('volatility')) {
-        const tfSuffix = /timeresolution60/i.test(key) ? '·1h' : /timeresolution15/i.test(key) ? '·15m' : '';
-        if (v >= 5)       return { color: '#f6ad55', bg: 'rgba(246,173,85,0.12)',  label: `ATR ${v.toFixed(1)}%${tfSuffix}` };
-        if (v >= 2)       return { color: '#fefcbf', bg: 'rgba(254,252,191,0.08)', label: `ATR ${v.toFixed(1)}%${tfSuffix}` };
-        return             { color: '#718096', bg: 'rgba(113,128,150,0.07)',         label: `ATR ${v.toFixed(1)}%${tfSuffix}` };
+        const zone = v >= 2.5 ? 'Spike — unusually high participation, potential breakout/breakdown'
+                   : v >= 1.5 ? 'Elevated — above-average activity, watch for follow-through'
+                   : 'Normal — no volume confirmation';
+        const tooltip = `Relative Volume ${v.toFixed(2)}× · ${zone}`;
+        if (v >= 2.5)     return { color: '#f6ad55', bg: 'rgba(246,173,85,0.15)',  label: `RVol ${v.toFixed(1)}×`, tooltip };
+        if (v >= 1.5)     return { color: '#fefcbf', bg: 'rgba(254,252,191,0.10)', label: `RVol ${v.toFixed(1)}×`, tooltip };
+        return             { color: '#718096', bg: 'rgba(113,128,150,0.08)',         label: `RVol ${v.toFixed(1)}×`, tooltip };
     }
 
     // EMA200 distance (ema200dist_5m, ema200_5m_dist …)
     if (k.includes('ema') && (k.includes('dist') || k.includes('200'))) {
         const sign = v >= 0 ? '+' : '';
-        if (Math.abs(v) <= 1)  return { color: '#63b3ed', bg: 'rgba(99,179,237,0.12)', label: `EMA ${sign}${v.toFixed(1)}%` };
-        if (v < -2)             return { color: '#fc8181', bg: 'rgba(252,129,129,0.10)', label: `EMA ${sign}${v.toFixed(1)}%` };
-        if (v > 3)              return { color: '#68d391', bg: 'rgba(104,211,145,0.10)', label: `EMA ${sign}${v.toFixed(1)}%` };
-        return                  { color: '#a0aec0', bg: 'rgba(160,174,192,0.07)',         label: `EMA ${sign}${v.toFixed(1)}%` };
+        const zone = Math.abs(v) <= 1 ? 'Hugging EMA — price very close to level'
+                   : v < -2 ? 'Well below EMA — bearish positioning'
+                   : v > 3  ? 'Well above EMA — extended from level'
+                   : 'Moderate distance from EMA';
+        const tooltip = `EMA200 distance ${sign}${v.toFixed(2)}% · ${zone}`;
+        if (Math.abs(v) <= 1)  return { color: '#63b3ed', bg: 'rgba(99,179,237,0.12)', label: `EMA ${sign}${v.toFixed(1)}%`, tooltip };
+        if (v < -2)             return { color: '#fc8181', bg: 'rgba(252,129,129,0.10)', label: `EMA ${sign}${v.toFixed(1)}%`, tooltip };
+        if (v > 3)              return { color: '#68d391', bg: 'rgba(104,211,145,0.10)', label: `EMA ${sign}${v.toFixed(1)}%`, tooltip };
+        return                  { color: '#a0aec0', bg: 'rgba(160,174,192,0.07)',         label: `EMA ${sign}${v.toFixed(1)}%`, tooltip };
     }
 
     return null; // unknown / not renderable as chip
@@ -160,16 +167,31 @@ function pickStreamDChips(data, schema, visibleChips) {
         }
     }
 
-    // 3. ATR — prefer 1h (Timeresolution60) as the stable coin-level reference;
-    //    fall back to 15m (Timeresolution15), then any atr/volatility key.
+    // 3. ATR — show A15 (15m) and A60 (1h) as separate chips when both available.
+    //    One toggle controls both; short labels save space; tooltip explains each.
     if (vc.ATR !== false) {
-        const atrKey = schema.find(k => /timeresolution60/i.test(k) && kl(k).includes('atr'))
-                    || schema.find(k => /timeresolution15/i.test(k) && kl(k).includes('atr'))
-                    || schema.find(k => kl(k).includes('atr'))
-                    || schema.find(k => kl(k).includes('volatility'));
-        if (atrKey && data[atrKey] != null) {
-            const s = streamDChipStyle(atrKey, data[atrKey]);
-            if (s) chips.push({ key: atrKey, chipType: 'ATR', rawValue: parseFloat(data[atrKey]), ...s });
+        const atr15Key = schema.find(k => /timeresolution15/i.test(k) && kl(k).includes('atr'));
+        const atr60Key = schema.find(k => /timeresolution60/i.test(k) && kl(k).includes('atr'));
+        const fallbackKey = (!atr15Key && !atr60Key)
+            ? (schema.find(k => kl(k).includes('atr')) || schema.find(k => kl(k).includes('volatility')))
+            : null;
+
+        const atrSlots = [
+            { key: atr15Key, shortLabel: 'A15', tfDesc: '15m' },
+            { key: atr60Key, shortLabel: 'A60', tfDesc: '1h'  },
+            { key: fallbackKey, shortLabel: 'ATR', tfDesc: ''  },
+        ];
+        for (const { key, shortLabel, tfDesc } of atrSlots) {
+            if (!key || data[key] == null) continue;
+            const v = parseFloat(data[key]);
+            if (isNaN(v)) continue;
+            const color = v >= 5 ? '#f6ad55' : v >= 2 ? '#fefcbf' : '#718096';
+            const bg    = v >= 5 ? 'rgba(246,173,85,0.12)' : v >= 2 ? 'rgba(254,252,191,0.08)' : 'rgba(113,128,150,0.07)';
+            const volatDesc = v >= 5 ? 'High volatility' : v >= 2 ? 'Moderate volatility' : 'Low volatility';
+            const tooltip = tfDesc
+                ? `${tfDesc} ATR ${v.toFixed(2)}% — avg candle range on ${tfDesc} timeframe. ${volatDesc}. Use as proximity reference for ${tfDesc} EMA distances.`
+                : `ATR ${v.toFixed(2)}% — ${volatDesc}`;
+            chips.push({ key, chipType: 'ATR', rawValue: v, color, bg, label: `${shortLabel} ${v.toFixed(1)}%`, tooltip });
         }
     }
 
@@ -198,7 +220,7 @@ function pickStreamDChips(data, schema, visibleChips) {
         }
     }
 
-    return chips.slice(0, 4);
+    return chips.slice(0, 5); // up to 5 — accommodates both A15 + A60 ATR chips
 }
 
 /** Extract raw ATR value from a coin's stream_d data + schema (for sorting).
@@ -233,17 +255,18 @@ function StreamDChips({ streamD, schema, visibleChips }) {
     if (!chips.length) return null;
 
     return (
-        <div className={styles.streamDChips} title={`Stream D · ${timeAgo(streamD.ts)}`}>
+        <div className={styles.streamDChips}>
             {chips.map(chip => (
                 <span
                     key={chip.key}
                     className={styles.streamDChip}
                     style={{ color: chip.color, background: chip.bg, borderColor: chip.color + '40' }}
+                    title={chip.tooltip || chip.label}
                 >
                     {chip.label}
                 </span>
             ))}
-            <span className={styles.streamDAge}>{timeAgo(streamD.ts)}</span>
+            <span className={styles.streamDAge} title={`Stream D updated ${timeAgo(streamD.ts)}`}>{timeAgo(streamD.ts)}</span>
         </div>
     );
 }

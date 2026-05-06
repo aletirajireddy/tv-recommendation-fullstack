@@ -219,7 +219,7 @@
 }
 
 .laneTicker {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     color: var(--text-main);
     white-space: nowrap;
@@ -235,7 +235,7 @@
 }
 
 .laneLevel {
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-muted);
     white-space: nowrap;
     flex-shrink: 0;
@@ -468,19 +468,21 @@
 .streamDChips {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     flex-shrink: 0;
+    flex-wrap: wrap;
 }
 
 .streamDChip {
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 600;
-    padding: 1px 5px;
+    padding: 1px 4px;
     border-radius: 3px;
     border: 1px solid;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
-    letter-spacing: 0.2px;
+    letter-spacing: 0.1px;
+    cursor: default;
 }
 
 .streamDAge {
