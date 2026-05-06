@@ -1073,6 +1073,9 @@ app.get('/api/ema-cascade', (req, res) => {
         const intervalMs = intervalMin * 60 * 1000;
         const TF_BY_RES = { 1: 'm1', 5: 'm5', 15: 'm15', 60: 'h1', 240: 'h4' };
         const buckets = new Map();
+        // ATR tracked across all rows — latest value per TF (ATR is slow-moving,
+        // last seen is a good coin-level reference for TESTING threshold).
+        const rawAtrs = { m1: null, m5: null, m15: null, h1: null, h4: null };
 
         for (const row of rows) {
             const ms = new Date(row.timestamp).getTime();
@@ -1087,17 +1090,27 @@ app.get('/api/ema-cascade', (req, res) => {
             b.price = parsePrice(row.price) || b.price;
             b.lastSrc = row.trigger_source;
 
-            // Stream D: dynamic ema_200Timeresolution<N> keys
+            // Stream D: dynamic ema_200Timeresolution<N> + ATR keys
             if (row.stream_d_state) {
                 try {
                     const d = JSON.parse(row.stream_d_state);
                     for (const k of Object.keys(d)) {
-                        const m = k.match(/^ema_200Timeresolution(\d+)$/i);
-                        if (!m) continue;
-                        const tf = TF_BY_RES[parseInt(m[1], 10)];
-                        if (!tf) continue;
-                        const v = parseFloat(d[k]);
-                        if (!isNaN(v)) { b.emas[tf] = v; b.emaSrc[tf] = 'STREAM_D'; }
+                        const mE = k.match(/^ema_200Timeresolution(\d+)$/i);
+                        if (mE) {
+                            const tf = TF_BY_RES[parseInt(mE[1], 10)];
+                            if (!tf) continue;
+                            const v = parseFloat(d[k]);
+                            if (!isNaN(v)) { b.emas[tf] = v; b.emaSrc[tf] = 'STREAM_D'; }
+                            continue;
+                        }
+                        // ATR — overwrite with latest seen (newest row wins)
+                        const mA = k.match(/^averagetruerangepercent_\d+Timeresolution(\d+)$/i);
+                        if (mA) {
+                            const tf = TF_BY_RES[parseInt(mA[1], 10)];
+                            if (!tf) continue;
+                            const v = parseFloat(d[k]);
+                            if (!isNaN(v)) rawAtrs[tf] = v;
+                        }
                     }
                     if (b.emas.m1 == null && d.ema_200 != null) {
                         const v = parseFloat(d.ema_200);
@@ -1151,12 +1164,34 @@ app.get('/api/ema-cascade', (req, res) => {
         }
 
         // 4. Cascade state per bucket per TF
-        const TESTING_PCT = 0.15;  // ±0.15% = touching the EMA
+        // TESTING threshold: 0.15× ATR (adapts to coin volatility).
+        // Fallback 0.15% fixed when ATR unavailable (preserves old behaviour).
+        const TESTING_ATR_MULT     = 0.15;
+        const TESTING_PCT_FALLBACK = 0.15;
+        const TF_RES_MIN_CASCADE   = { m1: 1, m5: 5, m15: 15, h1: 60, h4: 240 };
         const tfs = ['m1', 'm5', 'm15', 'h1', 'h4'];
-        const computeCascadeState = (price, ema) => {
+
+        // ATR nearest-TF fallback — fill gaps using closest available resolution
+        const tfsWithAtr = tfs.filter(tf => rawAtrs[tf] != null);
+        if (tfsWithAtr.length) {
+            for (const tf of tfs) {
+                if (rawAtrs[tf] != null) continue;
+                const target = TF_RES_MIN_CASCADE[tf];
+                let best = tfsWithAtr[0];
+                let bestDelta = Math.abs(TF_RES_MIN_CASCADE[best] - target);
+                for (const cand of tfsWithAtr) {
+                    const delta = Math.abs(TF_RES_MIN_CASCADE[cand] - target);
+                    if (delta < bestDelta) { bestDelta = delta; best = cand; }
+                }
+                rawAtrs[tf] = rawAtrs[best];
+            }
+        }
+
+        const computeCascadeState = (price, ema, atr) => {
             if (price == null || ema == null) return 'UNKNOWN';
             const pct = ((price - ema) / ema) * 100;
-            if (Math.abs(pct) <= TESTING_PCT) return 'TESTING';
+            const thresh = atr ? TESTING_ATR_MULT * atr : TESTING_PCT_FALLBACK;
+            if (Math.abs(pct) <= thresh) return 'TESTING';
             return pct > 0 ? 'ABOVE' : 'BELOW';
         };
 
@@ -1165,7 +1200,7 @@ app.get('/api/ema-cascade', (req, res) => {
             b.cascadeState = {};
             b.distPct = {};
             for (const tf of tfs) {
-                b.cascadeState[tf] = computeCascadeState(b.price, b.emas[tf]);
+                b.cascadeState[tf] = computeCascadeState(b.price, b.emas[tf], rawAtrs[tf]);
                 b.distPct[tf] = b.emas[tf] && b.price
                     ? ((b.price - b.emas[tf]) / b.emas[tf]) * 100
                     : null;
@@ -3463,6 +3498,28 @@ app.get('/api/level-reactions', (req, res) => {
                 }));
 
             // ── 4. Classify reaction ────────────────────────────────────────
+            // Fetch Stream D now (in-memory cache, no extra DB query) so we can
+            // derive the 1h ATR reference for adaptive TESTING/APPROACHING zones.
+            const streamD = MasterStoreService.getLatestStreamD(coin.ticker);
+
+            // Prefer 1h ATR (stable coin-level reference), fall back to 15m.
+            let atrRef = null;
+            if (streamD?.data) {
+                for (const [k, v] of Object.entries(streamD.data)) {
+                    if (!/averagetruerangepercent/i.test(k)) continue;
+                    const parsed = parseFloat(v);
+                    if (isNaN(parsed)) continue;
+                    if (/timeresolution60/i.test(k))  { atrRef = parsed; break; }
+                    if (/timeresolution15/i.test(k) && !atrRef) atrRef = parsed;
+                }
+            }
+
+            // TESTING zone: within 0.5× ATR of level (adaptive to coin volatility).
+            // BREAK/BOUNCE/REJECT keep fixed % — those are outcome thresholds on a fixed level.
+            const TESTING_MULT = 0.50;
+            const testingZone  = atrRef ? TESTING_MULT * atrRef : 0.50;   // fallback 0.5%
+            const approachZone = atrRef ? 0.30 * atrRef          : 0.30;   // single-point fallback 0.3%
+
             let reaction = 'APPROACHING';
             if (history.length >= 2) {
                 const pcts      = history.map(h => h.pct);
@@ -3474,26 +3531,25 @@ app.get('/api/level-reactions', (req, res) => {
 
                 if (coin.side === 'SUPPORT') {
                     // distPct < 0 → price already broke below support
-                    if (coin.distPct < -0.8)                          reaction = 'BREAK_BEAR';
-                    else if (minPct < 0.2 && lastPct >  0.3)         reaction = 'BOUNCE';
-                    else if (Math.abs(lastPct) <= 0.5)                reaction = 'TESTING';
-                    else if (lastPct > 0.5 && swing > 0.15)          reaction = 'BOUNCE';
-                    else                                               reaction = 'APPROACHING';
+                    if (coin.distPct < -0.8)                              reaction = 'BREAK_BEAR';
+                    else if (minPct < 0.2 && lastPct >  0.3)             reaction = 'BOUNCE';
+                    else if (Math.abs(lastPct) <= testingZone)            reaction = 'TESTING';
+                    else if (lastPct > 0.5 && swing > 0.15)              reaction = 'BOUNCE';
+                    else                                                   reaction = 'APPROACHING';
                 } else {
-                    // RESISTANCE
-                    // distPct < 0 → price already broke above resistance
-                    if (coin.distPct < -0.8)                          reaction = 'BREAK_BULL';
-                    else if (maxPct > -0.2 && lastPct < -0.3)        reaction = 'REJECT';
-                    else if (Math.abs(lastPct) <= 0.5)                reaction = 'TESTING';
-                    else if (lastPct < -0.5 && swing < -0.15)        reaction = 'REJECT';
-                    else                                               reaction = 'APPROACHING';
+                    // RESISTANCE — distPct < 0 → price already broke above resistance
+                    if (coin.distPct < -0.8)                              reaction = 'BREAK_BULL';
+                    else if (maxPct > -0.2 && lastPct < -0.3)            reaction = 'REJECT';
+                    else if (Math.abs(lastPct) <= testingZone)            reaction = 'TESTING';
+                    else if (lastPct < -0.5 && swing < -0.15)            reaction = 'REJECT';
+                    else                                                   reaction = 'APPROACHING';
                 }
-            } else if (Math.abs(coin.distPct) <= 0.3) {
+            } else if (Math.abs(coin.distPct) <= approachZone) {
                 reaction = 'TESTING';
             }
 
             // ── 5. Attach latest Stream D snapshot (RSI / EMA / ATR / RelVol) ──────
-            const streamD = MasterStoreService.getLatestStreamD(coin.ticker);
+            // streamD already fetched above — reuse the same reference.
 
             return {
                 ticker:         coin.ticker,
