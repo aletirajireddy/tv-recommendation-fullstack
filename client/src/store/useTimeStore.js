@@ -9,6 +9,17 @@ let debounceTimerResearch = null;
 let debounceTimerParticipation = null;
 let debounceTimerAlpha = null;
 
+// In-flight de-duplication guards.
+// Module-scoped (not per-instance) because the store itself is a singleton.
+// If a fetch is already in flight, callers receive the SAME promise — preventing
+// React StrictMode double-invocation, multiple component subscribers, or rapid
+// re-renders from issuing redundant requests for the same data.
+const _inflight = {
+    timeline: null,
+    health:   null,
+    telegram: null,
+};
+
 export const useTimeStore = create((set, get) => ({
     // 1. STATE
     timeline: [],
@@ -65,18 +76,11 @@ export const useTimeStore = create((set, get) => ({
         }
     },
 
-    fetchAiHistory: async () => {
-        try {
-            const res = await fetch(`${API_BASE}/ai/history`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            // Defensive check
-            set({ aiHistory: Array.isArray(data) ? data : [] });
-        } catch (err) {
-            console.error('Failed to fetch AI history:', err);
-            set({ aiHistory: [] }); // Fallback
-        }
-    },
+    // NOTE: removed unused `fetchAiHistory` (was duplicate of fetchTimeline with no callers).
+    // The same `/api/ai/history` endpoint is fetched by `fetchTimeline` below with
+    // proper hours=720 parameter and timeline normalisation. Keeping a second action
+    // that hits the same endpoint without parameters was dead code that risked
+    // accidentally being wired up later as a third duplicate fetch.
 
     toggleTelegram: async () => {
         try {
@@ -102,29 +106,49 @@ export const useTimeStore = create((set, get) => ({
     },
 
     fetchTelegramStatus: async () => {
-        try {
-            const res = await fetch(`${API_BASE}/settings/telegram`);
-            if (res.ok) {
-                const data = await res.json();
-                set({ telegramEnabled: !!data.enabled });
+        // De-dup: if a status fetch is already pending, return that promise.
+        // Prevents StrictMode double-mount and the GlobalHeader effect from issuing
+        // two parallel calls (this endpoint was 1.85s in trace; doing it twice was
+        // pure waste). Server settings are also rarely-changing → reusing a 100ms-old
+        // in-flight promise is always correct here.
+        if (_inflight.telegram) return _inflight.telegram;
+        _inflight.telegram = (async () => {
+            try {
+                const res = await fetch(`${API_BASE}/settings/telegram`);
+                if (res.ok) {
+                    const data = await res.json();
+                    set({ telegramEnabled: !!data.enabled });
+                }
+            } catch (err) {
+                console.error('Telegram status fetch failed:', err);
+            } finally {
+                _inflight.telegram = null;
             }
-        } catch (err) {
-            console.error('Telegram status fetch failed:', err);
-        }
+        })();
+        return _inflight.telegram;
     },
 
     fetchStreamsHealth: async () => {
-        try {
-            const res = await fetch(`${API_BASE}/system/health`);
-            if (res.ok) {
-                const data = await res.json();
-                if (data.success) {
-                    set({ streamsHealth: data });
+        // De-dup: same rationale as fetchTelegramStatus. Stream health is also
+        // server-cached for 30s now, so a duplicate call would just hit the cache —
+        // but we still skip the network round trip entirely via this guard.
+        if (_inflight.health) return _inflight.health;
+        _inflight.health = (async () => {
+            try {
+                const res = await fetch(`${API_BASE}/system/health`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.success) {
+                        set({ streamsHealth: data });
+                    }
                 }
+            } catch (err) {
+                console.error('Streams health fetch failed:', err);
+            } finally {
+                _inflight.health = null;
             }
-        } catch (err) {
-            console.error('Streams health fetch failed:', err);
-        }
+        })();
+        return _inflight.health;
     },
 
     initializeSocket: () => {
@@ -270,9 +294,19 @@ export const useTimeStore = create((set, get) => ({
 
 
     fetchTimeline: async () => {
+        // De-dup guard: this is the LARGEST initial payload (~187KB / 30 days of scans).
+        // Without this, React StrictMode in dev fetches it twice and so does any
+        // accidental double-mount in prod. The endpoint is also pure read of
+        // append-only data — a 200ms-old in-flight result is identical to a fresh one.
+        if (_inflight.timeline) return _inflight.timeline;
+        _inflight.timeline = (async () => {
         try {
             const hours = 720; // 30 Days fixed sandbox capacity
-            const res = await fetch(`${API_BASE}/ai/history?hours=${hours}&_t=${Date.now()}`);
+            // NOTE: removed the `_t=${Date.now()}` cache-buster. Express now sends
+            // `Cache-Control: public, max-age=15` for hot endpoints, and the timeline
+            // response is gzip-compressed. The cache-buster defeats both. We accept
+            // up to 15s staleness on the slider — new scans push via socket anyway.
+            const res = await fetch(`${API_BASE}/ai/history?hours=${hours}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
 
@@ -309,7 +343,13 @@ export const useTimeStore = create((set, get) => ({
         } catch (err) {
             console.error('Failed to fetch timeline:', err);
             set({ timeline: [] });
+        } finally {
+            // Always release the in-flight slot, even on error, so the next call
+            // (e.g. a manual refresh after a failure) can proceed.
+            _inflight.timeline = null;
         }
+        })();
+        return _inflight.timeline;
     },
 
     loadScan: async (scanId) => {

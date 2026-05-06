@@ -324,22 +324,49 @@ export function ValidatorTimelineWidget() {
     const refTimeRef = useRef(refTime);
     refTimeRef.current = refTime;
 
+    // In-flight guard: cancel any pending request before issuing a new one.
+    // Fixes the triple-fetch on mount caused by isLive flipping false→true while the
+    // [fetchTrials, isLive] effect is also re-running. Without this, 3 simultaneous
+    // requests for the same data race (each ~2.5s, all 63KB) — wasting backend CPU
+    // and bandwidth. With AbortController, only the latest call survives.
+    const inflightRef = useRef(null);
+
     const fetchTrials = useCallback(async () => {
+        // Cancel any prior in-flight request — only the most recent one matters.
+        if (inflightRef.current) inflightRef.current.abort();
+        const controller = new AbortController();
+        inflightRef.current = controller;
+
         try {
             const url = `/api/validator/trials?refTime=${encodeURIComponent(refTimeRef.current)}&limit=12`;
-            const r = await fetch(url);
+            const r = await fetch(url, { signal: controller.signal });
             if (r.ok) {
                 const data = await r.json();
                 setActive(data.active || []);
                 setResolved(data.resolved || []);
             }
-        } catch { } finally { setLoading(false); }
+        } catch (err) {
+            // Swallow AbortError (intentional cancel); log other errors for diagnosis
+            if (err.name !== 'AbortError') {
+                console.error('[ValidatorTimeline] trials fetch failed:', err);
+            }
+        } finally {
+            // Only clear loading + inflight if this is still the latest request
+            if (inflightRef.current === controller) {
+                inflightRef.current = null;
+                setLoading(false);
+            }
+        }
     }, []);
 
     useEffect(() => {
         fetchTrials();
         pollRef.current = setInterval(fetchTrials, isLive ? 10000 : 30000);
-        return () => clearInterval(pollRef.current);
+        return () => {
+            clearInterval(pollRef.current);
+            // Cancel any in-flight request on unmount/re-run to free the connection
+            if (inflightRef.current) inflightRef.current.abort();
+        };
     }, [fetchTrials, isLive]);
 
     // Explicit socket subscription for validator state machine events
