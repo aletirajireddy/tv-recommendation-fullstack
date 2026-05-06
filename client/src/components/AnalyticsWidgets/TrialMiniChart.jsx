@@ -3,6 +3,7 @@ import {
     Area, Bar, XAxis, YAxis, Tooltip,
     ReferenceLine, ReferenceArea, ResponsiveContainer, ComposedChart,
 } from 'recharts';
+import socketService from '../../services/SocketService';
 
 /**
  * TrialMiniChart — real price-action chart embedded in each trial card.
@@ -18,7 +19,152 @@ import {
  *   - Smart Level (orange dashed)
  *   - 5m EMA200 (blue dotted) if available
  *   - Verdict dot at resolved time
+ *
+ * --- TIER 2 NETWORK OPTIMIZATIONS (module scope) ---
+ * The previous version fired one OHLC + one vol-events fetch per trial card on
+ * EVERY mount. With 12 visible trials and a parent that re-renders 3× during
+ * page load, that meant 12×2×3 = 72 requests, almost all cancelled mid-flight
+ * (trace evidence: all 12 OHLC rows showed "cancelled" status).
+ *
+ * The four guards below — cache, in-flight dedup, stagger queue, abort-on-unmount —
+ * collapse that to a single network call per trial_id per 30s, regardless of how
+ * many times React mounts/unmounts the component or how many concurrent callers
+ * ask for the same trial. The validator-update socket event invalidates a single
+ * trial's cache entry the moment its state transitions, so resolved verdicts
+ * never show stale charts.
  */
+
+// ──────────────────────────────────────────────────────────────────────────
+// Module-scoped caches & queues — shared across all TrialMiniChart instances.
+// Survive React unmount/remount (the whole point of this layer).
+// ──────────────────────────────────────────────────────────────────────────
+
+const OHLC_TTL_MS    = 30_000;   // re-mount within 30s returns instant cached data
+const CACHE_MAX      = 100;       // LRU cap (~3KB per entry × 100 = 300KB worst case)
+const STAGGER_GAP_MS = 60;        // 60ms between cold fetches → 12 trials = ~720ms total
+
+// Map<trial_id, { ohlc, volEvents, ts }>  — insertion-order = LRU order
+const _ohlcCache = new Map();
+
+// Map<trial_id, Promise>  — coalesces concurrent callers onto the same network call
+const _ohlcInflight = new Map();
+
+// Stagger queue — same pattern as useDataInvalidation, dedicated instance so the
+// two queues don't interfere with each other.
+let _staggerQueue = [];
+let _staggerTimer = null;
+function _staggerFlush() {
+    if (_staggerQueue.length === 0) { _staggerTimer = null; return; }
+    const fn = _staggerQueue.shift();
+    try { fn(); } catch { /* noop */ }
+    _staggerTimer = setTimeout(_staggerFlush, STAGGER_GAP_MS);
+}
+function _staggerEnqueue(fn) {
+    _staggerQueue.push(fn);
+    if (!_staggerTimer) _staggerTimer = setTimeout(_staggerFlush, 0);
+}
+
+function _cacheGet(trialId) {
+    const hit = _ohlcCache.get(trialId);
+    if (!hit) return null;
+    if ((Date.now() - hit.ts) > OHLC_TTL_MS) {
+        _ohlcCache.delete(trialId);
+        return null;
+    }
+    // Refresh LRU position: re-insert moves to end of insertion order
+    _ohlcCache.delete(trialId);
+    _ohlcCache.set(trialId, hit);
+    return hit;
+}
+
+function _cacheSet(trialId, data) {
+    // Evict oldest if at cap (Map iteration is insertion-order = FIFO)
+    if (_ohlcCache.size >= CACHE_MAX) {
+        const oldest = _ohlcCache.keys().next().value;
+        if (oldest !== undefined) _ohlcCache.delete(oldest);
+    }
+    _ohlcCache.set(trialId, { ...data, ts: Date.now() });
+}
+
+// Module-level socket subscription — ONE listener for all chart instances,
+// not one per card. Drops the cache entry for whichever trial just transitioned
+// state, so the next mount re-fetches fresh data. Safe to attach unconditionally;
+// SocketService.connect() is idempotent (returns existing socket if present).
+let _socketSubscribed = false;
+function _ensureSocketSubscription() {
+    if (_socketSubscribed) return;
+    _socketSubscribed = true;
+    socketService.on('validator-update', (payload) => {
+        // Defensive: payload shape may vary by event; only invalidate if we got an ID
+        const id = payload?.trial_id || payload?.id;
+        if (id && _ohlcCache.has(id)) _ohlcCache.delete(id);
+        // No id given → conservative full clear (rare path; e.g. bulk recompute event)
+        if (!id && payload?.bulk) _ohlcCache.clear();
+    });
+}
+
+/**
+ * Core fetcher with in-flight dedup. Returns a Promise that resolves to
+ * { ohlc, volEvents } or null on failure.
+ *
+ * @param {string} trialId
+ * @param {string} ticker
+ * @param {string} detectedAt   ISO string
+ * @param {AbortSignal} signal  per-instance abort signal (only aborts THIS caller's wait,
+ *                              not the underlying shared fetch — other subscribers still receive)
+ */
+function _fetchOhlcDeduped(trialId, ticker, detectedAt) {
+    // 1. Cache hit → instant
+    const cached = _cacheGet(trialId);
+    if (cached) return Promise.resolve({ ohlc: cached.ohlc, volEvents: cached.volEvents });
+
+    // 2. In-flight → reuse the same Promise (true dedup; no second network call)
+    if (_ohlcInflight.has(trialId)) return _ohlcInflight.get(trialId);
+
+    // 3. Cold → schedule via stagger queue so 12 simultaneous mounts spread out
+    const promise = new Promise((resolve) => {
+        _staggerEnqueue(async () => {
+            // Re-check cache: another caller may have populated it while we waited
+            const lateCached = _cacheGet(trialId);
+            if (lateCached) {
+                resolve({ ohlc: lateCached.ohlc, volEvents: lateCached.volEvents });
+                return;
+            }
+            try {
+                const ohlcRes = await fetch(
+                    `/api/validator/trial/${encodeURIComponent(trialId)}/ohlc?interval=5`
+                );
+                if (!ohlcRes.ok) { resolve(null); return; }
+                const ohlc = await ohlcRes.json();
+                if (!ohlc || ohlc.error) { resolve(null); return; }
+
+                // Chained vol-events fetch — same staggering benefit, no extra burst
+                let volEvents = [];
+                try {
+                    const since_min = Math.ceil((Date.now() - new Date(detectedAt).getTime()) / 60000) + 30;
+                    const cappedMin = Math.min(since_min, 1440); // max 24h
+                    const vRes = await fetch(
+                        `/api/volume-events?ticker=${encodeURIComponent(ticker)}&since_min=${cappedMin}&limit=30`
+                    );
+                    if (vRes.ok) {
+                        const vd = await vRes.json();
+                        if (vd?.events?.length) volEvents = vd.events;
+                    }
+                } catch { /* vol events failure is non-fatal */ }
+
+                _cacheSet(trialId, { ohlc, volEvents });
+                resolve({ ohlc, volEvents });
+            } catch {
+                resolve(null);
+            } finally {
+                _ohlcInflight.delete(trialId);
+            }
+        });
+    });
+
+    _ohlcInflight.set(trialId, promise);
+    return promise;
+}
 
 // Dynamic decimal precision based on price magnitude
 function smartFmt(price) {
@@ -46,32 +192,34 @@ const VOL_SRC_LABEL = {
 };
 
 export function TrialMiniChart({ trial }) {
-    const [ohlc, setOhlc]         = useState(null);
-    const [volEvents, setVolEvents] = useState([]);
-    const fetchedRef = useRef(false);
+    // Synchronous cache priming — if data is already cached at render time we
+    // skip the "Loading chart…" placeholder entirely (no flicker on remount).
+    const _primed = _cacheGet(trial.trial_id);
+    const [ohlc, setOhlc]         = useState(_primed?.ohlc ?? null);
+    const [volEvents, setVolEvents] = useState(_primed?.volEvents ?? []);
+
+    // alive flag survives the closure; flips false on unmount so we never
+    // call setState on an unmounted component (also avoids React warnings).
+    const aliveRef = useRef(true);
 
     useEffect(() => {
-        if (fetchedRef.current) return;
-        fetchedRef.current = true;
+        aliveRef.current = true;
+        _ensureSocketSubscription();
 
-        fetch(`/api/validator/trial/${encodeURIComponent(trial.trial_id)}/ohlc?interval=5`)
-            .then(r => r.ok ? r.json() : null)
-            .then(d => {
-                if (d && !d.error) {
-                    setOhlc(d);
-                    // Fetch vol events for the chart's time window using the trial ticker.
-                    // since_min covers from detection up to now (+30m buffer).
-                    const since_min = Math.ceil((Date.now() - new Date(trial.detected_at).getTime()) / 60000) + 30;
-                    const cappedMin = Math.min(since_min, 1440); // max 24h
-                    fetch(`/api/volume-events?ticker=${encodeURIComponent(trial.ticker)}&since_min=${cappedMin}&limit=30`)
-                        .then(r2 => r2.ok ? r2.json() : null)
-                        .then(vd => {
-                            if (vd?.events?.length) setVolEvents(vd.events);
-                        })
-                        .catch(() => {});
-                }
-            })
-            .catch(() => {});
+        // If we primed synchronously above, no fetch needed.
+        if (_primed) return () => { aliveRef.current = false; };
+
+        _fetchOhlcDeduped(trial.trial_id, trial.ticker, trial.detected_at)
+            .then(result => {
+                if (!aliveRef.current || !result) return;
+                setOhlc(result.ohlc);
+                if (result.volEvents?.length) setVolEvents(result.volEvents);
+            });
+
+        return () => { aliveRef.current = false; };
+    // _primed is intentionally not a dep: it's read once on mount and the
+    // socket-driven cache invalidation handles refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [trial.trial_id, trial.ticker, trial.detected_at]);
 
     if (!ohlc) {
