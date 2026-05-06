@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "description": "Root management for TV Recommendation Dashboard",
   "scripts": {
-    "deploy": "powershell -File ./sync_to_cloud.ps1",
+    "deploy:linux": "bash deploy.sh",
+    "deploy:windows": "node deploy.js",
     "start": "node start_all.js",
     "test:telegram": "node server/test_telegram.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1"
   },
   "author": "",
   "license": "ISC"

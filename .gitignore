@@ -12,6 +12,14 @@ dump.pm2
 *.db-wal
 *.db-shm
 
+# MCP v3 runtime files (created on first boot, never committed)
+mcp-server/mcp_journal.db
+mcp-server/mcp_journal.db-wal
+mcp-server/mcp_journal.db-shm
+
+# PM2 log output (runtime, not source)
+logs/
+
 # Gmail Rehydrator
 email_rehydrator/token.json
 email_rehydrator/credentials.json
