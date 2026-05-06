@@ -128,28 +128,30 @@ function streamDChipStyle(key, value) {
  * Returns max 4 chips to keep the lane header compact.
  * Respects visibleChips — hidden types are skipped entirely.
  */
+// All chip lookups search the coin's OWN data keys — never the shared schema.
+// The shared schema is a union across all coins; a key present there may be
+// absent from this specific coin's stream_d blob, silently producing no chip.
 function pickStreamDChips(data, schema, visibleChips) {
-    if (!data || !schema?.length) return [];
-    // visibleChips defaults to all-on when not passed (backwards compat)
+    if (!data) return [];
     const vc = visibleChips || {};
-
     const chips = [];
     const kl = k => k.toLowerCase();
+    const dataKeys = Object.keys(data); // search only this coin's own fields
 
-    // 1. RSI
+    // 1. RSI — prefer shortest TF with data; fall back to any rsi key
     if (vc.RSI !== false) {
         const TF_PRIORITY = ['_5m', '5m', '_15m', '15m', '_1h', '1h', '_4h', '4h'];
         let rsiAdded = false;
         for (const tf of TF_PRIORITY) {
-            const key = schema.find(k => kl(k).includes('rsi') && kl(k).endsWith(tf));
-            if (key && data[key] != null) {
+            const key = dataKeys.find(k => kl(k).includes('rsi') && kl(k).endsWith(tf));
+            if (key) {
                 const s = streamDChipStyle(key, data[key]);
                 if (s) { chips.push({ key, chipType: 'RSI', ...s }); rsiAdded = true; break; }
             }
         }
         if (!rsiAdded) {
-            const rsiKey = schema.find(k => kl(k).includes('rsi'));
-            if (rsiKey && data[rsiKey] != null) {
+            const rsiKey = dataKeys.find(k => kl(k).includes('rsi'));
+            if (rsiKey) {
                 const s = streamDChipStyle(rsiKey, data[rsiKey]);
                 if (s) chips.push({ key: rsiKey, chipType: 'RSI', ...s });
             }
@@ -158,10 +160,10 @@ function pickStreamDChips(data, schema, visibleChips) {
 
     // 2. Relative Volume
     if (vc.RVol !== false) {
-        const rvolKey = schema.find(k =>
+        const rvolKey = dataKeys.find(k =>
             kl(k).includes('relvol') || kl(k).includes('rel_vol') || kl(k).includes('relativevol')
         );
-        if (rvolKey && data[rvolKey] != null) {
+        if (rvolKey) {
             const s = streamDChipStyle(rvolKey, data[rvolKey]);
             if (s) chips.push({ key: rvolKey, chipType: 'RVol', ...s });
         }
@@ -201,13 +203,13 @@ function pickStreamDChips(data, schema, visibleChips) {
 
     // 4. EMA200 distance
     if (vc.EMA200 !== false) {
-        const emaDistKey = schema.find(k => kl(k).includes('ema') && kl(k).includes('dist'));
-        if (emaDistKey && data[emaDistKey] != null) {
+        const emaDistKey = dataKeys.find(k => kl(k).includes('ema') && kl(k).includes('dist'));
+        if (emaDistKey) {
             const s = streamDChipStyle(emaDistKey, data[emaDistKey]);
             if (s) chips.push({ key: emaDistKey, chipType: 'EMA200', ...s });
         } else {
-            const emaAbsKey = schema.find(k => kl(k) === 'ema_200' || kl(k) === 'ema200' || (kl(k).includes('ema') && kl(k).includes('200')));
-            if (emaAbsKey && data[emaAbsKey] != null) {
+            const emaAbsKey = dataKeys.find(k => kl(k) === 'ema_200' || kl(k) === 'ema200' || (kl(k).includes('ema') && kl(k).includes('200')));
+            if (emaAbsKey) {
                 const emaPrice  = parseFloat(data[emaAbsKey]);
                 const closePrice = parseFloat(data.close || data.price || 0);
                 if (!isNaN(emaPrice) && emaPrice > 0 && closePrice > 0) {
@@ -242,13 +244,15 @@ function getRawATR(coin) {
     return isNaN(v) ? null : v;
 }
 
-/** Extract raw RVol value from a coin's stream_d data + schema (for sorting). */
-function getRawRVol(coin, schema) {
-    if (!coin?.stream_d?.data || !schema?.length) return null;
+/** Extract raw RVol value from a coin's stream_d data for sorting.
+ *  Searches the coin's OWN data keys — no shared schema needed. */
+function getRawRVol(coin) {
+    const d = coin?.stream_d?.data;
+    if (!d) return null;
     const kl = k => k.toLowerCase();
-    const rvolKey = schema.find(k => kl(k).includes('relvol') || kl(k).includes('rel_vol') || kl(k).includes('relativevol'));
+    const rvolKey = Object.keys(d).find(k => kl(k).includes('relvol') || kl(k).includes('rel_vol') || kl(k).includes('relativevol'));
     if (!rvolKey) return null;
-    const v = parseFloat(coin.stream_d.data[rvolKey]);
+    const v = parseFloat(d[rvolKey]);
     return isNaN(v) ? null : v;
 }
 
@@ -721,8 +725,8 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                 av = getRawATR(a);
                 bv = getRawATR(b);
             } else if (sortBy === 'RVol') {
-                av = getRawRVol(a, streamDSchema);
-                bv = getRawRVol(b, streamDSchema);
+                av = getRawRVol(a);
+                bv = getRawRVol(b);
             }
             if (av == null && bv == null) return 0;
             if (av == null) return 1;   // nulls last regardless of dir
