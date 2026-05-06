@@ -364,6 +364,106 @@
     background: rgba(255,255,255,0.08);
 }
 
+/* ─── Chip toggle row ───────────────────────────────────────────────────────── */
+.chipToggleRow {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+}
+
+/* Wrapper keeps the toggle button and its sort arrow glued together */
+.chipToggleGroup {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+}
+
+.chipToggleBtn {
+    display: inline-flex;
+    align-items: center;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px 0 0 4px;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+/* When a chip group has no sort button sibling, give the toggle full radius.
+   :has() is supported in all modern browsers (Chrome 105+, Firefox 121+, Safari 15.4+). */
+.chipToggleGroup:not(:has(.sortBtn)) .chipToggleBtn {
+    border-radius: 4px;
+}
+
+.chipToggleBtnOn {
+    color: #a0aec0;
+    background: rgba(160,174,192,0.10);
+    border-color: rgba(160,174,192,0.25);
+}
+.chipToggleBtnOn:hover {
+    background: rgba(160,174,192,0.18);
+    color: #cbd5e0;
+}
+
+.chipToggleBtnOff {
+    color: #4a5568;
+    background: rgba(74,85,104,0.04);
+    border-color: rgba(74,85,104,0.12);
+    text-decoration: line-through;
+    opacity: 0.5;
+}
+.chipToggleBtnOff:hover {
+    opacity: 0.75;
+    color: #718096;
+}
+
+/* Sort direction button — sits flush against the chip toggle button */
+.sortBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 22px;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 0 4px 4px 0;
+    border: 1px solid rgba(160,174,192,0.20);
+    border-left: none;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: #4a5568;
+    background: rgba(160,174,192,0.05);
+    padding: 0;
+    line-height: 1;
+}
+.sortBtn:hover {
+    color: #63b3ed;
+    background: rgba(99,179,237,0.10);
+    border-color: rgba(99,179,237,0.25);
+}
+.sortBtnActive {
+    color: #63b3ed;
+    background: rgba(99,179,237,0.14);
+    border-color: rgba(99,179,237,0.35);
+}
+
+/* Inline label showing current sort state */
+.sortIndicatorLabel {
+    font-size: 9px;
+    color: #63b3ed;
+    margin-left: 6px;
+    letter-spacing: 0.3px;
+    opacity: 0.85;
+}
+
 /* ─── Stream D technical chips ──────────────────────────────────────────────── */
 .streamDChips {
     display: flex;

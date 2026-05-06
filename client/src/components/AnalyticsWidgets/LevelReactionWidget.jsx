@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
@@ -6,8 +6,45 @@ import {
     ComposedChart, Area, Line, Bar, XAxis, YAxis, ReferenceLine,
     Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { Activity, RefreshCw, Radar, ArrowUp, ArrowDown, Zap, ArrowRight, MoveRight, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
+import { Activity, RefreshCw, Radar, ArrowUp, ArrowDown, Zap, ArrowRight, MoveRight, ChevronUp, ChevronDown, AlertTriangle, ArrowUpDown } from 'lucide-react';
 import styles from './LevelReactionWidget.module.css';
+
+// ─── Chip-type constants ─────────────────────────────────────────────────────
+// Each chip displayed in the lane header maps to one of these 5 types.
+// Used as keys in visibleChips + sortBy.
+const CHIP_TYPES = ['RSI', 'RVol', 'ATR', 'EMA200', 'Dist'];
+const CHIP_LABELS = { RSI: 'RSI', RVol: 'RVol', ATR: 'ATR', EMA200: 'EMA200', Dist: 'Dist %' };
+
+const LS_CHIPS_KEY = 'levelReaction_chips';
+const LS_SORT_KEY  = 'levelReaction_sort';
+
+function loadChipPrefs() {
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_CHIPS_KEY));
+        if (s && typeof s === 'object') return s;
+    } catch {}
+    return { RSI: true, RVol: true, ATR: true, EMA200: true, Dist: true };
+}
+function loadSortPrefs() {
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_SORT_KEY));
+        if (s?.by) return s;
+    } catch {}
+    return { by: 'Dist', dir: 'asc' };
+}
+
+/**
+ * Return the chip TYPE string from a schema key. Needed so pickStreamDChips
+ * can skip hidden chip types.
+ */
+function chipTypeOf(key) {
+    const k = key.toLowerCase();
+    if (k.includes('rsi')) return 'RSI';
+    if (k.includes('relvol') || k.includes('rel_vol') || k.includes('relativevol')) return 'RVol';
+    if (k.includes('atr') || k.includes('volatility')) return 'ATR';
+    if (k.includes('ema') && (k.includes('dist') || k.includes('200'))) return 'EMA200';
+    return null;
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -81,61 +118,64 @@ function streamDChipStyle(key, value) {
  * Priority: RSI, RelVol, ATR/Volatility, EMA200 distance.
  * Handles both multi-TF keys (rsi14_5m) and single-TF keys (rsi_14, relVolume, ema_200).
  * Returns max 4 chips to keep the lane header compact.
+ * Respects visibleChips — hidden types are skipped entirely.
  */
-function pickStreamDChips(data, schema) {
+function pickStreamDChips(data, schema, visibleChips) {
     if (!data || !schema?.length) return [];
+    // visibleChips defaults to all-on when not passed (backwards compat)
+    const vc = visibleChips || {};
 
     const chips = [];
     const kl = k => k.toLowerCase();
 
-    // 1. RSI — prefer multi-TF keys by shortest timeframe, else fall back to any RSI key
-    const TF_PRIORITY = ['_5m', '5m', '_15m', '15m', '_1h', '1h', '_4h', '4h'];
-    let rsiAdded = false;
-    for (const tf of TF_PRIORITY) {
-        const key = schema.find(k => kl(k).includes('rsi') && kl(k).endsWith(tf));
-        if (key && data[key] != null) {
-            const s = streamDChipStyle(key, data[key]);
-            if (s) { chips.push({ key, ...s }); rsiAdded = true; break; }
+    // 1. RSI
+    if (vc.RSI !== false) {
+        const TF_PRIORITY = ['_5m', '5m', '_15m', '15m', '_1h', '1h', '_4h', '4h'];
+        let rsiAdded = false;
+        for (const tf of TF_PRIORITY) {
+            const key = schema.find(k => kl(k).includes('rsi') && kl(k).endsWith(tf));
+            if (key && data[key] != null) {
+                const s = streamDChipStyle(key, data[key]);
+                if (s) { chips.push({ key, chipType: 'RSI', ...s }); rsiAdded = true; break; }
+            }
+        }
+        if (!rsiAdded) {
+            const rsiKey = schema.find(k => kl(k).includes('rsi'));
+            if (rsiKey && data[rsiKey] != null) {
+                const s = streamDChipStyle(rsiKey, data[rsiKey]);
+                if (s) chips.push({ key: rsiKey, chipType: 'RSI', ...s });
+            }
         }
     }
-    if (!rsiAdded) {
-        // Fallback: any key that contains 'rsi' (handles rsi_14, rsi14, RSI(14), etc.)
-        const rsiKey = schema.find(k => kl(k).includes('rsi'));
-        if (rsiKey && data[rsiKey] != null) {
-            const s = streamDChipStyle(rsiKey, data[rsiKey]);
-            if (s) chips.push({ key: rsiKey, ...s });
+
+    // 2. Relative Volume
+    if (vc.RVol !== false) {
+        const rvolKey = schema.find(k =>
+            kl(k).includes('relvol') || kl(k).includes('rel_vol') || kl(k).includes('relativevol')
+        );
+        if (rvolKey && data[rvolKey] != null) {
+            const s = streamDChipStyle(rvolKey, data[rvolKey]);
+            if (s) chips.push({ key: rvolKey, chipType: 'RVol', ...s });
         }
     }
 
-    // 2. Relative Volume — matches relVolume, rel_volume, relVol, relativevolume
-    const rvolKey = schema.find(k =>
-        kl(k).includes('relvol') ||
-        kl(k).includes('rel_vol') ||
-        kl(k).includes('relativevol')
-    );
-    if (rvolKey && data[rvolKey] != null) {
-        const s = streamDChipStyle(rvolKey, data[rvolKey]);
-        if (s) chips.push({ key: rvolKey, ...s });
+    // 3. ATR
+    if (vc.ATR !== false) {
+        const atrKey = schema.find(k => kl(k).includes('atr'))
+                    || schema.find(k => kl(k).includes('volatility'));
+        if (atrKey && data[atrKey] != null) {
+            const s = streamDChipStyle(atrKey, data[atrKey]);
+            if (s) chips.push({ key: atrKey, chipType: 'ATR', rawValue: parseFloat(data[atrKey]), ...s });
+        }
     }
 
-    // 3. ATR % or Volatility (prefer ATR, fall back to volatility)
-    const atrKey = schema.find(k => kl(k).includes('atr'))
-                || schema.find(k => kl(k).includes('volatility'));
-    if (atrKey && data[atrKey] != null) {
-        const s = streamDChipStyle(atrKey, data[atrKey]);
-        if (s) chips.push({ key: atrKey, ...s });
-    }
-
-    // 4. EMA200 distance — supports absolute ema_200 price (compute % from close)
-    //    OR pre-computed dist fields (ema200dist_5m, ema200_5m_dist, etc.)
-    if (chips.length < 4) {
-        // Check for pre-computed dist key first
+    // 4. EMA200 distance
+    if (vc.EMA200 !== false) {
         const emaDistKey = schema.find(k => kl(k).includes('ema') && kl(k).includes('dist'));
         if (emaDistKey && data[emaDistKey] != null) {
             const s = streamDChipStyle(emaDistKey, data[emaDistKey]);
-            if (s) chips.push({ key: emaDistKey, ...s });
+            if (s) chips.push({ key: emaDistKey, chipType: 'EMA200', ...s });
         } else {
-            // Compute from absolute ema_200 / ema200 price and close
             const emaAbsKey = schema.find(k => kl(k) === 'ema_200' || kl(k) === 'ema200' || (kl(k).includes('ema') && kl(k).includes('200')));
             if (emaAbsKey && data[emaAbsKey] != null) {
                 const emaPrice  = parseFloat(data[emaAbsKey]);
@@ -148,7 +188,7 @@ function pickStreamDChips(data, schema) {
                     else if (pct < -2)        { color = '#fc8181'; bg = 'rgba(252,129,129,0.10)'; }
                     else if (pct > 3)         { color = '#68d391'; bg = 'rgba(104,211,145,0.10)'; }
                     else                      { color = '#a0aec0'; bg = 'rgba(160,174,192,0.07)'; }
-                    chips.push({ key: emaAbsKey, color, bg, label: `E200 ${sign}${pct.toFixed(1)}%` });
+                    chips.push({ key: emaAbsKey, chipType: 'EMA200', color, bg, label: `E200 ${sign}${pct.toFixed(1)}%` });
                 }
             }
         }
@@ -157,11 +197,31 @@ function pickStreamDChips(data, schema) {
     return chips.slice(0, 4);
 }
 
+/** Extract raw ATR value from a coin's stream_d data + schema (for sorting). */
+function getRawATR(coin, schema) {
+    if (!coin?.stream_d?.data || !schema?.length) return null;
+    const atrKey = schema.find(k => k.toLowerCase().includes('atr'))
+                || schema.find(k => k.toLowerCase().includes('volatility'));
+    if (!atrKey) return null;
+    const v = parseFloat(coin.stream_d.data[atrKey]);
+    return isNaN(v) ? null : v;
+}
+
+/** Extract raw RVol value from a coin's stream_d data + schema (for sorting). */
+function getRawRVol(coin, schema) {
+    if (!coin?.stream_d?.data || !schema?.length) return null;
+    const kl = k => k.toLowerCase();
+    const rvolKey = schema.find(k => kl(k).includes('relvol') || kl(k).includes('rel_vol') || kl(k).includes('relativevol'));
+    if (!rvolKey) return null;
+    const v = parseFloat(coin.stream_d.data[rvolKey]);
+    return isNaN(v) ? null : v;
+}
+
 // ─── Stream D chips component ────────────────────────────────────────────────
 
-function StreamDChips({ streamD, schema }) {
+function StreamDChips({ streamD, schema, visibleChips }) {
     if (!streamD?.data || !schema?.length) return null;
-    const chips = pickStreamDChips(streamD.data, schema);
+    const chips = pickStreamDChips(streamD.data, schema, visibleChips);
     if (!chips.length) return null;
 
     return (
@@ -241,7 +301,7 @@ const VOL_SRC_PRIORITY = { STREAM_C_ALERT: 3, STREAM_D_RVOL: 2, STREAM_A_EDGE: 1
 // Audit fix #1/#2: React.memo prevents re-render when parent filter state changes but
 // this lane's data (coin, volEvents, schema) is unchanged. useMemo inside avoids
 // rebuilding Recharts series on every render pass.
-const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, intervalMin, loading, schema, volEvents }) {
+const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, intervalMin, loading, schema, volEvents, visibleChips }) {
     const setSelectedTicker = useTimeStore(s => s.setSelectedTicker);
     const meta     = REACTION_META[coin.reaction]   || REACTION_META.APPROACHING;
     const sideCol  = SIDE_COLOR[coin.side]          || SIDE_COLOR.SUPPORT;
@@ -313,13 +373,15 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
 
                 <div className={styles.laneCenter}>
                     <span className={styles.lanePrice}>{smartFmt(coin.close)}</span>
-                    {/* Distance from level — core signal. Tooltip explains the reference. */}
+                    {/* Distance from level — toggleable via visibleChips.Dist */}
+                    {(visibleChips?.Dist !== false) && (
                     <span className={styles.laneDist}
                         style={{ color: coin.distPct >= 0 ? '#68d391' : '#fc8181' }}
                         title={`${coin.distPct >= 0 ? 'Price is ' + coin.distPct.toFixed(2) + '% ABOVE' : 'Price is ' + Math.abs(coin.distPct).toFixed(2) + '% BELOW'} the ${coin.levelLabel?.replace('EMA200_', '') || coin.side.toLowerCase()} level (${smartFmt(coin.levelPrice)})`}>
                         {coin.distPct > 0 ? '+' : ''}{coin.distPct.toFixed(2)}%
                         <span className={styles.distContext}>vs level</span>
                     </span>
+                    )}
                     {/* Direction badge */}
                     <span className={styles.laneDir}
                         style={{
@@ -338,8 +400,8 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
                 </div>
 
                 <div className={styles.laneRight}>
-                    {/* Stream D technical chips — dynamic from schema */}
-                    <StreamDChips streamD={coin.stream_d} schema={schema} />
+                    {/* Stream D technical chips — dynamic from schema, filtered by visibleChips */}
+                    <StreamDChips streamD={coin.stream_d} schema={schema} visibleChips={visibleChips} />
                     {/* Volume badge: truth-aware (Stream C alert > Stream D RVol > Stream A edge).
                         Falls back to legacy sticky `volSpike` flag (greyed) when no recent event exists. */}
                     {(() => {
@@ -517,6 +579,32 @@ export function LevelReactionWidget({ filterTicker, compact }) {
     const [filterSide,  setFilterSide]  = useState('ALL');
     const [filterReact, setFilterReact] = useState('ALL');
 
+    // ── Chip visibility — persisted to localStorage ─────────────────────────
+    const [visibleChips, setVisibleChips] = useState(loadChipPrefs);
+    const toggleChip = useCallback((type) => {
+        setVisibleChips(prev => {
+            const next = { ...prev, [type]: prev[type] === false ? true : false };
+            try { localStorage.setItem(LS_CHIPS_KEY, JSON.stringify(next)); } catch {}
+            return next;
+        });
+    }, []);
+
+    // ── Sort — persisted to localStorage ────────────────────────────────────
+    // sortBy: 'Dist' | 'ATR' | 'RVol' | 'default'
+    // sortDir: 'asc' | 'desc'
+    const [sortPrefs, setSortPrefs] = useState(loadSortPrefs);
+    const { by: sortBy, dir: sortDir } = sortPrefs;
+
+    const handleSortClick = useCallback((chipType) => {
+        setSortPrefs(prev => {
+            const next = prev.by === chipType
+                ? { by: chipType, dir: prev.dir === 'asc' ? 'desc' : 'asc' }  // flip direction
+                : { by: chipType, dir: 'asc' };                                  // new key → reset asc
+            try { localStorage.setItem(LS_SORT_KEY, JSON.stringify(next)); } catch {}
+            return next;
+        });
+    }, []);
+
     // Audit fix #5/#3/#6: combined async fetcher — level-reactions then volume-events
     // in one chained call so both share one AbortController. ref-pattern means the
     // polling interval is created once; dep changes trigger reload via useEffect.
@@ -583,6 +671,29 @@ export function LevelReactionWidget({ filterTicker, compact }) {
         acc[key] = (acc[key] || 0) + 1;
         return acc;
     }, {});
+
+    // ── Sorted coins ─────────────────────────────────────────────────────────
+    // Sorts the filtered `coins` array by the chosen metric; nulls always last.
+    const sortedCoins = useMemo(() => {
+        if (!sortBy || sortBy === 'default') return coins;
+        return [...coins].sort((a, b) => {
+            let av = null, bv = null;
+            if (sortBy === 'Dist') {
+                av = a.distPct != null ? Math.abs(a.distPct) : null;
+                bv = b.distPct != null ? Math.abs(b.distPct) : null;
+            } else if (sortBy === 'ATR') {
+                av = getRawATR(a, streamDSchema);
+                bv = getRawATR(b, streamDSchema);
+            } else if (sortBy === 'RVol') {
+                av = getRawRVol(a, streamDSchema);
+                bv = getRawRVol(b, streamDSchema);
+            }
+            if (av == null && bv == null) return 0;
+            if (av == null) return 1;   // nulls last regardless of dir
+            if (bv == null) return -1;
+            return sortDir === 'asc' ? av - bv : bv - av;
+        });
+    }, [coins, sortBy, sortDir, streamDSchema]);
 
     return (
         <div ref={containerRef} className={styles.widget}>
@@ -684,6 +795,48 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                         </button>
                     ))}
                 </div>
+
+                {/* ── Chip visibility + sort controls ─────────────────────── */}
+                <div className={styles.chipToggleRow}>
+                    <span className={styles.controlLabel}>Chips</span>
+                    {CHIP_TYPES.map(type => {
+                        const isVisible  = visibleChips[type] !== false;
+                        const isSortable = ['Dist', 'ATR', 'RVol'].includes(type);
+                        const isActiveSort = sortBy === type;
+                        return (
+                            <span key={type} className={styles.chipToggleGroup}>
+                                {/* Toggle visibility */}
+                                <button
+                                    className={`${styles.chipToggleBtn} ${isVisible ? styles.chipToggleBtnOn : styles.chipToggleBtnOff}`}
+                                    onClick={() => toggleChip(type)}
+                                    title={isVisible ? `Hide ${CHIP_LABELS[type]} chips` : `Show ${CHIP_LABELS[type]} chips`}
+                                >
+                                    {CHIP_LABELS[type]}
+                                </button>
+                                {/* Sort button — only for sortable types when visible */}
+                                {isSortable && isVisible && (
+                                    <button
+                                        className={`${styles.sortBtn} ${isActiveSort ? styles.sortBtnActive : ''}`}
+                                        onClick={() => handleSortClick(type)}
+                                        title={isActiveSort
+                                            ? `Sorted by ${CHIP_LABELS[type]} ${sortDir === 'asc' ? '▲' : '▼'} — click to flip`
+                                            : `Sort by ${CHIP_LABELS[type]}`}
+                                    >
+                                        {isActiveSort
+                                            ? (sortDir === 'asc' ? '▲' : '▼')
+                                            : <ArrowUpDown size={8} />}
+                                    </button>
+                                )}
+                            </span>
+                        );
+                    })}
+                    {/* Sort label */}
+                    {['Dist','ATR','RVol'].includes(sortBy) && (
+                        <span className={styles.sortIndicatorLabel}>
+                            sorted by {CHIP_LABELS[sortBy]} {sortDir === 'asc' ? '▲' : '▼'}
+                        </span>
+                    )}
+                </div>
             </div>
 
             {/* ── Body ── */}
@@ -709,7 +862,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                     </div>
                 ) : (
                     <div className={styles.lanes}>
-                        {coins.map(coin => (
+                        {sortedCoins.map(coin => (
                             <ReactionLane
                                 key={coin.ticker}
                                 coin={coin}
@@ -718,6 +871,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                                 loading={false}
                                 schema={streamDSchema}
                                 volEvents={volEventsByTicker[coin.cleanTicker || coin.ticker]}
+                                visibleChips={visibleChips}
                             />
                         ))}
                     </div>

@@ -319,7 +319,19 @@ export function ValidatorTimelineWidget() {
     const [showSettings, setShowSettings] = useState(false);
     const [loading, setLoading] = useState(true);
     const [expandedTrialId, setExpandedTrialId] = useState(null);
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    // Persist collapsed state to localStorage so it survives page reloads.
+    const [isCollapsed, setIsCollapsed] = useState(() => {
+        try { return localStorage.getItem('3rdUmpire_collapsed') === 'true'; } catch { return false; }
+    });
+    const toggleCollapsed = (c) => {
+        const next = typeof c === 'boolean' ? c : (prev => !prev);
+        // Support both direct boolean and function updater from CollapseButton
+        setIsCollapsed(prev => {
+            const newVal = typeof next === 'function' ? next(prev) : next;
+            try { localStorage.setItem('3rdUmpire_collapsed', String(newVal)); } catch {}
+            return newVal;
+        });
+    };
     const pollRef = useRef(null);
     const refTimeRef = useRef(refTime);
     refTimeRef.current = refTime;
@@ -385,7 +397,7 @@ export function ValidatorTimelineWidget() {
         <div ref={containerRef} className={styles.widget}>
             {/* ── Header row ── */}
             <div className={styles.header}>
-                <CollapseButton collapsed={isCollapsed} onToggle={() => setIsCollapsed(c => !c)} />
+                <CollapseButton collapsed={isCollapsed} onToggle={toggleCollapsed} />
 
                 <h4 className={`widget-title ${styles.widgetTitle}`}>
                     <Target size={16} strokeWidth={2.5} className="text-accent-blue" />
