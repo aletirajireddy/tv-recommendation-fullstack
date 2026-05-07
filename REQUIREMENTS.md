@@ -4,7 +4,7 @@
 ### 1. Executive Summary
 This project is a **Real-Time Market Analytics Dashboard** designed to ingest, store, and visualize high-frequency trading data from TradingView. It bridges the gap between TradingView's raw screener data/alerts and institutional-grade analytics by extracting data via local userscripts, storing it in a structured database, and presenting it via a responsive React dashboard.
 
-**Current Branch**: `feature/master-coin-store-v4_validator-context-calendar`
+**Current Branch**: `feat/smart-alerts`
 
 ### 2. System Architecture
 
@@ -83,7 +83,8 @@ graph TD
 *   **Server**: Express.js running on Port 3001.
 *   **Transport**: SSE at `/mcp/sse`.
 *   **Safety**: Readonly SQLite connection — cannot modify production data.
-*   **Tools**: `get_market_sentiment`, `get_master_watchlist`, `get_top_catalysts`, `get_institutional_pulse`, `analyze_target`, `query_master_coin_store`, `get_volume_buildups`, `get_validated_setups`, `get_upcoming_watchers`, `get_pattern_stats`, `get_trial_details`, `get_coin_lifecycles`, `get_ghost_approval_queue`.
+*   **Version**: MCP V2 — 22 tools (upgraded from 13).
+*   **Tools**: `get_market_sentiment`, `get_master_watchlist`, `get_top_catalysts`, `get_institutional_pulse`, `analyze_target`, `query_master_coin_store`, `get_volume_buildups`, `get_validated_setups`, `get_upcoming_watchers`, `get_pattern_stats`, `get_trial_details`, `get_coin_lifecycles`, `get_ghost_approval_queue`, `get_smart_alerts`, `get_smart_alert_history`, `get_ema_distance_board`, `get_level_reactions`, `get_stream_health`, `get_volume_events`, `get_calendar_summary`, `get_ema_cascade`, `get_smart_level_events`.
 
 ### 3. Technical Implementation Details
 
@@ -186,6 +187,44 @@ pm2 save
 - [x] **`ecosystem.dev.config.js`**: Single command starts all three dev services in watch mode.
 - [x] **Env-driven ports**: All services read PORT from environment — no hardcoded values.
 
+#### 5.8 Smart Alerts Engine (branch: `feat/smart-alerts`)
+- [x] **Separate database**: `smart_alerts.db` isolates alert state from `dashboard_v3.db` — prevents write contention during Stream A bursts.
+- [x] **DB Schema**: `smart_alerts`, `smart_alert_events`, `smart_alert_read_status` tables.
+- [x] **ATR normalization**: Alert approach zones sized as ATR multiples per TF — self-calibrates to each coin's volatility. Default multipliers: `1m: 0.5×, 5m: 0.75×, 15m: 1.0×, 1h: 1.25×, 4h: 1.5×`.
+- [x] **Alert CRUD API**: `GET/POST /api/smart-alerts`, `PUT/DELETE /api/smart-alerts/:id`.
+- [x] **Event API**: `GET /api/smart-alerts/events` (paginated), `GET /api/smart-alerts/unread-count`, `POST /api/smart-alerts/mark-read`.
+- [x] **SmartAlertsBell**: Header bell icon, unread badge, dropdown event list, socket-driven live updates.
+- [x] **SmartAlertCreateModal**: Full creation/edit form with live distance preview and A15/A60 ATR reference chips.
+- [x] **SmartAlertsWidget**: Full management view with alert list, toggle, event history.
+- [x] **ATR chips on EMACascadeMonitor**: Dual `A15` / `A60` chips per coin for calibration reference.
+- [x] **ATR chips on LevelReactionWidget**: Dual `A15` / `A60` chips in lane headers.
+- [x] **MCP tools**: `get_smart_alerts`, `get_smart_alert_history`.
+
+#### 5.9 Mobile Architecture (branch: `feat/smart-alerts`)
+- [x] **`pointer: coarse` breakpoints**: All mobile CSS blocks updated to `(max-width: 1024px), (pointer: coarse)` across 6 CSS files — catches all touch devices regardless of reported CSS viewport width.
+- [x] **ECG height fix**: `topBar` uses `height: var(--header-height)` (concrete pixel value). Was `height: auto`, causing `height: 100%` on chart chain to resolve to 0 (Recharts flat line).
+- [x] **Portrait header heights**: `--header-height: 54px` (touch), `72px` (touch portrait) via CSS custom property overrides in `index.css`.
+- [x] **Gauge scaling in portrait**: `.sectionMood` shrinks to 44px in portrait touch (from 72px) — gives ECG chart more room.
+- [x] **MobileFloatingBar**: Fixed-position bottom-right bubble, visible only on `pointer: coarse`. Expanded panel shows A/B/C/D stream health, live badge, SmartAlertsBell (dropdown flipped upward), palette button.
+- [x] **Sidebar drawer**: Fixed-position full-screen drawer on touch. Mini-toggle inside drawer. `.sidebar.collapsed { width: 64px }` inside mobile media block (two-class specificity beats 260px rule).
+- [x] **Sidebar persistence**: `sidebarCollapsed` written to `localStorage` on every toggle (Zustand store).
+- [x] **Hamburger icon reduced**: 16×16px on touch, reduced padding to 2px.
+
+#### 5.10 Widget Preference Persistence
+- [x] **EMACascadeMonitor**: Ticker, window, interval persisted to `localStorage`.
+- [x] **DistanceTracker**: Filter range and sort column/direction persisted to `localStorage`.
+- [x] **LevelReactionWidget**: Filter mode (S/R/ALL) and reaction type multi-select persisted to `localStorage`.
+- [x] **Pattern**: `useState(() => { try { return localStorage.getItem(key) || default; } catch { return default; } })` lazy initializer with `try/catch` guard on writes.
+
+#### 5.11 Push-First Socket Architecture & Code Splitting
+- [x] **Socket-driven widget refresh**: All widgets subscribe to `scan-update` Socket.IO event. Immediate refetch on arrival — no waiting for next poll cycle.
+- [x] **Tab visibility guard**: `if (document.hidden) return` in socket handler — no background-tab network calls.
+- [x] **`LazyWidget` component**: IntersectionObserver-based lazy mount — widget chunk only downloaded when section scrolls into viewport.
+- [x] **`React.lazy` imports**: All analytics widgets code-split. Above-fold widget uses `rootMargin="200px 0px"` to preload early.
+- [x] **Sidebar prefetch**: Nav items call `item.prefetch()` on hover — dynamic import triggered before the user navigates.
+- [x] **MarketHeartbeatIndicator 400pt cap**: Sampling cap prevents 20,000+ point timeline from freezing main thread.
+- [x] **Carry-forward null mood**: `null` mood values use previous scan's mood instead of dropping to 0 — prevents ECG spike artifacts.
+
 ---
 
 ### 6. Analytics Dashboard (New Widget Layer)
@@ -197,7 +236,9 @@ All widgets live in `client/src/components/AnalyticsWidgets/` and follow the sam
 - [x] **Chart**: Price line + 5 colour-coded EMA lines + volume spike pins (by source) + transition event dots.
 - [x] **State Strip**: BULL/BEAR/MIXED regime, bull defense TF, bear ceiling TF, source health chips, last vol spike chip.
 - [x] **`lastVolEventMs`**: Vol chip shown even when last spike is outside current chart window.
+- [x] **ATR chips**: Dual `A15` / `A60` chips showing ATR at 15m and 60m timeframes for Smart Alert calibration.
 - [x] **Controls**: Ticker input, quick chips (BTC/ETH/SOL/BNB/XRP), window (1h/2h/4h/8h), interval (1m/2m/5m).
+- [x] **Preference persistence**: Ticker, window, interval saved to `localStorage`.
 - [x] **Poll**: 60s, AbortController, tab-visibility pause.
 
 #### 6.2 DistanceTracker
@@ -207,15 +248,17 @@ All widgets live in `client/src/components/AnalyticsWidgets/` and follow the sam
 - [x] **Column tooltips**: "% distance from Xm 200 EMA (+ = above, − = below)".
 - [x] **Range filter toggle**: ±1% / ±3% / ±5% / ±10%.
 - [x] **Sortable**: Click any column header.
+- [x] **Preference persistence**: Filter range and sort column/direction saved to `localStorage`.
 - [x] **Performance**: 3 batched queries (was N+1 up to 640 queries) — ~30ms response.
 - [x] **Poll**: 60s.
 
 #### 6.3 LevelReactionWidget
 - [x] **12-lane swim-lane chart**: Each lane = one coin near a structural level.
-- [x] **Lane header**: Ticker, S/R badge, level type, price, distPct, direction, trend flow, Stream D chips (RSI/ATR/RelVol), VOL badge, reaction badge.
+- [x] **Lane header**: Ticker, S/R badge, level type, price, distPct, direction, trend flow, Stream D chips (RSI/ATR/RelVol), dual ATR chips (A15/A60), VOL badge, reaction badge.
 - [x] **Lane chart**: Area chart (green above/red below level), level=0 line, ±0.3% touch bands, vol spike pins by source.
 - [x] **Reaction types**: BOUNCE/REJECT/BREAK_BULL/BREAK_BEAR/TESTING/APPROACHING.
 - [x] **Filters**: Support/Resistance/ALL toggle + reaction type multi-select.
+- [x] **Preference persistence**: Filter mode and reaction type selection saved to `localStorage`.
 - [x] **Non-blocking error**: Banner + stale lanes shown on fetch failure.
 - [x] **React.memo**: `ReactionLane` memoized — prevents 12-lane re-render on filter changes.
 - [x] **Poll**: 90s.
@@ -242,6 +285,20 @@ All widgets live in `client/src/components/AnalyticsWidgets/` and follow the sam
 - [x] **Bulk actions**: Prune All / Approve All buttons.
 - [x] **Poll**: 60s.
 
+#### 6.7 SmartAlertsWidget
+- [x] **Alert list**: Ticker, TF, direction (LONG/SHORT/BOTH), ATR multiplier, active toggle, edit/delete actions.
+- [x] **Quick-create form**: Inline creation with A15/A60 ATR reference chips for multiplier calibration.
+- [x] **Event history**: Paginated table of fired events with distPct, ATR value, approach%.
+- [x] **SmartAlertsBell**: Header bell with unread badge, dropdown event list, mark-read on open.
+- [x] **Socket-driven**: Bell count refreshes on every `scan-update` event.
+- [x] **Poll**: 30s.
+
+#### 6.8 MarketHeartbeatIndicator (Header ECG)
+- [x] **ECG area chart**: `type="monotone"` dual areas — green (bullArea) above zero, red (bearArea) below zero.
+- [x] **Carry-forward null mood**: `null` moods inherit prior scan's value — eliminates spike artifacts at data gaps.
+- [x] **400-point sampling cap**: Prevents main-thread freeze when timeline exceeds 400 points (30-day window).
+- [x] **Height dependency**: Requires parent `height: var(--header-height)` (concrete pixel) — `height: auto` causes Recharts to measure 0 (flat line).
+
 ---
 
 ### 7. Performance Engineering (Completed)
@@ -259,3 +316,9 @@ All widgets live in `client/src/components/AnalyticsWidgets/` and follow the sam
 - [x] **Recharts pin cap**: MAX_VOL_PINS=40, MAX_TR_DOTS=40 — avoids ~100-marker render cliff.
 - [x] **Prop stability fix**: Pass `undefined` not `|| []` to memo'd components — `|| []` creates a new array ref every render, breaking React.memo.
 - [x] **Non-blocking error pattern**: `error && <banner>` above stale data, not `error ? <replacement> : data`.
+- [x] **MarketHeartbeatIndicator 400pt cap**: Samples every Nth point when timeline > 400 entries — prevents 20k-point Recharts freeze on 30-day windows.
+- [x] **Carry-forward null mood**: Prevents null mood dropping to 0, eliminating spike artifacts in ECG area chart.
+- [x] **LazyWidget IntersectionObserver**: Widget chunks only loaded when section scrolls into viewport (+ preload buffer). Above-fold uses `rootMargin="200px 0px"`.
+- [x] **`React.lazy` code splitting**: All analytics widgets split into separate chunks — eliminates 2–4s blank screen on slow connections.
+- [x] **Sidebar nav prefetch on hover**: `item.prefetch()` called on hover/focus triggers dynamic import before navigation — import promise cached by module system.
+- [x] **Push-first socket pattern**: `socketService.on('scan-update', fetchData)` path updates widgets within ~200ms of scan arrival, vs N-second poll interval delay.

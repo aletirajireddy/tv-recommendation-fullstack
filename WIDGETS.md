@@ -2,7 +2,7 @@
 
 **Project**: Ultra Scalper Dashboard
 **Widget Directory**: `client/src/components/AnalyticsWidgets/`
-**Last Updated**: April 27, 2026
+**Last Updated**: May 7, 2026
 **Purpose**: Full reference for each of the 6 analytics widgets — API contracts, response shapes, component props/state, render logic, and performance notes.
 
 ---
@@ -88,17 +88,31 @@ GET /api/ema-cascade?ticker={ticker}&window_min={window_min}&interval={interval}
 
 | State | Type | Description |
 |-------|------|-------------|
-| `ticker` | string | Currently monitored ticker |
-| `window` | string | Selected window: `"1h"`, `"2h"`, `"4h"`, `"8h"` |
-| `interval` | string | Selected bucket: `"1m"`, `"2m"`, `"5m"` |
+| `ticker` | string | Currently monitored ticker (persisted to `localStorage`) |
+| `window` | string | Selected window: `"1h"`, `"2h"`, `"4h"`, `"8h"` (persisted) |
+| `interval` | string | Selected bucket: `"1m"`, `"2m"`, `"5m"` (persisted) |
 | `data` | object or null | Last successful API response |
 | `error` | Error or null | Last fetch error |
+
+### Persistence Pattern
+
+```js
+const [ticker, setTicker] = useState(() => {
+  try { return localStorage.getItem('ema_ticker') || 'BTC'; } catch { return 'BTC'; }
+});
+const handleTickerChange = (v) => {
+  setTicker(v);
+  try { localStorage.setItem('ema_ticker', v); } catch {}
+};
+```
+
+Same pattern for `window` and `interval` with keys `'ema_window'` and `'ema_interval'`.
 
 ### Render Structure
 
 1. **Header row**: Widget title, ticker input box, quick chip buttons (BTC, ETH, SOL, BNB, XRP)
 2. **Controls row**: Window selector buttons, interval selector buttons
-3. **Regime strip**: BULL/BEAR/MIXED badge, bull defense TF label, bear ceiling TF label, source health chips (A/C/D), last vol event chip (`▾vol·Xm ago`)
+3. **Regime strip**: BULL/BEAR/MIXED badge, bull defense TF label, bear ceiling TF label, source health chips (A/C/D), **ATR chips (A15 / A60)**, last vol event chip (`▾vol·Xm ago`)
 4. **ComposedChart (Recharts)**:
    - `LineChart` or `ComposedChart`
    - One `Line` for price
@@ -174,9 +188,9 @@ GET /api/ema-distance-board?limit={limit}&max_dist={max_dist}&active_min={active
 
 | State | Type | Description |
 |-------|------|-------------|
-| `sortCol` | string | Currently sorted column (`"ticker"`, `"closest"`, `"1m"`, `"5m"`, etc.) |
-| `sortDir` | string | `"asc"` or `"desc"` |
-| `rangeFilter` | number | Active range filter: `1`, `3`, `5`, or `10` (percent) |
+| `sortCol` | string | Currently sorted column (persisted to `localStorage`) |
+| `sortDir` | string | `"asc"` or `"desc"` (persisted) |
+| `rangeFilter` | number | Active range filter: `1`, `3`, `5`, or `10` (persisted) |
 | `data` | object or null | Last successful API response |
 | `error` | Error or null | Last fetch error |
 
@@ -301,6 +315,7 @@ The `ReactionLane` component renders one lane and is wrapped in `React.memo`. Ea
    - Direction badge (LONG/SHORT)
    - Trend flow label (UPTREND/DOWNTREND/RANGING)
    - Stream D chips: RSI value, ATR value, RelVol value (colour-coded individually)
+   - **ATR chips**: `A15` (15m ATR) and `A60` (60m ATR) — reference values for Smart Alert multiplier calibration
    - VOL badge: most recent vol spike for this ticker — shows source colour + age (C=amber, A=blue, D=purple)
    - Reaction badge (BOUNCE/REJECT/BREAK_BULL/BREAK_BEAR/TESTING/APPROACHING)
 
@@ -695,3 +710,193 @@ The `GhostScoringEngine` (backend, `server/services/GhostScoringEngine.js`) scor
 - Approve/Prune actions call mutating POST endpoints then immediately re-fetch the queue (optimistic update not used — server is source of truth for re-score).
 - Bulk actions include confirmation via `window.confirm` before sending the request.
 - Scores are re-computed server-side on every `GET /api/ghosts/queue` call — always fresh.
+
+---
+
+## Widget 7: SmartAlertsWidget
+
+**File**: `client/src/components/AnalyticsWidgets/SmartAlertsWidget.jsx`
+**CSS**: `SmartAlertsWidget.module.css`
+
+### Purpose
+
+Full Smart Alert management view. Allows creating, editing, toggling, and deleting ATR-normalized EMA200 proximity alerts. Displays the event history of when alerts fired with approach context.
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/smart-alerts` | List all alert definitions |
+| POST | `/api/smart-alerts` | Create new alert |
+| PUT | `/api/smart-alerts/:id` | Edit alert (multiplier, direction, active flag) |
+| DELETE | `/api/smart-alerts/:id` | Delete alert |
+| GET | `/api/smart-alerts/events` | Paginated fired event history |
+
+### Alert Definition Shape
+
+```json
+{
+  "id": 1,
+  "ticker": "BTC",
+  "timeframe": "15m",
+  "direction": "LONG",
+  "atr_multiplier": 1.0,
+  "active": true,
+  "created_at": 1714000000000
+}
+```
+
+**Field Notes**:
+- `direction`: `"LONG"` (fire only when approaching from above), `"SHORT"` (from below), or `"BOTH"`.
+- `atr_multiplier`: Approach zone = `atrMultiplier × currentATR[tf]`. Default per-TF multipliers: `{ "1m": 0.5, "5m": 0.75, "15m": 1.0, "1h": 1.25, "4h": 1.5 }`.
+- `active`: When false, the alert definition is saved but not evaluated against incoming Stream A scans.
+
+### Alert Event Shape
+
+```json
+{
+  "id": 1,
+  "alert_id": 1,
+  "ticker": "BTC",
+  "timeframe": "15m",
+  "dist_pct": 0.82,
+  "atr_value": 0.89,
+  "approach_pct": 92.1,
+  "timestamp": 1714000000000
+}
+```
+
+**Field Notes**:
+- `dist_pct`: Absolute % distance from current price to EMA200 at fire time.
+- `atr_value`: ATR value at fire time on the monitored timeframe.
+- `approach_pct`: `(atrMultiplier × atr - dist_pct) / (atrMultiplier × atr) × 100`. 100% = at EMA200, 0% = at outer edge of zone.
+
+### SmartAlertsBell Sub-Component
+
+**File**: `client/src/components/SmartAlerts/SmartAlertsBell.jsx`
+
+Renders in the GlobalHeader (desktop) and inside `MobileFloatingBar` (touch devices).
+
+- **Bell icon + badge**: Shows unread count from `GET /api/smart-alerts/unread-count`.
+- **Dropdown panel** (click): Lists recent events with ticker, TF, distPct, approachPct, age label. Auto-marks all read on panel open (`POST /api/smart-alerts/mark-read`).
+- **Socket-driven**: Re-fetches unread count on every `scan-update` event — no separate poll interval.
+- **Mobile orientation**: Inside `MobileFloatingBar`, the dropdown opens upward (CSS flips `top` to `bottom` via `:global([class*="dropdown"])` selector).
+
+### SmartAlertCreateModal Sub-Component
+
+**File**: `client/src/components/SmartAlerts/SmartAlertCreateModal.jsx`
+
+Full creation/edit form:
+- Ticker input + timeframe selector (1m/5m/15m/1h/4h)
+- Direction selector (LONG/SHORT/BOTH)
+- ATR multiplier input (numeric, step 0.1) with default populated from per-TF defaults
+- **Live distance preview**: Shows current distPct vs the alert threshold as a progress bar — computed against the most recent Stream A data for the ticker
+- A15 / A60 ATR reference chips displayed for context
+
+### Key Component State
+
+| State | Type | Description |
+|-------|------|-------------|
+| `alerts` | array | Alert definitions from GET |
+| `events` | array | Recent fired events (paginated) |
+| `showCreate` | boolean | Create modal open state |
+| `editingAlert` | object or null | Alert being edited |
+| `page` | integer | Events table pagination |
+
+### Render Structure
+
+1. **Alert list**: Accordion-style rows — ticker badge, TF chip, direction badge, multiplier label, active toggle, edit icon, delete icon
+2. **Create button**: Opens `SmartAlertCreateModal`
+3. **Event history table**: Timestamp | Ticker | TF | Dist% | ATR | Approach% | Age
+
+### Performance Notes
+
+- Poll: 30s for alert list (definitions change infrequently).
+- Events paginated at 50 per page — `?page=` query param.
+- Alert CRUD actions immediately re-fetch after mutation (server is source of truth).
+- Bell unread-count refresh is socket-driven — no dedicated poll.
+
+---
+
+## Widget 8: MarketHeartbeatIndicator
+
+**File**: `client/src/components/AnalyticsWidgets/MarketHeartbeatIndicator.jsx`
+
+### Purpose
+
+A header-mounted ECG-style area chart showing the historical market mood score as a continuous waveform. Visualizes bull/bear sentiment over the selected timeline window. Mounted inside `HeaderStatsDeck` — occupies the full remaining header width on both desktop and mobile.
+
+### Data Source
+
+Reads directly from `useTimeStore`:
+```js
+const { timeline, currentIndex } = useTimeStore();
+```
+
+No dedicated API call. Uses the global scan timeline already loaded for the DVR engine.
+
+### Data Processing
+
+```js
+// 1. Carry-forward null moods (prevents spike artifacts)
+let lastMood = 0;
+const rawData = timeline.map(scan => {
+  const rawMood = scan.mood == null ? lastMood : scan.mood;
+  lastMood = rawMood;
+  return {
+    ts: scan.timestamp,
+    rawMood,
+    bullArea: Math.max(0, rawMood),
+    bearArea: Math.min(0, rawMood),
+  };
+});
+
+// 2. 400-point sampling cap (prevents main-thread freeze on 30-day windows)
+const MAX_PTS = 400;
+let data = rawData;
+if (rawData.length > MAX_PTS) {
+  const step = Math.ceil(rawData.length / MAX_PTS);
+  const sampled = rawData.filter((_, i) => i % step === 0);
+  if (sampled[sampled.length - 1] !== rawData[rawData.length - 1]) {
+    sampled.push(rawData[rawData.length - 1]); // Always include last point
+  }
+  data = sampled;
+}
+```
+
+### Render Structure
+
+Recharts `AreaChart` with two `Area` components:
+- `bullArea`: `type="monotone"`, green fill above zero (`#38a169`)
+- `bearArea`: `type="monotone"`, red fill below zero (`#e53e3e`)
+- X-axis hidden (space is too limited in the header)
+- Y-axis hidden
+- `ResponsiveContainer width="100%" height="100%"` — requires parent with a **concrete pixel height**
+
+### Critical Height Constraint
+
+The parent chain MUST have `height: var(--header-height)` (a concrete pixel value) set at the `.topBar` level. If the parent has `height: auto`, `height: 100%` on the `ResponsiveContainer` resolves to 0px, and Recharts renders a flat line.
+
+Correct CSS in `App.module.css`:
+```css
+.topBar {
+  height: var(--header-height); /* NOT height: auto */
+}
+```
+
+### `--header-height` Values
+
+| Context | Value |
+|---------|-------|
+| Desktop | 86px |
+| Touch (any, `pointer: coarse`) | 54px |
+| Touch portrait | 72px |
+
+Defined in `client/src/index.css` via `@media` overrides on `:root`.
+
+### Performance Notes
+
+- No standalone poll — re-renders when `timeline` or `currentIndex` changes in Zustand store.
+- 400-point cap prevents Recharts from processing 20,000+ points on 30-day windows.
+- `useMemo` for `data` array — recalculated only when `timeline` reference changes.
+- `type="monotone"` produces smooth curves vs `type="step"` which caused visual noise.

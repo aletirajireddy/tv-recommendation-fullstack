@@ -1,6 +1,6 @@
     # GEMINI.md - The AI Architect's Context Module
-    **Version**: 1.7.0
-    **Last Updated**: April 23, 2026 (Project Phase: 3rd Umpire Validator & MCP Forensic Hardening)
+    **Version**: 2.0.0
+    **Last Updated**: May 7, 2026 (Project Phase: Smart Alerts Engine, MCP V2, Mobile Architecture, Widget Persistence)
 
     ## 🤖 To Future AI Agents
     This file serves as your "Context Injection". If you are picking up this project, read this first to understand the *Soul* of the architecture, not just the code.
@@ -537,5 +537,69 @@
     The V4 timeline is exclusively for deep AI forensics and backend analytics, completely decoupled from the React Client's real-time DVR memory.
     *   **The Tool**: Exposed to AI via `query_master_coin_store` in the MCP server.
     *   **Usage**: AI agents can pull the exact chronological event sequence of a coin, seeing exactly when momentum hit, when it was scouted, and when a level broke, all aligned in a single query.
+
+    ---
+
+    ## 16. Phase 8: Smart Alerts Engine (May 2026)
+    **Objective**: Server-side ATR-normalized proximity alert system that fires when a coin approaches its EMA200 on any watched timeframe. No TradingView plan required — computed from live Stream A/D data.
+
+    ### 16.1 The Architecture
+    *   **Isolation**: `smart_alerts.db` is a separate SQLite database, preventing write contention against `dashboard_v3.db` during Stream A bursts.
+    *   **Route Module**: `server/routes/smartAlerts.js` handles CRUD for alert definitions and event reads.
+    *   **Evaluation**: On every Stream A tick, the server evaluates `|distPct| ≤ atrMultiplier × atr[tf]` for each active alert definition. Fires a `smart_alert_events` row and emits a socket event when the condition is met.
+    *   **Three DB Tables**: `smart_alerts` (definitions), `smart_alert_events` (fire log), `smart_alert_read_status` (bell badge state).
+
+    ### Rule #31: ATR Normalization Is Non-Negotiable for Smart Alerts
+    Smart Alerts MUST use ATR-based approach zones, not fixed percentages.
+    *   **Why**: Fixed % zones fail across asset classes. BTC at 0.5% ATR and SOL at 2% ATR on the same timeframe would produce wildly different hit rates with a fixed threshold.
+    *   **How to apply**: `default atrMultiplier` per TF is `{ 1m: 0.5, 5m: 0.75, 15m: 1.0, 1h: 1.25, 4h: 1.5 }`. The backend multiplies these by the coin's current ATR from Stream D. The A15/A60 ATR chips on `EMACascadeMonitor` and `LevelReactionWidget` serve as the user-visible reference for calibration.
+
+    ### 16.2 Frontend Components
+    *   **`SmartAlertsBell`** (`components/SmartAlerts/SmartAlertsBell.jsx`): Header bell icon with unread badge. Dropdown shows recent events with mark-read. Socket-driven — refreshes on every `scan-update` event.
+    *   **`SmartAlertCreateModal`**: Full creation/edit form with live distance preview against current price.
+    *   **`SmartAlertsWidget`** (`AnalyticsWidgets/SmartAlertsWidget.jsx`): Full management view — alert list, event history, inline toggle/edit/delete.
+
+    ---
+
+    ## 17. Phase 9: Mobile Architecture & UX Hardening (May 2026)
+    **Objective**: Make the dashboard fully functional on touch devices (phones and tablets) without requiring "Request Desktop Site" mode.
+
+    ### 17.1 The Root Cause
+    CSS `max-width: 1024px` media queries silently failed on many Android Chrome devices because they report CSS viewport widths > 1024px even in standard mobile mode. All mobile-specific styling was dead code on these devices.
+
+    ### Rule #32: Touch Device Detection Requires `pointer: coarse` — NOT `max-width` Alone
+    **Every** mobile CSS block must use an OR condition:
+    ```css
+    @media (max-width: 1024px), (pointer: coarse) { ... }
+    ```
+    *   **Why**: `pointer: coarse` is `true` on any touchscreen regardless of CSS pixel viewport width. `max-width: 1024px` can fail silently on wide-viewport Android devices.
+    *   **How to apply**: Apply this to EVERY mobile media query across all CSS Module files. Files updated: `App.module.css`, `Sidebar.module.css`, `GlobalHeader.module.css`, `HeaderStatsDeck.module.css`, `MobileFloatingBar.module.css`, `index.css`.
+
+    ### 17.2 Header Layout on Mobile
+    On touch devices the header reorganizes: hamburger → gauge (44px in portrait) → ECG chart (fills remaining width). Header icons (live, bell, palette) move to the `MobileFloatingBar`.
+    *   **ECG height fix**: `topBar` must have `height: var(--header-height)` (a concrete pixel value), NOT `height: auto`. Children with `height: 100%` resolve to 0 when the parent has `height: auto`.
+
+    ### 17.3 `MobileFloatingBar`
+    Fixed-position bottom-right bubble visible only on `pointer: coarse` devices. Collapsed = 44px bubble. Expanded = slide-up panel with A/B/C/D stream health, live badge, SmartAlertsBell (dropdown flipped upward), and palette button.
+
+    ### 17.4 Sidebar CSS Specificity Fix
+    Adding `.sidebar.collapsed { width: 64px }` INSIDE the mobile media block is required. Without this, the `.sidebar { width: 260px }` rule (later in the file, same specificity) overrides `.collapsed { width: 64px }` because later rules win.
+
+    ### Rule #33: Widget Preference Persistence via localStorage
+    All user-adjustable widget controls (ticker, window, interval, filter range, sort column) must be persisted to `localStorage`.
+    *   **Why**: Users lose their widget state on every page refresh or tab switch, which is disruptive when monitoring specific tickers or windows.
+    *   **How to apply**:
+        ```js
+        // On mount: lazy initializer reads preferences
+        const [ticker, setTicker] = useState(() => {
+          try { return localStorage.getItem('ema_ticker') || 'BTC'; } catch { return 'BTC'; }
+        });
+        // On change: write immediately with try/catch guard
+        const handleTickerChange = (v) => {
+          setTicker(v);
+          try { localStorage.setItem('ema_ticker', v); } catch {}
+        };
+        ```
+    *   `try/catch` is mandatory — `localStorage` throws in private/incognito mode on some browsers.
 
     *(End of Document)*

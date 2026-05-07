@@ -1,7 +1,7 @@
 # Performance Engineering Reference
 
 **Project**: Ultra Scalper Dashboard
-**Last Updated**: April 27, 2026
+**Last Updated**: May 7, 2026
 **Purpose**: Comprehensive engineering notes on every non-obvious performance decision made during the Analytics Widget Layer build. Written as a reference for future developers so that the same problems are not rediscovered.
 
 ---
@@ -536,7 +536,143 @@ const volChipLabel = lastVolAgo !== null
 
 ---
 
-## 6. Summary: Rules for Future Developers
+## 6. MarketHeartbeatIndicator — ECG Chart Performance
+
+### 6.1 400-Point Sampling Cap
+
+**Problem**: The header ECG chart reads the full `timeline` from `useTimeStore`. On a 30-day sandbox, this can be 20,000+ scan entries. Recharts rendering 20,000 data points freezes the main thread for several seconds on initial load and on every re-render.
+
+**Fix**: Sample the timeline before passing to Recharts:
+
+```js
+const MAX_PTS = 400;
+let data = timeline.map(scan => {
+  const rawMood = scan.mood == null ? lastMood : scan.mood;
+  lastMood = rawMood;
+  return { ts: scan.timestamp, rawMood, bullArea: Math.max(0, rawMood), bearArea: Math.min(0, rawMood) };
+});
+
+if (data.length > MAX_PTS) {
+  const step = Math.ceil(data.length / MAX_PTS);
+  const sampled = data.filter((_, i) => i % step === 0);
+  // Always keep the last point (most recent market state)
+  if (sampled[sampled.length - 1] !== data[data.length - 1]) {
+    sampled.push(data[data.length - 1]);
+  }
+  data = sampled;
+}
+```
+
+**Result**: Chart renders in ~8ms regardless of timeline length. Maximum 401 points passed to Recharts.
+
+**Rule**: Any chart that reads from a long-lived timeline (DVR sandbox) must sample before rendering. 400 points is sufficient for visual fidelity in a header-sized chart.
+
+---
+
+### 6.2 Carry-Forward Null Mood Pattern
+
+**Problem**: When a scan has `mood: null` (backend calculated no mood — e.g., during a gap), the naive `scan.mood || 0` converts it to 0. On the ECG chart, this creates spike artifacts: the area chart drops to 0 then immediately jumps back to the actual mood value, producing false sharp transitions.
+
+**Fix**: Carry forward the previous non-null value:
+
+```js
+let lastMood = 0;
+const data = timeline.map(scan => {
+  const rawMood = scan.mood == null ? lastMood : scan.mood;
+  lastMood = rawMood; // Only update when non-null
+  return { ts: scan.timestamp, rawMood };
+});
+```
+
+**Rule**: When visualizing a time series that has nullable values representing "no change", carry the previous value forward rather than substituting 0. The `|| 0` pattern is only valid when 0 is a semantically meaningful value.
+
+---
+
+## 7. Push-First Socket Architecture
+
+### 7.1 The Problem
+
+All widgets used `setInterval` polling with a fixed N-second interval. This creates:
+- **Staleness**: Data displayed is up to N seconds old after a live scan arrives.
+- **Redundant requests**: API is hammered during quiet periods with no new data.
+- **Latency stacking**: Over Tailscale (remote tunnel), each request adds ~50–200ms. N requests per minute = real UX latency.
+
+### 7.2 The Solution
+
+Widgets subscribe to the Socket.IO `scan-update` event emitted by the backend immediately after Stream A ingestion. On receipt, the widget calls `fetchData()` immediately.
+
+```js
+useEffect(() => {
+  const off = socketService.on('scan-update', () => {
+    if (document.hidden) return; // Page Visibility API — skip background tab
+    fetchData();
+  });
+  return () => off(); // Clean up on unmount
+}, [fetchData]);
+```
+
+The existing `setInterval` fallback remains as a safety net for when the socket connection drops or reconnects.
+
+**Result**: Widgets update within ~200ms of a scan arriving (socket latency), not within N seconds of the next poll interval.
+
+**Rule**: Any widget that displays data from Stream A should subscribe to `scan-update` for immediate updates. The interval fallback should have a longer period (e.g., 90–120s) since it's a safety net, not the primary path.
+
+---
+
+## 8. Code Splitting & Lazy Loading
+
+### 8.1 The Problem
+
+Eager imports of all 7 analytics widgets caused the initial JS bundle to include all chart code. On mobile or slow connections:
+- 2–4 second blank screen while all chunks downloaded simultaneously
+- Recharts rendering all charts immediately — high CPU spike during initial load
+- Mobile main thread freeze when processing large datasets across multiple charts at once
+
+### 8.2 LazyWidget + React.lazy Solution
+
+**`LazyWidget` component** wraps each widget section in an `IntersectionObserver`:
+
+```jsx
+function LazyWidget({ children, rootMargin = '400px 0px' }) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setVisible(true); },
+      { root: null, rootMargin } // root: null = window viewport
+    );
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, [rootMargin]);
+
+  return <div ref={ref}>{visible ? children : <WidgetSkeleton />}</div>;
+}
+```
+
+**`React.lazy` imports** in `App.jsx`:
+```js
+const EMACascadeMonitor = lazy(() => import('./components/AnalyticsWidgets/EMACascadeMonitor'));
+const SmartAlertsWidget  = lazy(() => import('./components/AnalyticsWidgets/SmartAlertsWidget'));
+// ... all other widgets
+```
+
+**Sidebar prefetch** on hover:
+```js
+navItems.forEach(item => {
+  item.ref.addEventListener('mouseenter', () => item.prefetch?.());
+});
+// item.prefetch = () => import('./components/AnalyticsWidgets/EMACascadeMonitor')
+// Module system caches the promise — second call is free
+```
+
+**Result**: Initial bundle is 40–60% smaller. Widgets load progressively as the user scrolls. Mobile initial render time drops from ~4s to ~0.8s.
+
+**Rule**: Any analytics widget that is not the first visible element must be wrapped in `LazyWidget` + imported via `React.lazy`. Above-fold widgets use `rootMargin="200px 0px"` for early preload.
+
+---
+
+## 9. Summary: Rules for Future Developers
 
 | # | Rule | Category |
 |---|------|----------|
@@ -555,3 +691,8 @@ const volChipLabel = lastVolAgo !== null
 | 13 | Show errors as banners above stale data, not as replacements for the whole widget | React UX |
 | 14 | Always include `lastVolEventMs` (or equivalent) in API responses — covers all time, not just request window | API Design |
 | 15 | Use CTE + `ROW_NUMBER() OVER (PARTITION BY)` for first/last-per-group queries, not correlated subqueries | SQLite |
+| 16 | Any chart reading from a long-lived timeline must sample to ≤400 points before rendering | Recharts |
+| 17 | Carry forward null values in time series instead of substituting 0 — prevents spike artifacts | React/Recharts |
+| 18 | Subscribe to `scan-update` socket event for immediate widget refresh — keep poll interval as fallback only | React/Socket |
+| 19 | Wrap analytics widgets in `LazyWidget` + `React.lazy` — only load chunks when scrolled into view | React |
+| 20 | Widget user preferences (ticker, window, filter) must be persisted via `localStorage` with try/catch guards | React UX |

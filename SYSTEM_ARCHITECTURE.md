@@ -1,8 +1,8 @@
 # TradingView Dashboard: System Architecture & Context Guide for AI
 
-**Version**: 3.0 (Includes Analytics Widget Layer, Volume Event Service, Ghost Scoring Engine, Performance Audit)
-**Last Updated**: April 27, 2026
-**Branch**: `feature/master-coin-store-v4_validator-context-calendar`
+**Version**: 4.0 (Adds Smart Alerts Engine, MCP V2 — 22 Tools, Mobile Architecture, Push-first Socket, Code Splitting, Widget Persistence)
+**Last Updated**: May 7, 2026
+**Branch**: `feat/smart-alerts`
 **Purpose**: This document serves as the absolute "Single Source of Truth" regarding the architecture of the TV Dashboard. Any AI assistant entering this project must read this to understand how data flows, where truth is derived, and how the 4 core pillars interact safely.
 
 ---
@@ -52,17 +52,36 @@ The system is designed with a strict separation of concerns. It follows a "Pass-
 *   **Tech**: Node.js, Express, `@modelcontextprotocol/sdk`.
 *   **Port**: `3001`
 *   **Transport**: Server-Sent Events (SSE) located at `/mcp/sse`.
+*   **Version**: MCP V2 (22 tools across all 4 streams — upgraded from 13 tools).
 *   **Core Responsibilities**:
     *   To allow external AIs (like Claude Desktop) to "plug in" remotely via the Tailscale Funnel and query the system safely.
     *   **Absolute Safety**: Connects to `dashboard_v3.db` strictly in `readonly: true` mode. It is physically impossible for the MCP pillar to interrupt or corrupt the Backend ingestion process.
-    *   **High-Level Agent Tools**: Instead of returning raw SQL, it provides pre-calculated, human-readable insights:
-        *   `get_market_sentiment` (Broad market flow).
-        *   `get_master_watchlist` (Active actionable coins).
-        *   `get_top_catalysts` (Breakouts and Volume Spikes).
-        *   `get_institutional_pulse` (Whale footprint tracking).
-        *   `analyze_target` (Deep dive on one ticker).
-        *   `query_master_coin_store` (V4 Materialized timeline spanning all streams).
-        *   `get_volume_buildups`, `get_validated_setups`, `get_upcoming_watchers`, `get_pattern_stats`.
+    *   **High-Level Agent Tools** (full 22-tool inventory):
+
+| Tool | Category | Description |
+|------|----------|-------------|
+| `get_market_sentiment` | Macro | Broad market flow (mood, bulls, bears, score) |
+| `get_master_watchlist` | Watchlist | Active actionable coins with lifecycle status |
+| `get_top_catalysts` | Alpha | Breakouts and volume spikes across all streams |
+| `get_institutional_pulse` | Whale | Institutional interest event footprint |
+| `analyze_target` | Deep-dive | Full per-ticker forensic (all streams merged) |
+| `query_master_coin_store` | Timeline | V4 materialized timeline spanning all streams |
+| `get_volume_buildups` | Volume | Sustained accumulation patterns |
+| `get_validated_setups` | Validator | Confirmed trials with feature snapshots |
+| `get_upcoming_watchers` | Validator | Trials in WATCHING state — live bets |
+| `get_pattern_stats` | Validator | Pre-aggregated win rates by setup type |
+| `get_trial_details` | Validator | Full state log + feature snapshot for one trial |
+| `get_coin_lifecycles` | Lifecycle | Born-at, last-seen, status across stream history |
+| `get_ghost_approval_queue` | Ghost | Coins in ghost state with confidence scores |
+| `get_smart_alerts` | Smart Alerts | All active ATR-normalized EMA200 alerts |
+| `get_smart_alert_history` | Smart Alerts | Qualified alert events with approach context |
+| `get_ema_distance_board` | EMA | Cross-coin EMA200 % distance (all 5 TFs) |
+| `get_level_reactions` | Levels | Coins near structural support/resistance |
+| `get_stream_health` | Ops | Last-seen timestamps per stream per ticker |
+| `get_volume_events` | Volume | Discrete spike events (C/A/D sources) |
+| `get_calendar_summary` | Calendar | 7-day performance calendar with trial win-rates |
+| `get_ema_cascade` | EMA | Full EMA200 cascade state for one ticker |
+| `get_smart_level_events` | Stream C | Raw smart-level webhook events for a ticker |
 
 ---
 
@@ -329,6 +348,180 @@ Without this, multi-word labels like `STRONGLY BEARISH` silently resolve to NEUT
 
 ---
 
+---
+
+## Pillar 1 Extension: Smart Alerts Engine
+
+**Version**: 1.0 (Live)
+**Branch**: `feat/smart-alerts`
+**DB**: `smart_alerts.db` (separate from `dashboard_v3.db`)
+**Route module**: `server/routes/smartAlerts.js`
+
+### What it is
+An ATR-normalized proximity alert system that fires when a coin's price enters the "approach zone" of its EMA200 on any watched timeframe. Unlike Stream C webhooks (TradingView cloud), Smart Alerts are computed server-side in real time on every Stream A tick — no TradingView plan required.
+
+### Key Design Decisions
+
+**ATR normalization over fixed %**: Alerts use a multiple of the coin's current ATR (from Stream D) rather than a fixed percentage distance. This self-calibrates to each coin's volatility:
+- A slow large-cap (BTC 1h ATR ≈ 0.3%) and a volatile alt (SOL 1h ATR ≈ 1.2%) each get approach zones proportional to their actual movement range.
+- Default per-TF ATR multipliers: `1m: 0.5×, 5m: 0.75×, 15m: 1.0×, 1h: 1.25×, 4h: 1.5×`.
+
+**Per-TF alert definitions**: Each alert is defined by `{ ticker, timeframe, direction (LONG/SHORT/BOTH), atrMultiplier }`. The backend evaluates the EMA200 distance for that specific TF on every Stream A scan, fires when `|distPct| ≤ atrMultiplier × atr[tf]`.
+
+**Separate database**: `smart_alerts.db` isolates alert state from the high-frequency main DB. Prevents write contention during Stream A bursts.
+
+### DB Tables (`smart_alerts.db`)
+
+| Table | Purpose |
+|-------|---------|
+| `smart_alerts` | Alert definitions: ticker, timeframe, direction, atr_multiplier, created_at, active flag |
+| `smart_alert_events` | Fired events: alert_id, ticker, tf, distPct, atrValue, approachPct, timestamp |
+| `smart_alert_read_status` | Per-event read/unread state for the bell badge counter |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/smart-alerts` | List all alert definitions |
+| POST | `/api/smart-alerts` | Create a new alert |
+| PUT | `/api/smart-alerts/:id` | Edit an alert (multiplier, direction, active) |
+| DELETE | `/api/smart-alerts/:id` | Delete an alert |
+| GET | `/api/smart-alerts/events` | Recent fired events (paginated) |
+| GET | `/api/smart-alerts/unread-count` | Bell badge count |
+| POST | `/api/smart-alerts/mark-read` | Mark events read |
+
+### Frontend Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `SmartAlertsBell` | `components/SmartAlerts/SmartAlertsBell.jsx` | Header bell with unread badge + dropdown panel. Socket-driven live updates. |
+| `SmartAlertCreateModal` | `components/SmartAlerts/SmartAlertCreateModal.jsx` | Alert creation/edit form with per-TF ATR defaults and live distance preview. |
+| `SmartAlertsWidget` | `components/AnalyticsWidgets/SmartAlertsWidget.jsx` | Full management view: alert list, toggle active state, quick-create, event history. |
+
+### ATR Chip Integration
+Both `EMACascadeMonitor` and `LevelReactionWidget` now display dual ATR chips (`A15` and `A60`) for each coin, showing the ATR value at the 15m and 60m timeframes. These chips are used as reference when creating Smart Alerts to calibrate the multiplier.
+
+---
+
+## Pillar 3 Extension: Mobile Architecture
+
+**Version**: 1.0 (Live)
+**Branch**: `feat/smart-alerts`
+
+### Problem
+The dashboard's CSS media queries used `max-width: 1024px` breakpoints. Some Android Chrome browsers report CSS viewport widths above 1024px even in standard (non-desktop-emulation) mobile mode. This caused:
+- Desktop sticky sidebar showing on phones (mini sidebar, 64px, always visible)
+- Header icons (live, bell, palette) remaining visible and crowding the ECG chart
+- All mobile-specific CSS silently failing
+
+### Solution: `(pointer: coarse)` Media Query
+
+**Every** mobile-specific CSS block now uses an OR condition:
+```css
+@media (max-width: 1024px), (pointer: coarse) { ... }
+```
+
+`pointer: coarse` is `true` on any touchscreen regardless of CSS pixel viewport width. This catches all Android/iOS devices reliably.
+
+### Mobile Header Layout
+
+On touch devices the header reorganizes into a single row:
+```
+[ ☰ ] [ Gauge (44px) ] [ Market Heartbeat ECG chart — fills remaining width ]
+```
+
+Hidden on mobile (moved to `MobileFloatingBar`): live status icon, SmartAlertsBell, palette button.
+
+**ECG Height Fix**: `topBar` CSS was `height: auto` causing `height: 100%` on the chart's parent chain to resolve to 0 (Recharts measured 0px). Fixed by `height: var(--header-height)` — a concrete pixel value the `ResponsiveContainer` can measure.
+
+**Portrait vs Landscape header heights** (CSS custom properties):
+| Context | `--header-height` |
+|---------|-------------------|
+| Desktop | 86px |
+| Touch (any) | 54px |
+| Touch portrait | 72px |
+
+**Gauge scaling in portrait**: `.sectionMood` shrinks to 44px in portrait touch (from 72px) to give the ECG chart more horizontal room.
+
+### `MobileFloatingBar` Component
+
+**File**: `client/src/components/MobileFloatingBar.jsx`
+
+A fixed-position bottom-right floating widget, **visible only on touch devices** (`pointer: coarse`), completely hidden on desktop.
+
+**Collapsed state** (default): 44px circular bubble showing the live/replay icon. Pulses green when live. Red dot badge if any stream is degraded (>120 min stale).
+
+**Expanded state** (tap bubble): Slides up a compact panel with:
+- **A / B / C / D stream health grid**: key, name, age, color-coded dot
+- **Live/Replay badge**: green (LIVE) or amber (REPLAY) with icon
+- **SmartAlertsBell**: embedded with dropdown flipped upward via CSS
+- **Palette button**: opens Theme Builder
+
+### Sidebar Mobile Behavior
+
+On touch devices, the sidebar becomes a **fixed-position drawer** (regardless of viewport width):
+- Hidden by default: `transform: translateX(-100%)`
+- Opened via hamburger: `transform: translateX(0)` + backdrop
+- **Mini mode works on mobile**: `.sidebar.collapsed { width: 64px }` is explicitly set inside the mobile media block (higher specificity overrides the 260px rule)
+- **Mini toggle button** shown inside the drawer so user can switch expanded/collapsed without closing
+- **State persists**: `sidebarCollapsed` key in Zustand store is written to `localStorage` on every toggle
+
+---
+
+## Pillar 3 Extension: Push-First Socket Architecture
+
+**Version**: 1.0 (Live)
+
+### Problem (before)
+All widgets used `setInterval` polling — they fetched data every N seconds regardless of whether new data had arrived. This caused:
+- Stale display for up to 60s after a live scan arrived
+- Redundant API calls during quiet periods
+- Latency stacking over Tailscale (remote tunnels add ~50–200ms per request)
+
+### Solution
+Widgets subscribe to Socket.IO events. When the backend emits `scan-update` (after Stream A ingest), the widget immediately refetches. The fixed-interval fallback remains as a safety net, but the primary update path is socket-driven.
+
+**Implementation pattern**:
+```js
+useEffect(() => {
+  const off = socketService.on('scan-update', () => {
+    if (document.hidden) return; // respect tab visibility
+    fetchData();
+  });
+  return () => off();
+}, [fetchData]);
+```
+
+**Result**: Widgets update within ~200ms of a scan arriving (socket latency), not within N seconds of the next poll cycle.
+
+---
+
+## Pillar 3 Extension: Code Splitting & Lazy Loading
+
+**Version**: 1.0 (Live)
+
+### Problem
+All analytics widgets were imported eagerly. On initial load, the browser downloaded all widget JS chunks simultaneously — causing a 2–4 second blank screen on slow connections and freezing on mobile during the initial data load with 20,000+ chart data points.
+
+### Solution: `LazyWidget` + `React.lazy`
+
+**`LazyWidget` component** (`client/src/components/LazyWidget.jsx`):
+- Wraps each widget section in an `IntersectionObserver`
+- Widget chunk is only downloaded when the section scrolls into the viewport (plus `rootMargin` preload buffer)
+- Shows a skeleton placeholder until the chunk loads
+- `root: null` — uses window viewport as reference, works correctly with any scroll container
+
+**`React.lazy` imports** in `App.jsx`:
+```js
+const EMACascadeMonitor = lazy(() => import('./components/AnalyticsWidgets/EMACascadeMonitor')...);
+```
+
+**Above-the-fold widget** (`ValidatorTimelineWidget`) uses `rootMargin="200px 0px"` to preload before it's visible. Deeper widgets use the default 400px margin.
+
+**Sidebar prefetch**: Each sidebar nav item calls `item.prefetch()` on hover/focus, triggering the dynamic import early. The import promise is cached by the module system — subsequent calls are free.
+
+---
+
 ## Database Schema Reference (Complete)
 
 ### Core Ingestion Tables
@@ -363,6 +556,13 @@ Without this, multi-word labels like `STRONGLY BEARISH` silently resolve to NEUT
 |-------|---------|
 | `ghost_approval_queue` | Coins in ghost state with confidence scores and score breakdown |
 | `system_settings` | Validator + system config keys (15 configurable keys) |
+
+### Smart Alerts Tables (`smart_alerts.db` — separate database)
+| Table | Purpose |
+|-------|---------|
+| `smart_alerts` | Alert definitions: ticker, timeframe, direction, atr_multiplier, created_at, active flag |
+| `smart_alert_events` | Fired events: alert_id, ticker, tf, distPct, atrValue, approachPct, timestamp |
+| `smart_alert_read_status` | Per-event read/unread state for the bell badge counter |
 
 ### Composite Indexes (Performance Critical)
 | Index | Columns | Used By |
@@ -416,7 +616,9 @@ The Analytics Widget Layer is a collection of standalone React components that e
 - Recharts ComposedChart: price line + 5 EMA lines colour-coded by timeframe + volume spike pins (ReferenceDot, colour by source) + transition event dots
 - EMA ladder: 5 TF badges showing EMA price, cascade state (ABOVE/TESTING/BELOW), distPct sublabel
 - State strip: BULL/BEAR/MIXED regime badge, bull defense TF, bear ceiling TF, source health chips showing age (A/C/D), last vol spike chip `▾vol·Xm ago` — shown even when no events in current window (uses `lastVolEventMs`)
+- **ATR chips**: Dual `A15` and `A60` chips per coin showing ATR value at the 15m and 60m timeframes. Used as reference when calibrating Smart Alert multipliers.
 - Controls: ticker input + quick chips (BTC/ETH/SOL/BNB/XRP), window selector (1h/2h/4h/8h), bucket interval (1m/2m/5m)
+- **Preference persistence**: Selected ticker, window, and interval are persisted to `localStorage` via `useState(() => loadPrefs())` lazy initializer pattern. Written on every state change with try/catch guard.
 - Poll interval: 60s
 
 ### Widget 2: DistanceTracker (`DistanceTracker.jsx`)
@@ -454,6 +656,7 @@ The Analytics Widget Layer is a collection of standalone React components that e
 - Column header tooltip: "% distance from Xm 200 EMA (+ = above, − = below)"
 - Filter toggle: ±1% / ±3% / ±5% / ±10% range
 - Sort: click any column header (stable sort, ascending/descending)
+- **Preference persistence**: Active filter range and sort column/direction persisted to `localStorage`.
 - Performance: backed by 3 batched queries using indexed GROUP BY — ~30ms vs ~1.5s for prior N+1 approach
 - Poll interval: 60s
 
@@ -486,7 +689,7 @@ The Analytics Widget Layer is a collection of standalone React components that e
 
 **Key Features**:
 - 12-lane swim lane layout; each lane = one coin
-- Lane header: TICKER | S/R badge | level type | price | distPct sublabel + rich tooltip | direction badge | trend flow label | Stream D chips (RSI, ATR, RelVol) | VOL badge (source-aware: C/A/D + age) | reaction badge (BOUNCE/REJECT/BREAK_BULL/BREAK_BEAR/TESTING/APPROACHING)
+- Lane header: TICKER | S/R badge | level type | price | distPct sublabel + rich tooltip | direction badge | trend flow label | Stream D chips (RSI, ATR, RelVol) | **dual ATR chips (A15 / A60)** | VOL badge (source-aware: C/A/D + age) | reaction badge (BOUNCE/REJECT/BREAK_BULL/BREAK_BEAR/TESTING/APPROACHING)
 - Lane chart: area chart (green fill = above level, red fill = below), level=0 reference line, ±0.3% touch bands, volume spike pins coloured by source (C=amber, A=blue, D=purple)
 - Filters: Support / Resistance / ALL toggle, reaction type multi-select
 - Error handling: non-blocking error banner above stale lanes during fetch errors — never blanks the widget
@@ -568,6 +771,7 @@ The Analytics Widget Layer is a collection of standalone React components that e
 
 **Purpose**: Manages the ghost approval queue — coins leaving the active watchlist that need a confidence review before being permanently dropped.
 
+
 **API Endpoints**:
 - `GET /api/ghosts/queue` — full queue with re-scored confidence
 - `POST /api/ghosts/approve` — approve a single coin
@@ -600,6 +804,39 @@ The Analytics Widget Layer is a collection of standalone React components that e
 - Prune All / Approve All bulk action buttons with confirmation prompt
 - Poll interval: 60s
 
+### Widget 7: SmartAlertsWidget (`SmartAlertsWidget.jsx`)
+
+**Purpose**: Full alert management view — create, edit, delete, and toggle ATR-normalized Smart Alerts. Also shows event history of when alerts fired with approach context.
+
+**API Endpoints**:
+- `GET /api/smart-alerts` — list all alert definitions
+- `POST /api/smart-alerts` — create alert
+- `PUT /api/smart-alerts/:id` — edit alert
+- `DELETE /api/smart-alerts/:id` — delete alert
+- `GET /api/smart-alerts/events` — paginated fired event history
+
+**Key Features**:
+- Alert list: ticker, timeframe, direction (LONG/SHORT/BOTH), ATR multiplier, active toggle, edit/delete actions
+- Quick-create form: ticker + TF + direction + ATR multiplier with A15/A60 reference chips for calibration
+- Event history table: when it fired, distPct at fire time, ATR value, computed approach%
+- **SmartAlertsBell** component (`components/SmartAlerts/SmartAlertsBell.jsx`): header bell icon with unread badge count, dropdown event list, mark-read on open. Socket-driven live update — bell count refreshes on every `scan-update` event.
+- **SmartAlertCreateModal** (`components/SmartAlerts/SmartAlertCreateModal.jsx`): full creation/edit form with live distance preview against current price.
+- Poll interval: 30s
+
+### Widget 8: MarketHeartbeatIndicator (`MarketHeartbeatIndicator.jsx`)
+
+**Purpose**: Header-mounted ECG-style area chart showing historical market mood score over the selected time window. Visualizes bull/bear sentiment as a continuous waveform.
+
+**API Endpoint**: Uses `timeline` data from `useTimeStore` (no dedicated poll — reads from the global scan timeline).
+
+**Key Features**:
+- Recharts `AreaChart` with `type="monotone"` curves
+- Dual areas: `bullArea` (positive mood → green fill above zero) and `bearArea` (negative mood → red fill below zero)
+- **Carry-forward null mood**: `scan.mood === null` uses the previous scan's mood value instead of dropping to 0 — prevents spike artifacts at data gaps
+- **400-point sampling cap**: When timeline exceeds 400 points (e.g., 30-day window), samples every Nth point keeping first and last. Prevents main-thread freeze with 20,000+ data points.
+- ResponsiveContainer height = 100% — parent must have a concrete pixel height (see Mobile Architecture section for the `height: var(--header-height)` fix)
+- No standalone poll — re-renders when `timeline` or `currentIndex` in `useTimeStore` changes
+
 ---
 
 ## Key API Endpoint Reference
@@ -621,6 +858,13 @@ The Analytics Widget Layer is a collection of standalone React components that e
 | GET | `/api/ghosts/queue` | Ghost approval queue with re-scored confidence |
 | POST | `/api/ghosts/approve` | Approve ghost coin back to active watchlist |
 | POST | `/api/ghosts/prune` | Remove ghost coin permanently |
+| GET | `/api/smart-alerts` | List all Smart Alert definitions |
+| POST | `/api/smart-alerts` | Create a new ATR-normalized Smart Alert |
+| PUT | `/api/smart-alerts/:id` | Edit alert (multiplier, direction, active flag) |
+| DELETE | `/api/smart-alerts/:id` | Delete an alert definition |
+| GET | `/api/smart-alerts/events` | Recent fired alert events (paginated) |
+| GET | `/api/smart-alerts/unread-count` | Bell badge unread count |
+| POST | `/api/smart-alerts/mark-read` | Mark alert events as read |
 
 ---
 
