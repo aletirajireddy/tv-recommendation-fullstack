@@ -346,7 +346,7 @@
     width: 8px;
 }
 
-/* MOBILE (≤ 768px) — compact row: gauge · breadth · stream dots */
+/* MOBILE (≤ 768px) — gauge · heartbeat chart · (stream status hidden) */
 @media (max-width: 768px) {
     .deckContainer {
         gap: 6px;
@@ -354,34 +354,33 @@
         overflow: hidden;
     }
 
-    /* Shrink gauge — keep it but make it smaller */
+    /* Shrink gauge */
     .sectionMood {
         width: 56px;
         flex: 0 0 56px;
     }
 
-    /* Show breadth on mobile instead of heartbeat chart (chart causes visual artifacts at small height) */
+    /* Hide breadth count — heartbeat chart takes the space */
     .sectionBreadth {
-        display: flex;
-        flex: 0 0 auto;
-    }
-
-    /* Hide heartbeat chart on mobile — plan stream lights separately */
-    .sectionHeartbeat {
         display: none;
     }
 
-    /* Compact stream health — dots only, no text grid */
-    .sectionSystemHealth {
-        flex: 0 0 auto;
+    /* SHOW heartbeat chart on mobile — full remaining width */
+    .sectionHeartbeat {
+        display: flex;
+        flex: 1 1 auto;
         min-width: 0;
-        padding-right: 4px;
-        padding-left: 4px;
-        justify-content: center;
+        height: 100%;
+        overflow: hidden;
     }
 
-    .streamGrid  { display: none; }      /* hide desktop grid */
-    .streamDots  { display: flex; }      /* show compact dots  */
+    /* Hide stream status (A:MACRO / B:SCOUT etc.) — redesign planned separately */
+    .sectionSystemHealth {
+        display: none;
+    }
+
+    .streamGrid  { display: none; }
+    .streamDots  { display: none; }
 
     /* Hide time/replay card on mobile */
     .sectionSystem {

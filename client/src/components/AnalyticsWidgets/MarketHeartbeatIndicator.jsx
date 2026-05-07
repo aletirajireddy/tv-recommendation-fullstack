@@ -85,6 +85,19 @@ export function MarketHeartbeatIndicator() {
             };
         });
 
+        // Downsample: cap rendered points so the chart never blocks the main thread.
+        // 400 points gives ~2min resolution over 30 days — plenty for the sparkline.
+        const MAX_PTS = 400;
+        if (data.length > MAX_PTS) {
+            const step = Math.ceil(data.length / MAX_PTS);
+            // Always keep the last point so the live edge is accurate
+            const sampled = data.filter((_, i) => i % step === 0);
+            if (sampled[sampled.length - 1] !== data[data.length - 1]) {
+                sampled.push(data[data.length - 1]);
+            }
+            data.splice(0, data.length, ...sampled);
+        }
+
         // Map exact Alert Frequencies from time_spread to the closest scan timeframe
         if (analyticsData?.time_spread) {
             analyticsData.time_spread.forEach(bucket => {
