@@ -3,7 +3,7 @@
     display: none;
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1024px), (pointer: coarse) {
     .wrapper {
         display: flex;
         flex-direction: column;

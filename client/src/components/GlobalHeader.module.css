@@ -29,7 +29,7 @@
     background: var(--bg-panel);
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1024px), (pointer: coarse) {
     .hamburgerBtn {
         display: flex;
         align-items: center;
@@ -184,8 +184,8 @@
     font-family: 'Roboto Mono', monospace;
 }
 
-/* TABLET / MOBILE (≤ 1024px) — hide right icons, give chart full width */
-@media (max-width: 1024px) {
+/* TABLET / MOBILE (≤ 1024px or touch device) — hide right icons, give chart full width */
+@media (max-width: 1024px), (pointer: coarse) {
     .header {
         gap: 4px;
     }
@@ -209,8 +209,8 @@
     }
 }
 
-/* MOBILE (≤ 768px) — keep single row, clip overflow */
-@media (max-width: 768px) {
+/* MOBILE (≤ 768px or touch portrait) — keep single row, clip overflow */
+@media (max-width: 768px), (pointer: coarse) and (orientation: portrait) {
     .header {
         flex-direction: row;
         align-items: center;

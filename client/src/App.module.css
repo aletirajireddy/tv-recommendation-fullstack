@@ -24,8 +24,8 @@
   position: relative;
 }
 
-@media (max-width: 1024px) {
-  /* Sidebar is position:fixed on mobile — mainContent gets full width naturally */
+@media (max-width: 1024px), (pointer: coarse) {
+  /* Sidebar is position:fixed on touch/mobile — mainContent gets full width naturally */
   .viewLayout {
     flex-direction: column;
     overflow: hidden;

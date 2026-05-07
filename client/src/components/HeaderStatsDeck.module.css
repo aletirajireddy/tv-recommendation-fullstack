@@ -84,8 +84,8 @@
     justify-content: center;
 }
 
-@media (max-width: 1024px) {
-    /* On tablet/mobile: shrink gauge, show heartbeat, hide stream status */
+@media (max-width: 1024px), (pointer: coarse) {
+    /* On tablet/mobile/touch: shrink gauge, show heartbeat, hide stream status */
     .sectionMood {
         width: 72px;
         flex: 0 0 72px;
@@ -321,8 +321,8 @@
     }
 }
 
-/* TABLET (1024px) — keep flex row, drop heartbeat width constraint */
-@media (max-width: 1024px) {
+/* TABLET / TOUCH — keep flex row, drop heartbeat width constraint */
+@media (max-width: 1024px), (pointer: coarse) {
     .deckContainer {
         gap: 8px;
     }
@@ -370,8 +370,8 @@
     width: 8px;
 }
 
-/* MOBILE (≤ 768px) — tighter gauge, same layout as 1024px block */
-@media (max-width: 768px) {
+/* MOBILE (≤ 768px or touch portrait) — tighter gauge */
+@media (max-width: 768px), (pointer: coarse) and (orientation: portrait) {
     .deckContainer {
         gap: 6px;
         height: 100%;
