@@ -1,11 +1,23 @@
-import React, { useMemo } from 'react';
+import React, { lazy, Suspense, useMemo } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
 import { TrendingUp, TrendingDown, Minus, Activity, Wifi } from 'lucide-react';
 import GenieSmart from '../services/GenieSmart';
 import TimeService from '../services/TimeService';
 import styles from './HeaderStatsDeck.module.css';
-import { MarketHeartbeatIndicator } from './AnalyticsWidgets/MarketHeartbeatIndicator';
 import { SpeedometerGauge } from './SpeedometerGauge';
+
+// Initial-load freeze fix (May 2026):
+// MarketHeartbeatIndicator imports Recharts (~200KB unminified). Eagerly
+// importing it from the always-rendered header deck pulled the entire Recharts
+// module into the initial JS bundle — meaning Recharts had to download AND parse
+// before React could render anything at all. Lazy-loading splits Recharts into
+// a separate chunk: header paints immediately with all other stats, then the
+// heartbeat chart hydrates in the background once Recharts arrives.
+// Header has fixed pixel height (--header-height) so the brief skeleton causes
+// zero layout shift.
+const MarketHeartbeatIndicator = lazy(() =>
+    import('./AnalyticsWidgets/MarketHeartbeatIndicator').then(m => ({ default: m.MarketHeartbeatIndicator }))
+);
 
 export function HeaderStatsDeck() {
     // 1. CONSUME GENIE SMART STATE
@@ -47,9 +59,12 @@ export function HeaderStatsDeck() {
 
                 <div className={styles.divider} />
 
-                {/* 3. MARKET HEARTBEAT */}
+                {/* 3. MARKET HEARTBEAT — lazy-loaded so Recharts ships in a
+                    separate chunk and doesn't block initial paint. */}
                 <div className={`${styles.card} ${styles.sectionHeartbeat}`}>
-                    <MarketHeartbeatIndicator />
+                    <Suspense fallback={null}>
+                        <MarketHeartbeatIndicator />
+                    </Suspense>
                 </div>
             <div className={styles.divider} />
             <SystemHealthGrid />
