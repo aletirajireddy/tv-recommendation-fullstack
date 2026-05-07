@@ -24,6 +24,17 @@
     overflow: hidden;
 }
 
+/* Mobile: full-width so the drawer fills the screen instead of appearing
+   as a narrow half-panel. pointer:coarse catches all touch devices
+   regardless of reported CSS viewport width (some Android Chrome browsers
+   report > 768px even in standard mobile mode). */
+@media (max-width: 768px), (pointer: coarse) {
+    .drawer {
+        width: 100vw;
+        border-left: none;
+    }
+}
+
 @keyframes slideInRight {
     from { transform: translateX(100%); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
