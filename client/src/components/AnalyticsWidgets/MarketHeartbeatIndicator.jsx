@@ -67,8 +67,14 @@ export function MarketHeartbeatIndicator() {
         const cutoffMs = refTimeMs - (lookbackHours * 60 * 60 * 1000);
         const timeline = fullTimeline.slice(0, currentIndex + 1).filter(t => new Date(t.timestamp).getTime() >= cutoffMs);
 
+        // Carry-forward last known mood when a scan is missing market_sentiment.moodScore
+        // (older rows / partial scans return null from the server). Without this, null → 0
+        // creates phantom dropouts to baseline that render as tall step spikes against the
+        // rest of the series. Carry-forward keeps the line continuous.
+        let lastMood = 0;
         const data = timeline.map(scan => {
-            const rawMood = scan.mood || 0;
+            const rawMood = scan.mood == null ? lastMood : scan.mood;
+            lastMood = rawMood;
             return {
                 timestamp_ms: new Date(scan.timestamp).getTime(),
                 timeLabel:    format(new Date(scan.timestamp), 'HH:mm'),
@@ -147,8 +153,8 @@ export function MarketHeartbeatIndicator() {
                             <ReferenceArea key={`hb-tz-${i}`} x1={tz.start} x2={tz.end} fill={tz.fill} strokeOpacity={0} ifOverflow="hidden" />
                         ))}
 
-                        <Area yAxisId="mood" type="step" dataKey="bullArea" stroke="#10B981" strokeWidth={1} fill="url(#hbBull)" isAnimationActive={false} />
-                        <Area yAxisId="mood" type="step" dataKey="bearArea" stroke="#EF4444" strokeWidth={1} fill="url(#hbBear)" isAnimationActive={false} />
+                        <Area yAxisId="mood" type="monotone" dataKey="bullArea" stroke="#10B981" strokeWidth={1} fill="url(#hbBull)" isAnimationActive={false} />
+                        <Area yAxisId="mood" type="monotone" dataKey="bearArea" stroke="#EF4444" strokeWidth={1} fill="url(#hbBear)" isAnimationActive={false} />
                         <Bar  yAxisId="alerts" dataKey="alertCount" fill="#F59E0B" barSize={2} radius={[1, 1, 0, 0]} isAnimationActive={false} />
 
                         <Brush 
