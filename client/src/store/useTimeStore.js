@@ -44,7 +44,7 @@ export const useTimeStore = create((set, get) => ({
     isMonitorModalOpen: false, // New Modal State
     streamsHealth: null, // NEW: Tri-Stream Health
     selectedTicker: null, // Contextual ToolBox Target
-    sidebarCollapsed: false, // Layout state
+    sidebarCollapsed: localStorage.getItem('tv_sidebarCollapsed') === 'true', // Layout state
     mobileMenuOpen: false, // New Mobile Layout state
     showPlayback: localStorage.getItem('tv_showPlayback') === null ? true : localStorage.getItem('tv_showPlayback') === 'true',
 
@@ -60,7 +60,10 @@ export const useTimeStore = create((set, get) => ({
 
     // 2. ACTIONS
     setSelectedTicker: (ticker) => set({ selectedTicker: ticker }),
-    setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+    setSidebarCollapsed: (collapsed) => {
+        set({ sidebarCollapsed: collapsed });
+        try { localStorage.setItem('tv_sidebarCollapsed', String(collapsed)); } catch {}
+    },
     setMobileMenuOpen: (isOpen) => set({ mobileMenuOpen: isOpen }),
     setShowPlayback: (show) => {
         set({ showPlayback: !!show });

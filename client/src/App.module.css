@@ -29,6 +29,9 @@
   .viewLayout {
     flex-direction: column;
     overflow-y: auto;
+    /* Sidebar is position:fixed on mobile — main takes full viewport width */
+    overflow-x: hidden;
+    width: 100%;
   }
 }
 
@@ -150,9 +153,20 @@
         gap: 16px;
     }
 
-    /* Force full width on mobile if somehow constrained */
-    .appContainer {
+    /* Strict full-width containment — no horizontal scroll on mobile */
+    .appContainer,
+    .viewLayout,
+    .mainContent {
         overflow-x: hidden;
+        max-width: 100vw;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Reduce widget padding on small screens */
+    .mainContent {
+        padding: 8px;
+        gap: 8px;
     }
 }
 

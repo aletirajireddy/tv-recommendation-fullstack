@@ -346,7 +346,7 @@
     width: 8px;
 }
 
-/* MOBILE (≤ 768px) — single row: gauge · heartbeat · stream dots */
+/* MOBILE (≤ 768px) — compact row: gauge · breadth · stream dots */
 @media (max-width: 768px) {
     .deckContainer {
         gap: 6px;
@@ -360,18 +360,15 @@
         flex: 0 0 56px;
     }
 
-    /* Hide breadth on mobile — heartbeat chart is more valuable */
+    /* Show breadth on mobile instead of heartbeat chart (chart causes visual artifacts at small height) */
     .sectionBreadth {
-        display: none;
+        display: flex;
+        flex: 0 0 auto;
     }
 
-    /* SHOW heartbeat on mobile — full flex width */
+    /* Hide heartbeat chart on mobile — plan stream lights separately */
     .sectionHeartbeat {
-        display: flex;
-        flex: 1 1 auto;
-        min-width: 0;
-        height: 100%;
-        overflow: hidden;
+        display: none;
     }
 
     /* Compact stream health — dots only, no text grid */
