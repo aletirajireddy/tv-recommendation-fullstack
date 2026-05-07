@@ -1,7 +1,7 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 
 /**
- * LazyWidget — Proactive viewport-threshold preloader
+ * LazyWidget — Proactive viewport-threshold preloader with mount stagger.
  *
  * Wraps a React.lazy()-imported component and only mounts it when the
  * placeholder enters the viewport (or comes within `rootMargin`). This:
@@ -9,21 +9,54 @@ import React, { Suspense, useEffect, useRef, useState } from 'react';
  *   2. Preloads slightly ahead of scroll so users never see a "flash of skeleton"
  *   3. Keeps a stable layout via a min-height skeleton (zero CLS)
  *
- * Usage:
- *   const Foo = React.lazy(() => import('./Foo'));
- *   <LazyWidget minHeight={400}><Foo /></LazyWidget>
+ * Initial-load freeze fix (May 2026):
+ * On first paint, the IntersectionObserver fires for every widget already in
+ * the near-viewport zone in the SAME tick — meaning 4–6 widgets would all
+ * simultaneously download chunks, parse Recharts (~200KB), initialize chart
+ * instances, and fire backend fetches. Result: ~1 min main-thread freeze on
+ * page load. Two changes mitigate this with zero data-flow side effects:
  *
- * Architecture notes:
- * - Uses IntersectionObserver with a generous rootMargin so the chunk fetch
- *   begins ~one viewport before the widget actually renders.
- * - On first intersection we set mounted=true and disconnect the observer
- *   (one-shot — we never want to unmount and re-fetch).
- * - SSR / no-IO-support fallback: render immediately.
+ *   1. Smaller default rootMargin (100px vs 400px) — drastically reduces the
+ *      number of widgets that enter "near viewport" simultaneously. Off-screen
+ *      widgets still load fine when the user scrolls toward them.
+ *
+ *   2. Module-scope mount queue — when multiple LazyWidgets become visible in
+ *      the same IO tick, their mounts are spread across animation frames
+ *      (~16ms each) instead of all firing in the same paint. The user-visible
+ *      effect is identical (instant mount on intersection); the difference is
+ *      that chunk-parse cost is amortised across frames instead of one giant
+ *      blocking burst.
  */
+
+// Module-scope mount queue — spreads simultaneous intersections across frames.
+// Keeps things simple: a FIFO of pending mount callbacks, drained one per RAF.
+let _mountQueue = [];
+let _mountRafScheduled = false;
+const _drainMountQueue = () => {
+    _mountRafScheduled = false;
+    if (_mountQueue.length === 0) return;
+    const cb = _mountQueue.shift();
+    try { cb(); } catch { /* swallow — host component will handle render error */ }
+    if (_mountQueue.length > 0) {
+        _mountRafScheduled = true;
+        // requestAnimationFrame keeps mounts aligned with paint; falls back to
+        // setTimeout for non-browser environments (test runners).
+        if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(_drainMountQueue);
+        else setTimeout(_drainMountQueue, 16);
+    }
+};
+const _enqueueMount = (cb) => {
+    _mountQueue.push(cb);
+    if (_mountRafScheduled) return;
+    _mountRafScheduled = true;
+    if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(_drainMountQueue);
+    else setTimeout(_drainMountQueue, 16);
+};
+
 export function LazyWidget({
     children,
     minHeight = 320,
-    rootMargin = '400px 0px',  // preload one viewport ahead
+    rootMargin = '100px 0px',  // small preload buffer — see freeze-fix notes above
     threshold = 0,
     fallback,
     placeholderClassName,
@@ -39,18 +72,28 @@ export function LazyWidget({
         const node = ref.current;
         if (!node) return;
 
+        let cancelled = false;
         const io = new IntersectionObserver(
             (entries) => {
                 if (entries.some(e => e.isIntersecting)) {
-                    setShouldRender(true);
                     io.disconnect();
+                    // Defer the actual mount through the global queue so that
+                    // when 5+ widgets intersect in the same tick (e.g. on first
+                    // paint), they don't all parse chunks and init charts in
+                    // the same frame.
+                    _enqueueMount(() => {
+                        if (!cancelled) setShouldRender(true);
+                    });
                 }
             },
             { rootMargin, threshold }
         );
         io.observe(node);
 
-        return () => io.disconnect();
+        return () => {
+            cancelled = true;
+            io.disconnect();
+        };
     }, [shouldRender, rootMargin, threshold]);
 
     const skeleton = fallback ?? (
