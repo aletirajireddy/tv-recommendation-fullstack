@@ -6,8 +6,7 @@
 }
 
 .topBar {
-  min-height: var(--header-height);
-  height: auto;
+  height: var(--header-height);
   background-color: var(--bg-header);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(8px);

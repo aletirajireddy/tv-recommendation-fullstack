@@ -184,7 +184,7 @@
     font-family: 'Roboto Mono', monospace;
 }
 
-/* TABLET / MOBILE (≤ 1024px) — compact right-side icons */
+/* TABLET / MOBILE (≤ 1024px) — hide right icons, give chart full width */
 @media (max-width: 1024px) {
     .header {
         gap: 4px;
@@ -198,16 +198,9 @@
         gap: 4px;
     }
 
+    /* Hide live/bell/palette — moved to MobileFloatingBar */
     .metaSection {
-        flex-shrink: 0;
-        gap: 2px;
-    }
-
-    /* Shrink status dot (wifi/replay icon box) */
-    .activeStatus,
-    .inactiveStatus {
-        padding: 4px;
-        border-radius: 5px;
+        display: none;
     }
 
     .hamburgerBtn {

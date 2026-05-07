@@ -9,6 +9,7 @@ import { MonitorDetailModal } from './components/MonitorDetailModal';
 import { useTimeStore } from './store/useTimeStore';
 import { ThemeBuilder } from './components/ThemeBuilder';
 import { LazyWidget } from './components/LazyWidget';
+import { MobileFloatingBar } from './components/MobileFloatingBar';
 import { Target } from 'lucide-react';
 
 // CODE-SPLIT WIDGETS — each becomes its own chunk, fetched only when in viewport.
@@ -221,6 +222,9 @@ function App() {
       </div>
 
       {showThemeBuilder && <ThemeBuilder onClose={() => setShowThemeBuilder(false)} />}
+
+      {/* Mobile-only floating status bubble — hidden on desktop via CSS */}
+      <MobileFloatingBar onOpenThemeBuilder={() => setShowThemeBuilder(true)} />
     </div>
   );
 }
