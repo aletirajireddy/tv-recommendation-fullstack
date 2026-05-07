@@ -184,7 +184,39 @@
     font-family: 'Roboto Mono', monospace;
 }
 
-/* MOBILE LAYOUT (≤ 768px) — keep single row, clip overflow */
+/* TABLET / MOBILE (≤ 1024px) — compact right-side icons */
+@media (max-width: 1024px) {
+    .header {
+        gap: 4px;
+    }
+
+    .deckSection {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        height: 100%;
+        gap: 4px;
+    }
+
+    .metaSection {
+        flex-shrink: 0;
+        gap: 2px;
+    }
+
+    /* Shrink status dot (wifi/replay icon box) */
+    .activeStatus,
+    .inactiveStatus {
+        padding: 4px;
+        border-radius: 5px;
+    }
+
+    .hamburgerBtn {
+        padding: 4px;
+        flex-shrink: 0;
+    }
+}
+
+/* MOBILE (≤ 768px) — keep single row, clip overflow */
 @media (max-width: 768px) {
     .header {
         flex-direction: row;
@@ -196,14 +228,14 @@
 
     .deckSection {
         flex: 1;
-        min-width: 0;   /* allow flex to shrink past content */
+        min-width: 0;
         overflow: hidden;
         height: 100%;
     }
 
     .metaSection {
         flex-shrink: 0;
-        gap: 8px;
+        gap: 2px;
     }
 }
 
