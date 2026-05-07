@@ -204,8 +204,14 @@
     }
 
     .hamburgerBtn {
-        padding: 4px;
+        padding: 2px;
         flex-shrink: 0;
+    }
+
+    /* Scale SVG icon inside hamburger to 16px on touch */
+    .hamburgerBtn svg {
+        width: 16px;
+        height: 16px;
     }
 }
 

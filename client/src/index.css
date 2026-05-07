@@ -21,10 +21,10 @@
     }
 }
 
-/* Portrait touch: slightly taller for better ECG chart visibility */
+/* Portrait touch: taller header for better ECG chart visibility */
 @media (pointer: coarse) and (orientation: portrait) {
     :root {
-        --header-height: 68px;
+        --header-height: 72px;
     }
 }
 

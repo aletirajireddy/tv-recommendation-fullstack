@@ -34,19 +34,22 @@
         width: 260px;
         z-index: 3000;
         transform: translateX(-100%);
-        /* Only the slide transform is transitioned — not width, not opacity */
-        transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+        transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), width 0.18s ease;
         border-right: 1px solid rgba(255,255,255,0.1);
-        /* Solid dark panel so menu text is always readable */
         background: #111318;
         box-shadow: 6px 0 28px rgba(0,0,0,0.55);
+    }
+
+    /* Mini mode on mobile: width shrinks to icon-only column */
+    .sidebar.collapsed {
+        width: var(--sidebar-width-collapsed);
     }
 
     .sidebar.mobileOpen {
         transform: translateX(0);
     }
 
-    /* Backdrop: just enough to signal "tap to close" — does NOT hide main content */
+    /* Backdrop: just enough to signal "tap to close" */
     .mobileBackdrop {
         position: fixed;
         top: 0;
@@ -55,7 +58,6 @@
         bottom: 0;
         background: rgba(0, 0, 0, 0.28);
         z-index: 2999;
-        /* No blur — we don't want widgets hidden, just slightly dimmed */
     }
 }
 
@@ -68,13 +70,14 @@
 
 @media (max-width: 1024px), (pointer: coarse) {
     .toggleRow {
-        justify-content: space-between;
+        justify-content: flex-end;
         align-items: center;
-        padding: 16px;
+        padding: 10px 12px;
         border-bottom: 1px solid rgba(255,255,255,0.08);
     }
+    /* Show toggle button in mobile drawer so user can switch mini/expanded */
     .toggleBtn {
-        display: none;
+        display: flex;
     }
 }
 

@@ -378,9 +378,10 @@
         overflow: hidden;
     }
 
+    /* Shrink gauge further in portrait — gives more horizontal room to ECG chart */
     .sectionMood {
-        width: 56px;
-        flex: 0 0 56px;
+        width: 44px;
+        flex: 0 0 44px;
     }
 
     /* Hide all dividers on small screens */
