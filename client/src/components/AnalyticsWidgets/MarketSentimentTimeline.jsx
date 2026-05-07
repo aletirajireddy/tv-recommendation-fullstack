@@ -21,14 +21,19 @@ export function MarketSentimentTimeline() {
         const cutoffMs = refTimeMs - (lookbackHours * 60 * 60 * 1000);
         const timeline = fullTimeline.slice(0, currentIndex + 1).filter(t => new Date(t.timestamp).getTime() >= cutoffMs);
         
+        // Carry-forward null mood — same pattern as MarketHeartbeatIndicator.
+        // t.mood == null means the scan had no market_sentiment; using || 0 would
+        // drop the line to 0 creating false spike artifacts in the chart.
+        let lastMood = 0;
         const data = timeline.map(t => {
-            const mood = t.mood || 0;
+            const rawMood = t.mood == null ? lastMood : t.mood;
+            lastMood = rawMood;
             return {
                 timestamp_ms: new Date(t.timestamp).getTime(),
                 timeLabel: format(new Date(t.timestamp), 'MMM d, HH:mm'),
-                bull_flow: mood > 0 ? mood : 0,
-                bear_flow: mood < 0 ? mood : 0,
-                net_flow:  mood
+                bull_flow: rawMood > 0 ? rawMood : 0,
+                bear_flow: rawMood < 0 ? rawMood : 0,
+                net_flow:  rawMood
             };
         });
 

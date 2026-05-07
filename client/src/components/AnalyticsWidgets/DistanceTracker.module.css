@@ -169,6 +169,23 @@
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ATR15 / ATR60 columns — muted amber, right-aligned, de-emphasised vs dist columns */
+.atrCell {
+    color: #b7791f;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    text-align: right;
+    padding: 5px 8px;
+}
+.atrHeader {
+    color: #b7791f !important;
+    opacity: 0.85;
+}
+.atrHeader.sortActive {
+    color: #f6ad55 !important;
+    opacity: 1;
+}
+
 .squeezedRow {
     background: rgba(246, 173, 85, 0.04);
 }

@@ -7,15 +7,16 @@ export default function HeaderSparkline() {
 
     const chartData = useMemo(() => {
         if (!timeline || timeline.length === 0) return [];
-        // Map timeline to get bull/bear flows
+        // Carry-forward null mood — t.mood || 0 collapses null to 0 which
+        // produces false spike artifacts when consecutive scans have no sentiment.
+        let lastMood = 0;
         return timeline.map(t => {
-            const mood = t.mood || 0;
+            const rawMood = t.mood == null ? lastMood : t.mood;
+            lastMood = rawMood;
             return {
                 timestamp: t.timestamp,
-                // Positive goes up
-                bull_flow: mood > 0 ? mood : 0,
-                // Negative intrinsically plots downwards originating from 0 baseline
-                bear_flow: mood < 0 ? mood : 0
+                bull_flow: rawMood > 0 ? rawMood : 0,
+                bear_flow: rawMood < 0 ? rawMood : 0,
             };
         });
     }, [timeline]);

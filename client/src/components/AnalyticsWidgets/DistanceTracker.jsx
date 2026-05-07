@@ -13,6 +13,11 @@ const SmartAlertCreateModal = lazy(() =>
 const TFS = ['m1', 'm5', 'm15', 'h1', 'h4'];
 const TF_LABELS = { m1: '1m', m5: '5m', m15: '15m', h1: '1h', h4: '4h' };
 
+function fmtAtr(val) {
+    if (val == null || isNaN(val)) return '—';
+    return val.toFixed(2) + '%';
+}
+
 const SRC_COLOR = {
     STREAM_D: '#9ae6b4',
     STREAM_C: '#f6ad55',
@@ -109,6 +114,14 @@ const DistRow = React.memo(function DistRow({ r, onCreateAlert }) {
                     </td>
                 );
             })}
+            {/* ATR15 — 15m ATR% */}
+            <td className={styles.atrCell} title="ATR at 15m timeframe (% of price)">
+                {fmtAtr(r.atrs?.m15)}
+            </td>
+            {/* ATR60 — 1h ATR% */}
+            <td className={styles.atrCell} title="ATR at 1h timeframe (% of price)">
+                {fmtAtr(r.atrs?.h1)}
+            </td>
         </tr>
     );
 });
@@ -195,6 +208,10 @@ export function DistanceTracker({ filterTicker, compact }) {
             let av, bv;
             if (sortKey === 'minAbsDist') {
                 av = a.minAbsDist; bv = b.minAbsDist;
+            } else if (sortKey === 'atr15') {
+                av = a.atrs?.m15 ?? Infinity; bv = b.atrs?.m15 ?? Infinity;
+            } else if (sortKey === 'atr60') {
+                av = a.atrs?.h1 ?? Infinity; bv = b.atrs?.h1 ?? Infinity;
             } else if (TFS.includes(sortKey)) {
                 av = a.dists?.[sortKey] != null ? Math.abs(a.dists[sortKey]) : Infinity;
                 bv = b.dists?.[sortKey] != null ? Math.abs(b.dists[sortKey]) : Infinity;
@@ -275,6 +292,16 @@ export function DistanceTracker({ filterTicker, compact }) {
                                         {TF_LABELS[tf]}<br /><span className={styles.thSub}>% vs EMA</span>
                                     </th>
                                 ))}
+                                <th onClick={() => handleSort('atr15')}
+                                    className={`${styles.atrHeader} ${sortKey === 'atr15' ? styles.sortActive : ''}`}
+                                    title="15m ATR as % of price — use to calibrate Smart Alert multiplier">
+                                    A15<br /><span className={styles.thSub}>ATR%</span>
+                                </th>
+                                <th onClick={() => handleSort('atr60')}
+                                    className={`${styles.atrHeader} ${sortKey === 'atr60' ? styles.sortActive : ''}`}
+                                    title="1h ATR as % of price — use to calibrate Smart Alert multiplier">
+                                    A60<br /><span className={styles.thSub}>ATR%</span>
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
