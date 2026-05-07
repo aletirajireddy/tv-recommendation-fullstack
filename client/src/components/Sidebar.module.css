@@ -228,7 +228,7 @@
 }
 
 .settingBtn.active {
-    background: var(--white);
+    background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
     border-color: var(--accent-blue);
     color: var(--text-main);
 }

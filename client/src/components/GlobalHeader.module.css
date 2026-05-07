@@ -63,10 +63,10 @@
 }
 
 .activeStatus {
-    background: var(--white);
+    background: color-mix(in srgb, var(--accent-green) 15%, transparent);
     border-color: var(--accent-green);
     color: var(--accent-green);
-    box-shadow: 0 0 10px rgba(56, 161, 105, 0.1);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--accent-green) 10%, transparent);
 }
 
 /* CENTER: META & MINI PLAYBACK */
