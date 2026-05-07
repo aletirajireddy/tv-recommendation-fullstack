@@ -5,6 +5,46 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>client</title>
+    <!-- Theme FOUC fix: apply saved CSS variables synchronously before React renders.
+         Zustand persist stores state at key "dashboard-theme-storage" as
+         { state: { themeMode, activeThemeId, themes }, version }.
+         We read it here so the very first paint already has the correct dark/light
+         variables — eliminating the white flash that appears when JS-injected vars
+         arrive after the initial paint. -->
+    <script>
+      (function () {
+        var defaultColors = {
+          modern: {
+            light: { '--bg-app': '#F3F4F6', '--bg-panel': '#FFFFFF', '--border': '#E5E7EB', '--border-bright': '#D1D5DB', '--text-main': '#111827', '--text-muted': '#6B7280', '--primary': '#2D3047', '--accent-green': '#10B981', '--accent-red': '#EF4444', '--accent-blue': '#3B82F6', '--accent-orange': '#F59E0B', '--warning': '#F59E0B', '--white': '#FFFFFF' },
+            dark:  { '--bg-app': '#111827', '--bg-panel': '#1F2937', '--border': '#374151', '--border-bright': '#4B5563', '--text-main': '#F9FAFB', '--text-muted': '#9CA3AF', '--primary': '#2D3047', '--accent-green': '#10B981', '--accent-red': '#EF4444', '--accent-blue': '#3B82F6', '--accent-orange': '#F59E0B', '--warning': '#F59E0B', '--white': '#FFFFFF' }
+          },
+          legacy: {
+            light: { '--bg-app': '#f7fafc', '--bg-panel': '#ffffff', '--border': '#e2e8f0', '--border-bright': '#cbd5e0', '--text-main': '#1a202c', '--text-muted': '#4a5568', '--primary': '#3182ce', '--accent-green': '#38a169', '--accent-red': '#e53e3e', '--accent-blue': '#3182ce', '--accent-orange': '#dd6b20', '--warning': '#dd6b20', '--white': '#ffffff' },
+            dark:  { '--bg-app': '#1a202c', '--bg-panel': '#2d3748', '--border': '#4a5568', '--border-bright': '#718096', '--text-main': '#f7fafc', '--text-muted': '#a0aec0', '--primary': '#63b3ed', '--accent-green': '#48bb78', '--accent-red': '#f56565', '--accent-blue': '#63b3ed', '--accent-orange': '#ed8936', '--warning': '#ed8936', '--white': '#ffffff' }
+          }
+        };
+        try {
+          var raw = localStorage.getItem('dashboard-theme-storage');
+          if (!raw) throw 0;
+          var stored = JSON.parse(raw);
+          var s = stored.state || {};
+          var mode = s.themeMode || 'dark';
+          var id   = s.activeThemeId || 'modern';
+          // Merge persisted themes (includes any custom themes) over built-in defaults
+          var themes = Object.assign({}, defaultColors, s.themes || {});
+          var themeColors = (themes[id] || themes.modern)[mode] || (themes[id] || themes.modern).dark;
+          var root = document.documentElement;
+          Object.keys(themeColors).forEach(function (k) { root.style.setProperty(k, themeColors[k]); });
+          if (mode === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
+        } catch (e) {
+          // No stored theme — apply built-in dark defaults so first paint is dark
+          var colors = defaultColors.modern.dark;
+          var root = document.documentElement;
+          Object.keys(colors).forEach(function (k) { root.style.setProperty(k, colors[k]); });
+          root.classList.add('dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
