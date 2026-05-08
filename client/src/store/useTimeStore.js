@@ -9,6 +9,17 @@ let debounceTimerResearch = null;
 let debounceTimerParticipation = null;
 let debounceTimerAlpha = null;
 
+// 500ms leading-edge throttle for lastDataPush.
+// Collapses rapid socket bursts (scan+stream-d+validator firing together)
+// into a single store write so widgets don't fire 3× HTTP requests at once.
+let _lastPushMs = 0;
+const _bumpDataPush = (set) => {
+    const now = Date.now();
+    if (now - _lastPushMs < 500) return;
+    _lastPushMs = now;
+    set({ lastDataPush: now });
+};
+
 // In-flight de-duplication guards.
 // Module-scoped (not per-instance) because the store itself is a singleton.
 // If a fetch is already in flight, callers receive the SAME promise — preventing
@@ -191,8 +202,7 @@ export const useTimeStore = create((set, get) => ({
             if (isLive) {
                 get().fetchFusionData();
             }
-            // bump global push signal so level/ema widgets pick up new smart-level data
-            set({ lastDataPush: Date.now() });
+            _bumpDataPush(set);
         });
 
         // Handle Stream B Market Context Updates (Telemetry)
@@ -202,23 +212,23 @@ export const useTimeStore = create((set, get) => ({
             if (isLive) {
                 get().fetchParticipationPulse();
             }
-            set({ lastDataPush: Date.now() });
+            _bumpDataPush(set);
         });
 
         // Handle Stream D volume/price pushes — EMA/Level/DistanceTracker widgets reload
         SocketService.on('stream-d-update', (_data) => {
-            set({ lastDataPush: Date.now() });
+            _bumpDataPush(set);
         });
 
         // Handle validator state machine transitions (WATCHING→CONFIRMED/FAILED etc)
         SocketService.on('validator-update', (_data) => {
-            set({ lastDataPush: Date.now() });
+            _bumpDataPush(set);
         });
 
         // Handle ghost queue mutations (approve / approve-all / toggle-auto)
         // GhostCoinWidget is viewport-wired to lastDataPush, so it reloads immediately.
         SocketService.on('ghost-update', (_data) => {
-            set({ lastDataPush: Date.now() });
+            _bumpDataPush(set);
         });
     },
 
