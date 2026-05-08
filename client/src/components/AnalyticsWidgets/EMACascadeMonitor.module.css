@@ -73,7 +73,7 @@
     margin-right: 2px;
 }
 .tickerInput {
-    background: var(--white);
+    background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--text-main);

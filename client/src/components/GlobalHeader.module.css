@@ -56,14 +56,14 @@
     align-items: center;
     justify-content: center;
     padding: 8px;
-    background: var(--gray-200);
+    background: var(--bg-panel);
     border-radius: 8px;
     border: 1px solid var(--border);
     cursor: default;
 }
 
 .activeStatus {
-    background: var(--white);
+    background: var(--bg-panel);
     border-color: var(--accent-green);
     color: var(--accent-green);
     box-shadow: 0 0 10px rgba(56, 161, 105, 0.1);
