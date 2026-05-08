@@ -69,9 +69,28 @@ function App() {
 
         <main className={styles.mainContent}>
 
-          {/* SECTION: 3rd UMPIRE VALIDATOR (above-the-fold — small margin) */}
+          {/* SECTION: DISTANCE BOARD & TIMELINES (NOW AT TOP) */}
+          <div className={styles.splitGrid}>
+            <section id="section-dist" className={styles.widgetSection}>
+              <LazyWidget minHeight={520} rootMargin="200px 0px">
+                <DistanceTracker />
+              </LazyWidget>
+            </section>
+
+            {/* RIGHT SIDE: ANALYTICS COLUMN (STACKED) */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--widget-gap)' }}>
+              <LazyWidget minHeight={250} rootMargin="200px 0px">
+                <MarketSentimentTimeline />
+              </LazyWidget>
+              <LazyWidget minHeight={250} rootMargin="200px 0px">
+                <AlertFrequencyTimeline />
+              </LazyWidget>
+            </div>
+          </div>
+
+          {/* SECTION: 3rd UMPIRE VALIDATOR */}
           <section id="section-umpire" className={styles.widgetSection}>
-            <LazyWidget minHeight={420} rootMargin="200px 0px">
+            <LazyWidget minHeight={420}>
               <ValidatorTimelineWidget />
             </LazyWidget>
           </section>
@@ -114,24 +133,7 @@ function App() {
             </div>
           </div>
 
-          {/* SECTION: DISTANCE BOARD & TIMELINES (SPLIT ROW) */}
-          <div className={styles.splitGrid}>
-            <section id="section-dist" className={styles.widgetSection}>
-              <LazyWidget minHeight={520}>
-                <DistanceTracker />
-              </LazyWidget>
-            </section>
 
-            {/* RIGHT SIDE: ANALYTICS COLUMN (STACKED) */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--widget-gap)' }}>
-              <LazyWidget minHeight={250}>
-                <MarketSentimentTimeline />
-              </LazyWidget>
-              <LazyWidget minHeight={250}>
-                <AlertFrequencyTimeline />
-              </LazyWidget>
-            </div>
-          </div>
 
 
           {/* SECTION: SMART ALERTS — created from DistanceTracker cell-clicks */}

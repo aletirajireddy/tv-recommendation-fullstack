@@ -65,10 +65,19 @@ export function usePolledFetch(fetcher, {
             let payload;
             if (typeof result === 'string') {
                 const r = await fetch(result, { signal: ctrl.signal });
-                payload = await r.json();
+                if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+                const text = await r.text();
+                if (!text) throw new Error('Empty response');
+                payload = JSON.parse(text);
             } else if (Array.isArray(result)) {
                 payload = await Promise.all(
-                    result.map(u => fetch(u, { signal: ctrl.signal }).then(r => r.json()))
+                    result.map(async u => {
+                        const r = await fetch(u, { signal: ctrl.signal });
+                        if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+                        const text = await r.text();
+                        if (!text) throw new Error('Empty response');
+                        return JSON.parse(text);
+                    })
                 );
             } else {
                 payload = await result;

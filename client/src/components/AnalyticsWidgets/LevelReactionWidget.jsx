@@ -389,8 +389,15 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
             if (best !== null) volMap.set(best, (volMap.get(best) || 0) + (e.strength || 1));
         }
 
-        return coin.history.length
-            ? coin.history.map(h => ({
+        // DOM Pruning: Decimate history if it's too dense (e.g. > 60 points)
+        let hData = coin.history;
+        if (hData.length > 60) {
+            const step = Math.ceil(hData.length / 40); // Target ~40 points max
+            hData = hData.filter((_, i) => i % step === 0 || i === hData.length - 1);
+        }
+
+        return hData.length
+            ? hData.map(h => ({
                 ts:          h.ts,
                 price:       h.price,
                 pct:         h.pct,
@@ -414,8 +421,11 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
         return [pMin - pad, pMax + pad];
     }, [series]);
 
-    // volEvents defaults handled via prop default in caller
-    const safeVolEvents = volEvents || [];
+    // Cap volume pins to the latest 5 to prevent SVG node explosion
+    const pinEvents = useMemo(() => {
+        const evs = volEvents || [];
+        return evs.slice().sort((a,b) => new Date(b.ts) - new Date(a.ts)).slice(0, 5);
+    }, [volEvents]);
 
     const noHistory = coin.snapshot_count === 0;
 
@@ -471,8 +481,9 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
                     {/* Volume badge: truth-aware (Stream C alert > Stream D RVol > Stream A edge).
                         Falls back to legacy sticky `volSpike` flag (greyed) when no recent event exists. */}
                     {(() => {
-                        const fresh = safeVolEvents.length
-                            ? safeVolEvents.slice().sort((a, b) =>
+                        const safeVol = volEvents || [];
+                        const fresh = safeVol.length
+                            ? safeVol.slice().sort((a, b) =>
                                 (VOL_SRC_PRIORITY[b.source] || 0) - (VOL_SRC_PRIORITY[a.source] || 0)
                                 || new Date(b.ts) - new Date(a.ts)
                             )[0]
@@ -483,7 +494,7 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
                             return (
                                 <span className={styles.volBadge}
                                     style={{ color: m.color, background: m.bg, borderColor: m.color + '60' }}
-                                    title={`${m.name} · ${ago}m ago${safeVolEvents.length > 1 ? ` (+${safeVolEvents.length - 1} more)` : ''}`}>
+                                    title={`${m.name} · ${ago}m ago${safeVol.length > 1 ? ` (+${safeVol.length - 1} more)` : ''}`}>
                                     VOL·{m.label} {ago}m
                                 </span>
                             );
@@ -563,7 +574,7 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
                             <ReferenceLine yAxisId="pct" y={-0.3} stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
 
                             {/* Volume-event pins — color-coded by source, on the pct axis */}
-                            {safeVolEvents.map((e, idx) => {
+                            {pinEvents.map((e, idx) => {
                                 const m = VOL_SRC_META[e.source] || VOL_SRC_META.STREAM_A_EDGE;
                                 return (
                                     <ReferenceLine key={`vol-${idx}`}
@@ -635,7 +646,7 @@ const INTERVALS = [
     { label: '15m', value: 15 },
 ];
 
-export function LevelReactionWidget({ filterTicker, compact }) {
+export const LevelReactionWidget = React.memo(function LevelReactionWidget({ filterTicker, compact }) {
     const containerRef = useRef(null);
     const lastDataPush = useTimeStore(s => s.lastDataPush);
 
@@ -1003,4 +1014,4 @@ export function LevelReactionWidget({ filterTicker, compact }) {
             </div>
         </div>
     );
-}
+});

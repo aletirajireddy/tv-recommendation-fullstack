@@ -220,7 +220,14 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
             if (best !== null) volMap.set(best, (volMap.get(best) || 0) + (e.strength || 1));
         }
 
-        return data.history.map(b => ({
+        // DOM Pruning: Decimate history if it's too dense
+        let hData = data.history;
+        if (hData.length > 100) {
+            const step = Math.ceil(hData.length / 80); // Target ~80 points max
+            hData = hData.filter((_, i) => i % step === 0 || i === hData.length - 1);
+        }
+
+        return hData.map(b => ({
             ts: b.ts,
             price: b.price,
             m1: b.emas?.m1 ?? null,
@@ -604,4 +611,4 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     );
 }
 
-export default EMACascadeMonitor;
+export default React.memo(EMACascadeMonitor);

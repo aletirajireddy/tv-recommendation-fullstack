@@ -307,7 +307,7 @@ function CollapseButton({ collapsed, onToggle }) {
     );
 }
 
-export function ValidatorTimelineWidget() {
+export const ValidatorTimelineWidget = React.memo(function ValidatorTimelineWidget() {
     const containerRef = useRef(null);
     const { currentIndex, timeline, activeScan } = useTimeStore();
     const lastDataPush = useTimeStore(s => s.lastDataPush);
@@ -454,4 +454,4 @@ export function ValidatorTimelineWidget() {
             {expandedTrialId && <TrialExpandedModal trialId={expandedTrialId} onClose={() => setExpandedTrialId(null)} />}
         </div>
     );
-}
+});

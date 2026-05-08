@@ -37,5 +37,34 @@ export default defineConfig({
         }
       }
     }
+  },
+  preview: {
+    port: DEV_PORT,
+    host: true,           // Expose to network (Tailscale/LAN)
+    allowedHosts: [
+      'desktop-c92c19n.tailbf6529.ts.net',
+      'localhost',
+      '.ts.net'
+    ],
+    proxy: {
+      '/api': {
+        target: `http://localhost:${API_PORT}`,
+        changeOrigin: true
+      },
+      '/socket.io': {
+        target: `http://localhost:${API_PORT}`,
+        ws: true
+      },
+      '/mcp': {
+        target: `http://localhost:${MCP_PORT}`,
+        changeOrigin: true,
+        secure: false,
+        headers: {
+          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache',
+          'X-Accel-Buffering': 'no'
+        }
+      }
+    }
   }
 })

@@ -9,15 +9,45 @@ let debounceTimerResearch = null;
 let debounceTimerParticipation = null;
 let debounceTimerAlpha = null;
 
+// Track the scan timestamp for which analytics was last fetched.
+// Analytics covers a lookback window (hours of aggregated data), so there is no
+// value in re-fetching it when the replay position moves by only a few minutes.
+// We only refetch when the scan time jumps by more than 30 minutes.
+let _lastAnalyticsFetchMs = 0;
+const ANALYTICS_TIME_DELTA_MS = 30 * 60 * 1000; // 30 min
+
 // In-flight de-duplication guards.
 // Module-scoped (not per-instance) because the store itself is a singleton.
 // If a fetch is already in flight, callers receive the SAME promise — preventing
 // React StrictMode double-invocation, multiple component subscribers, or rapid
 // re-renders from issuing redundant requests for the same data.
 const _inflight = {
-    timeline: null,
-    health:   null,
-    telegram: null,
+    timeline:  null,
+    health:    null,
+    telegram:  null,
+    analytics: null,
+    research:  null,
+};
+
+// Throttle mechanism for UI invalidation
+let lastPushTime = 0;
+let pushTimeout = null;
+const PUSH_THROTTLE_MS = 500;
+
+const throttledDataPush = (set) => {
+    const now = Date.now();
+    if (now - lastPushTime > PUSH_THROTTLE_MS) {
+        lastPushTime = now;
+        set({ lastDataPush: now });
+    } else {
+        if (!pushTimeout) {
+            pushTimeout = setTimeout(() => {
+                lastPushTime = Date.now();
+                set({ lastDataPush: lastPushTime });
+                pushTimeout = null;
+            }, PUSH_THROTTLE_MS - (now - lastPushTime));
+        }
+    }
 };
 
 export const useTimeStore = create((set, get) => ({
@@ -167,9 +197,9 @@ export const useTimeStore = create((set, get) => ({
 
             set({
                 timeline: newTimeline,
-                lastSyncTime: new Date(),
-                lastDataPush: Date.now(), // signal all widgets to refresh
+                lastSyncTime: new Date()
             });
+            throttledDataPush(set);
 
             // Rule #14 Guard: Live vs Replay
             if (isLive) {
@@ -192,7 +222,7 @@ export const useTimeStore = create((set, get) => ({
                 get().fetchFusionData();
             }
             // bump global push signal so level/ema widgets pick up new smart-level data
-            set({ lastDataPush: Date.now() });
+            throttledDataPush(set);
         });
 
         // Handle Stream B Market Context Updates (Telemetry)
@@ -202,23 +232,23 @@ export const useTimeStore = create((set, get) => ({
             if (isLive) {
                 get().fetchParticipationPulse();
             }
-            set({ lastDataPush: Date.now() });
+            throttledDataPush(set);
         });
 
         // Handle Stream D volume/price pushes — EMA/Level/DistanceTracker widgets reload
         SocketService.on('stream-d-update', (_data) => {
-            set({ lastDataPush: Date.now() });
+            throttledDataPush(set);
         });
 
         // Handle validator state machine transitions (WATCHING→CONFIRMED/FAILED etc)
         SocketService.on('validator-update', (_data) => {
-            set({ lastDataPush: Date.now() });
+            throttledDataPush(set);
         });
 
         // Handle ghost queue mutations (approve / approve-all / toggle-auto)
         // GhostCoinWidget is viewport-wired to lastDataPush, so it reloads immediately.
         SocketService.on('ghost-update', (_data) => {
-            set({ lastDataPush: Date.now() });
+            throttledDataPush(set);
         });
     },
 
@@ -246,42 +276,35 @@ export const useTimeStore = create((set, get) => ({
 
     fetchAnalytics: async () => {
         if (debounceTimerAnalytics) clearTimeout(debounceTimerAnalytics);
-        return new Promise((resolve) => {
-            debounceTimerAnalytics = setTimeout(async () => {
-                // Cancel previous request
-                const { abortControllers } = get();
-                if (abortControllers.analytics) abortControllers.analytics.abort();
+        await new Promise(r => { debounceTimerAnalytics = setTimeout(r, 300); });
 
-                const controller = new AbortController();
-                set({ abortControllers: { ...abortControllers, analytics: controller } });
-
-                try {
-                    const { lookbackHours, activeScan, timeline, currentIndex } = get();
-
-                    // Determine Reference Time (Replay vs Live)
-                    let refTimeStr = '';
-                    if (activeScan && activeScan.timestamp) {
-                        refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
-                    } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
-                        refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
-                    }
-
-                    const res = await fetch(`${API_BASE}/analytics/pulse?hours=${lookbackHours}${refTimeStr}&_t=${Date.now()}`, {
-                        signal: controller.signal
-                    });
-
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                    const data = await res.json();
-
-                    set({ analyticsData: data });
-                } catch (err) {
-                    if (err.name !== 'AbortError') {
-                        console.error('Analytics Error:', err);
-                    }
+        if (_inflight.analytics) return _inflight.analytics;
+        _inflight.analytics = (async () => {
+            const { abortControllers } = get();
+            if (abortControllers.analytics) abortControllers.analytics.abort();
+            const controller = new AbortController();
+            set({ abortControllers: { ...abortControllers, analytics: controller } });
+            try {
+                const { lookbackHours, activeScan, timeline, currentIndex } = get();
+                let refTimeStr = '';
+                if (activeScan && activeScan.timestamp) {
+                    refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+                } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                    refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
                 }
-                resolve();
-            }, 300);
-        });
+                const res = await fetch(`${API_BASE}/analytics/pulse?hours=${lookbackHours}${refTimeStr}&_t=${Date.now()}`, {
+                    signal: controller.signal
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                set({ analyticsData: data });
+            } catch (err) {
+                if (err.name !== 'AbortError') console.error('Analytics Error:', err);
+            } finally {
+                _inflight.analytics = null;
+            }
+        })();
+        return _inflight.analytics;
     },
 
     refreshAll: async () => {
@@ -338,11 +361,6 @@ export const useTimeStore = create((set, get) => ({
                 set({ currentIndex: targetIndex });
                 get().loadScan(sorted[targetIndex].id);
             }
-
-            // Initial Analytics Fetch
-            get().fetchAnalytics();
-            get().fetchResearch();
-
         } catch (err) {
             console.error('Failed to fetch timeline:', err);
             set({ timeline: [] });
@@ -411,12 +429,19 @@ export const useTimeStore = create((set, get) => ({
                 isLoading: false
             });
 
-            // Sync Analytics & Research to new time context
-            // Note: In V3, activeScan.timestamp is strictly UTC ISO
-            // Skip heavy queries if we are rapidly playing back frames
+            // Sync Analytics & Research only when the scan time has moved by more than
+            // 30 minutes since the last analytics fetch. Analytics covers a full lookback
+            // window (hours of aggregated data) — re-fetching it for a 2-minute step
+            // wastes bandwidth and blocks the main thread with a large JSON parse.
             if (!get().isPlaying) {
-                get().fetchAnalytics();
-                get().fetchResearch();
+                const scanMs = new Date(normalizedData.timestamp).getTime();
+                if (Math.abs(scanMs - _lastAnalyticsFetchMs) >= ANALYTICS_TIME_DELTA_MS) {
+                    _lastAnalyticsFetchMs = scanMs;
+                    setTimeout(() => {
+                        get().fetchAnalytics();
+                        get().fetchResearch();
+                    }, 300);
+                }
             }
         } catch (err) {
             if (err.name !== 'AbortError') {
@@ -479,41 +504,37 @@ export const useTimeStore = create((set, get) => ({
 
     fetchResearch: async () => {
         if (debounceTimerResearch) clearTimeout(debounceTimerResearch);
-        return new Promise((resolve) => {
-            debounceTimerResearch = setTimeout(async () => {
-                // Cancel previous request
-                const { abortControllers } = get();
-                if (abortControllers.research) abortControllers.research.abort();
+        await new Promise(r => { debounceTimerResearch = setTimeout(r, 300); });
 
-                const controller = new AbortController();
-                set({ abortControllers: { ...abortControllers, research: controller } });
-
-                try {
-                    const { lookbackHours, activeScan, timeline, currentIndex } = get();
-                    // [debug] console.log('[Research] Fetching data...');
-
-                    let refTimeStr = '';
-                    if (activeScan && activeScan.timestamp) {
-                        refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
-                    } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
-                        refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
-                    }
-
-                    const query = `${API_BASE}/analytics/research?hours=${lookbackHours || 24}${refTimeStr}&_t=${Date.now()}`;
-                    const res = await fetch(query, { signal: controller.signal });
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-                    const data = await res.json();
-                    set({ researchData: data });
-                } catch (err) {
-                    if (err.name !== 'AbortError') {
-                        console.error('Research API Error:', err);
-                        set({ researchData: null });
-                    }
+        if (_inflight.research) return _inflight.research;
+        _inflight.research = (async () => {
+            const { abortControllers } = get();
+            if (abortControllers.research) abortControllers.research.abort();
+            const controller = new AbortController();
+            set({ abortControllers: { ...abortControllers, research: controller } });
+            try {
+                const { lookbackHours, activeScan, timeline, currentIndex } = get();
+                let refTimeStr = '';
+                if (activeScan && activeScan.timestamp) {
+                    refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+                } else if (timeline.length > 0 && currentIndex >= 0 && timeline[currentIndex]) {
+                    refTimeStr = `&refTime=${encodeURIComponent(timeline[currentIndex].timestamp)}`;
                 }
-                resolve();
-            }, 300);
-        });
+                const query = `${API_BASE}/analytics/research?hours=${lookbackHours || 24}${refTimeStr}&_t=${Date.now()}`;
+                const res = await fetch(query, { signal: controller.signal });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                set({ researchData: data });
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    console.error('Research API Error:', err);
+                    set({ researchData: null });
+                }
+            } finally {
+                _inflight.research = null;
+            }
+        })();
+        return _inflight.research;
     },
 
     fetchFusionData: async () => {

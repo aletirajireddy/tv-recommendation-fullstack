@@ -31,17 +31,22 @@ export function GlobalHeader({ onOpenThemeBuilder }) {
     // Initialize Data & Socket & Settings
     useEffect(() => {
         fetchTimeline();
-        fetchTelegramStatus(); // Fetch Toggle State
-        initializeSocket();
+        fetchTelegramStatus(); 
+        
+        // Stagger non-critical background services to clear the main thread for the first render
+        const initTimer = setTimeout(() => {
+            initializeSocket();
+            fetchStreamsHealth();
+        }, 500);
 
-        // Tri-Stream health — 30s is fine; status ages are shown in minutes so
-        // 10s precision adds no value and generates 6 extra HTTP calls/min through
-        // Tailscale / remote tunnels unnecessarily.
-        fetchStreamsHealth();
         const healthPoll = setInterval(() => {
             fetchStreamsHealth();
         }, 30000);
-        return () => clearInterval(healthPoll);
+
+        return () => {
+            clearTimeout(initTimer);
+            clearInterval(healthPoll);
+        };
     }, []);
 
     // Animation Pulse Trigger for Header

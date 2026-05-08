@@ -339,6 +339,10 @@ _safeAddColumn('master_coin_store', 'payload_hash TEXT', 'payload_hash');
 _safeAddColumn('master_coin_store', "ingestion_source TEXT DEFAULT 'WEBHOOK'", 'ingestion_source');
 _safeAddColumn('master_coin_store', 'stream_d_state JSON', 'stream_d_state');
 
+// Umpire Engine columns (validation_trials)
+_safeAddColumn('validation_trials', 'level_price REAL', 'level_price');
+_safeAddColumn('validation_trials', 'level_type TEXT', 'level_type');
+
 // Ghost approval enrichment columns (Q5 — regime-aware confidence scoring)
 _safeAddColumn('ghost_approval_queue', 'confidence_score REAL', 'confidence_score');
 _safeAddColumn('ghost_approval_queue', 'score_breakdown TEXT', 'score_breakdown');
