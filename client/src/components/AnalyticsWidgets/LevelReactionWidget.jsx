@@ -389,19 +389,26 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
             if (best !== null) volMap.set(best, (volMap.get(best) || 0) + (e.strength || 1));
         }
 
-        return coin.history.length
-            ? coin.history.map(h => ({
-                ts:          h.ts,
-                price:       h.price,
-                pct:         h.pct,
-                above:       Math.max(0, h.pct),
-                below:       Math.min(0, h.pct),
-                volStrength: volMap.get(h.ts) || 0,
-            }))
-            : [
-                { ts: Date.now() - windowMin * 60000, pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct), volStrength: 0 },
-                { ts: Date.now(),                     pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct), volStrength: 0 },
-            ];
+        if (!coin.history.length) return [
+            { ts: Date.now() - windowMin * 60000, pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct), volStrength: 0 },
+            { ts: Date.now(),                     pct: coin.distPct, price: coin.close, above: Math.max(0, coin.distPct), below: Math.min(0, coin.distPct), volStrength: 0 },
+        ];
+
+        const points = coin.history.map(h => ({
+            ts:          h.ts,
+            price:       h.price,
+            pct:         h.pct,
+            above:       Math.max(0, h.pct),
+            below:       Math.min(0, h.pct),
+            volStrength: volMap.get(h.ts) || 0,
+        }));
+
+        // Decimate: above 120 points on an 80px sparkline, every 2nd point is
+        // visually identical but halves the SVG path coordinates Recharts computes.
+        // Always keep first + last so the line anchors correctly at both edges.
+        if (points.length <= 120) return points;
+        const step = Math.ceil(points.length / 120);
+        return points.filter((_, i) => i % step === 0 || i === points.length - 1);
     }, [coin.history, coin.distPct, coin.close, windowMin, intervalMin, volEvents]);
 
     const [yMin, yMax] = useMemo(() => {
