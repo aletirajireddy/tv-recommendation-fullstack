@@ -529,10 +529,7 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
                             <YAxis
                                 yAxisId="pct"
                                 domain={[yMin, yMax]}
-                                tick={{ fontSize: 9, fill: '#4a5568' }}
-                                tickFormatter={v => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`}
-                                width={42}
-                                tickCount={4}
+                                hide
                             />
                             {/* Hidden secondary axis for vol bars — domain inflated 5× so
                                 bars occupy only the bottom ~20% of chart height */}
@@ -562,8 +559,10 @@ const ReactionLane = React.memo(function ReactionLane({ coin, windowMin, interva
                             <ReferenceLine yAxisId="pct" y={0.3}  stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
                             <ReferenceLine yAxisId="pct" y={-0.3} stroke={sideCol.line} strokeWidth={0.5} strokeDasharray="2 4" strokeOpacity={0.4} />
 
-                            {/* Volume-event pins — color-coded by source, on the pct axis */}
-                            {safeVolEvents.map((e, idx) => {
+                            {/* Volume-event pins — capped to last 8 to prevent marker bloat
+                                (100+ pins × 16 lanes = thousands of SVG nodes). Chip header
+                                already shows "+N more" so no information is lost. */}
+                            {safeVolEvents.slice(-10).map((e, idx) => {
                                 const m = VOL_SRC_META[e.source] || VOL_SRC_META.STREAM_A_EDGE;
                                 return (
                                     <ReferenceLine key={`vol-${idx}`}

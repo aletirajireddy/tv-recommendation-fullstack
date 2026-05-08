@@ -117,8 +117,9 @@ const INTERVALS = [
     { label: '5m', value: 5 },
 ];
 
-const LS_CASCADE_KEY = 'emaCascade_prefs';
-const CASCADE_DEFAULTS = { windowMin: 120, intervalMin: 2 };
+const LS_CASCADE_KEY    = 'emaCascade_prefs';
+const LS_CASCADE_TICKER = 'emaCascade_ticker';
+const CASCADE_DEFAULTS  = { windowMin: 120, intervalMin: 2 };
 
 function loadCascadePrefs() {
     try {
@@ -128,13 +129,18 @@ function loadCascadePrefs() {
     return { ...CASCADE_DEFAULTS };
 }
 
+function loadSavedTicker() {
+    try { return localStorage.getItem(LS_CASCADE_TICKER) || null; } catch { return null; }
+}
+
 export function EMACascadeMonitor({ filterTicker, compact }) {
     const containerRef   = useRef(null);
     const selectedTicker = useTimeStore(s => s.selectedTicker);
     const lastDataPush   = useTimeStore(s => s.lastDataPush);
 
-    const [ticker,     setTicker]     = useState(filterTicker || selectedTicker || 'BTC');
-    const [tickerInput,setTickerInput]= useState(filterTicker || selectedTicker || 'BTC');
+    const _initTicker = filterTicker || loadSavedTicker() || selectedTicker || 'BTC';
+    const [ticker,     setTicker]     = useState(_initTicker);
+    const [tickerInput,setTickerInput]= useState(_initTicker);
 
     const [cascadePrefs, setCascadePrefs] = useState(loadCascadePrefs);
     const { windowMin, intervalMin } = cascadePrefs;
@@ -150,8 +156,14 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     const setIntervalMin = (v) => updateCascadePref('intervalMin', v);
 
     const resetCascade = () => {
-        try { localStorage.removeItem(LS_CASCADE_KEY); } catch {}
+        try {
+            localStorage.removeItem(LS_CASCADE_KEY);
+            localStorage.removeItem(LS_CASCADE_TICKER);
+        } catch {}
         setCascadePrefs({ ...CASCADE_DEFAULTS });
+        const fallback = filterTicker || selectedTicker || 'BTC';
+        setTicker(fallback);
+        setTickerInput(fallback);
     };
 
     // Sync with global selection
@@ -189,12 +201,16 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     const handleSubmitTicker = (e) => {
         e.preventDefault();
         const v = tickerInput.trim().toUpperCase();
-        if (v && v !== ticker) setTicker(v);  // dep change triggers reload
+        if (v && v !== ticker) {
+            setTicker(v);
+            try { localStorage.setItem(LS_CASCADE_TICKER, v); } catch {}
+        }
     };
 
     const setQuickTicker = (t) => {
         setTickerInput(t);
         setTicker(t);
+        try { localStorage.setItem(LS_CASCADE_TICKER, t); } catch {}
     };
 
     const setWindow = (v) => setWindowMin(v);
