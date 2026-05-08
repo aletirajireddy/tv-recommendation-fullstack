@@ -309,7 +309,9 @@ function CollapseButton({ collapsed, onToggle }) {
 
 export function ValidatorTimelineWidget() {
     const containerRef = useRef(null);
-    const { currentIndex, timeline, activeScan } = useTimeStore();
+    const currentIndex = useTimeStore(s => s.currentIndex);
+    const timeline     = useTimeStore(s => s.timeline);
+    const activeScan   = useTimeStore(s => s.activeScan);
     const lastDataPush = useTimeStore(s => s.lastDataPush);
     const isLive = timeline.length > 0 && currentIndex === timeline.length - 1;
     const refTime = activeScan?.timestamp || new Date().toISOString();

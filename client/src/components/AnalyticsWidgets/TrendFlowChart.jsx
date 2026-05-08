@@ -8,7 +8,8 @@ import {
 } from 'recharts';
 
 export function TrendFlowChart() {
-    const { analyticsData, refreshAll } = useTimeStore();
+    const analyticsData = useTimeStore(s => s.analyticsData);
+    const refreshAll    = useTimeStore(s => s.refreshAll);
     const [isMobile, setIsMobile] = useState(false);
 
     useEffect(() => {

@@ -7,7 +7,9 @@ import {
 import styles from './SmartLevelBreaker.module.css';
 
 export const SmartLevelBreaker = () => {
-    const { activeScan, refreshAll, useSmartLevelsContext } = useTimeStore();
+    const activeScan            = useTimeStore(s => s.activeScan);
+    const refreshAll            = useTimeStore(s => s.refreshAll);
+    const useSmartLevelsContext = useTimeStore(s => s.useSmartLevelsContext);
     const [isMobile, setIsMobile] = useState(false);
 
     useEffect(() => {

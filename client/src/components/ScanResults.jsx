@@ -4,7 +4,7 @@ import GenieSmart from '../services/GenieSmart';
 import styles from './ScanResults.module.css';
 
 export function ScanResults() {
-    const { activeScan } = useTimeStore();
+    const activeScan = useTimeStore(s => s.activeScan);
 
     const grouped = useMemo(() => {
         if (!activeScan || !activeScan.results) return { pass: [], missed: [] };
