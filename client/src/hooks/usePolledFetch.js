@@ -75,7 +75,7 @@ export function usePolledFetch(fetcher, {
             }
             if (!mountedRef.current || ctrl.signal.aborted) return;
             if (payload?.error) setError(payload.error);
-            else setData(payload);
+            else setData(prev => JSON.stringify(prev) === JSON.stringify(payload) ? prev : payload);
         } catch (e) {
             if (e.name === 'AbortError') return;          // expected on unmount/dep-change
             if (!mountedRef.current) return;
