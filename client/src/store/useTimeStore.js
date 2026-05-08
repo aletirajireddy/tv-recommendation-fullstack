@@ -16,6 +16,53 @@ let debounceTimerAlpha = null;
 let _lastAnalyticsFetchMs = 0;
 const ANALYTICS_TIME_DELTA_MS = 30 * 60 * 1000; // 30 min
 
+// ── Progressive / blur-up data loading ─────────────────────────────────────
+//
+// Analogy: load the blurred thumbnail first, then fetch the full-res image
+// in the background when the browser is idle.
+//
+//   Layer 1 — Structure    : LazyWidget shimmer skeletons (CSS, instant)
+//   Layer 2 — Lightweight  : fetchTimeline + loadScan → mood/breadth/prices
+//   Layer 3 — Background   : requestIdleCallback → analytics/research → charts
+//   Layer 4 — Pre-fetch    : cache adjacent scans while user views current one
+//
+// _scheduleIdleWork: queue work for the browser's idle period.
+// Falls back to a 500ms timeout for environments without requestIdleCallback
+// (Node test runners, very old browsers). The 3 s hard timeout ensures charts
+// hydrate even under continuous interaction (user never releases the main thread).
+const _scheduleIdleWork = (fn, timeout = 3000) => {
+    if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(fn, { timeout });
+    } else {
+        setTimeout(fn, 500);
+    }
+};
+
+// Scan pre-fetch cache — stores normalised scan payloads for adjacent indices
+// so that stepping forward/backward is instant (no network round-trip).
+// Keyed by scan ID. Capped at MAX to avoid unbounded memory growth during
+// long replay sessions.
+const _scanCache = new Map();
+const _SCAN_CACHE_MAX = 8;
+
+// Pre-fetch the next two scans in the background while the user is viewing
+// the current one. Errors are silently swallowed — the cache is best-effort.
+const _prefetchAdjacentScans = (currentIdx, timeline) => {
+    [1, 2].forEach(offset => {
+        const idx = currentIdx + offset;
+        if (idx >= timeline.length) return;
+        const scanId = timeline[idx].id;
+        if (_scanCache.has(scanId)) return; // already cached
+        if (_scanCache.size >= _SCAN_CACHE_MAX) return; // cap memory
+        _scheduleIdleWork(() => {
+            fetch(`${API_BASE}/scan/${scanId}`)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => { if (data) _scanCache.set(scanId, data); })
+                .catch(() => {});
+        }, 5000); // low urgency — 5 s hard timeout
+    });
+};
+
 // In-flight de-duplication guards.
 // Module-scoped (not per-instance) because the store itself is a singleton.
 // If a fetch is already in flight, callers receive the SAME promise — preventing
@@ -375,74 +422,76 @@ export const useTimeStore = create((set, get) => ({
 
     loadScan: async (scanId) => {
         if (!scanId) return;
-        // Cancel previous
-        const { abortControllers } = get();
-        if (abortControllers.loadScan) abortControllers.loadScan.abort();
 
-        const controller = new AbortController();
-        set({
-            isLoading: true,
-            abortControllers: { ...abortControllers, loadScan: controller }
-        });
-
-        try {
-            // V3 API returns the raw JSON Blob
-            // Note: API route is /api/scan/:id (added in index.js?) 
-            // Check index.js: app.get('/api/scan/:id', ...) YES
-            const res = await fetch(`/api/scan/${scanId}`, {
-                signal: controller.signal
-            });
-
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-
-            // 🛠️ DATA NORMALIZATION: Flatten the V3 'data' nesting for Frontend consumption
-            // This ensures widgets can access property directly (e.g. item.close) without checking item.data.close
-            // 🛠️ DATA NORMALIZATION: Flatten the V3 'data' nesting for Frontend consumption
-            // This ensures widgets can access property directly (e.g. item.close) without checking item.data.close
+        // ── Layer 4: Cache hit — serve instantly from pre-fetch cache ──────
+        const cached = _scanCache.get(scanId);
+        if (cached) {
+            _scanCache.delete(scanId); // consume — avoid stale data reuse
             const useSmartLevels = get().useSmartLevelsContext;
-            const normalizedResults = (data.results || []).map(item => {
-                // 1. Flatten Data
-                // If 'data' exists, merge it up. If not, assume it's already flat.
-                let flatItem = item.data ? { ...item.data, ...item, data: undefined } : { ...item };
-
-                // 2. Genie Smart Override (Rule #1: Client-Side Scoring Truth)
-                // We overwrite the static 'score', 'label', 'insights' with fresh logical values
-                const smart = GenieSmart.calculateScore(flatItem, useSmartLevels);
-
-                return {
-                    ...flatItem,
-                    ...smart, // Overwrites score, label, direction, insights
-                    // Keep original properties that are not recalculated if needed, but 'smart' handles the core metrics
-                };
+            const normalizedResults = (cached.results || []).map(item => {
+                const flat = item.data ? { ...item.data, ...item, data: undefined } : { ...item };
+                return { ...flat, ...GenieSmart.calculateScore(flat, useSmartLevels) };
             });
-
-            // Update the payload
-            const normalizedData = { ...data, results: normalizedResults };
-
-            // 🧠 GENIE SMART: Derive Client-Side Intelligence
+            const normalizedData = { ...cached, results: normalizedResults };
             const derivedMood = GenieSmart.analyzeMarketMood(normalizedResults);
+            set({ activeScan: normalizedData, marketMood: derivedMood, isLoading: false });
 
-            set({
-                activeScan: normalizedData,
-                marketMood: derivedMood, // <--- The New Source of Truth
-                isLoading: false
-            });
-
-            // Sync Analytics & Research only when the scan time has moved by more than
-            // 30 minutes since the last analytics fetch. Analytics covers a full lookback
-            // window (hours of aggregated data) — re-fetching it for a 2-minute step
-            // wastes bandwidth and blocks the main thread with a large JSON parse.
+            // Still schedule analytics/research if time delta warrants it
             if (!get().isPlaying) {
                 const scanMs = new Date(normalizedData.timestamp).getTime();
                 if (Math.abs(scanMs - _lastAnalyticsFetchMs) >= ANALYTICS_TIME_DELTA_MS) {
                     _lastAnalyticsFetchMs = scanMs;
-                    setTimeout(() => {
-                        get().fetchAnalytics();
-                        get().fetchResearch();
-                    }, 300);
+                    _scheduleIdleWork(() => { get().fetchAnalytics(); get().fetchResearch(); });
                 }
             }
+            // Pre-fetch the scans after this one while user reads current
+            const { timeline, currentIndex } = get();
+            _prefetchAdjacentScans(currentIndex, timeline);
+            return;
+        }
+
+        // ── Normal fetch path ───────────────────────────────────────────────
+        const { abortControllers } = get();
+        if (abortControllers.loadScan) abortControllers.loadScan.abort();
+        const controller = new AbortController();
+        set({ isLoading: true, abortControllers: { ...abortControllers, loadScan: controller } });
+
+        try {
+            const res = await fetch(`/api/scan/${scanId}`, { signal: controller.signal });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            const useSmartLevels = get().useSmartLevelsContext;
+            const normalizedResults = (data.results || []).map(item => {
+                const flat = item.data ? { ...item.data, ...item, data: undefined } : { ...item };
+                return { ...flat, ...GenieSmart.calculateScore(flat, useSmartLevels) };
+            });
+            const normalizedData = { ...data, results: normalizedResults };
+            const derivedMood = GenieSmart.analyzeMarketMood(normalizedResults);
+
+            set({ activeScan: normalizedData, marketMood: derivedMood, isLoading: false });
+
+            // ── Layer 3: Background hydration ──────────────────────────────
+            // Analytics/research cover a full lookback window (hours of history).
+            // Schedule them as idle work so the current scan's UI (mood gauge,
+            // breadth, DistanceTracker) paints first — same as a blur-up image
+            // rendering the sharp version only once the low-res frame is visible.
+            // Also gate on 30-min time delta so nearby replay steps don't re-fetch.
+            if (!get().isPlaying) {
+                const scanMs = new Date(normalizedData.timestamp).getTime();
+                if (Math.abs(scanMs - _lastAnalyticsFetchMs) >= ANALYTICS_TIME_DELTA_MS) {
+                    _lastAnalyticsFetchMs = scanMs;
+                    _scheduleIdleWork(() => {
+                        get().fetchAnalytics();
+                        get().fetchResearch();
+                    });
+                }
+            }
+
+            // ── Layer 4: Pre-fetch adjacent scans ─────────────────────────
+            const { timeline, currentIndex } = get();
+            _prefetchAdjacentScans(currentIndex, timeline);
+
         } catch (err) {
             if (err.name !== 'AbortError') {
                 console.error('Failed to load scan details:', err);
@@ -459,8 +508,7 @@ export const useTimeStore = create((set, get) => ({
             loadScan(timeline[nextIndex].id);
         } else {
             set({ isPlaying: false });
-            get().fetchAnalytics();
-            get().fetchResearch();
+            _scheduleIdleWork(() => { get().fetchAnalytics(); get().fetchResearch(); });
         }
     },
 
@@ -496,10 +544,15 @@ export const useTimeStore = create((set, get) => ({
 
     setLookbackHours: (hours) => {
         set({ lookbackHours: hours });
-        get().fetchAnalytics();
-        get().fetchResearch();
-        get().fetchParticipationPulse();
-        get().fetchAlphaSquad();
+        // User explicitly changed the window — reset the time-delta gate so analytics
+        // refetches immediately with the new range, then schedule as idle work.
+        _lastAnalyticsFetchMs = 0;
+        _scheduleIdleWork(() => {
+            get().fetchAnalytics();
+            get().fetchResearch();
+            get().fetchParticipationPulse();
+            get().fetchAlphaSquad();
+        });
     },
 
     fetchResearch: async () => {
