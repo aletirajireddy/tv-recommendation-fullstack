@@ -5,6 +5,35 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>client</title>
+    <!-- FOUC prevention: apply saved theme CSS vars synchronously before first paint -->
+    <script>
+      (function () {
+        var DEFAULTS = {
+          '--bg-app': '#111827', '--bg-panel': '#1F2937', '--border': '#374151',
+          '--text-main': '#F9FAFB', '--text-muted': '#9CA3AF', '--primary': '#2D3047',
+          '--accent-green': '#10B981', '--accent-red': '#EF4444',
+          '--accent-blue': '#3B82F6', '--accent-orange': '#F59E0B'
+        };
+        function apply(colors, mode) {
+          if (mode === 'dark') document.documentElement.classList.add('dark');
+          else document.documentElement.classList.remove('dark');
+          for (var k in colors) document.documentElement.style.setProperty(k, colors[k]);
+        }
+        try {
+          var raw = localStorage.getItem('dashboard-theme-storage');
+          if (raw) {
+            var s = (JSON.parse(raw).state) || JSON.parse(raw);
+            var mode = s.themeMode || 'dark';
+            var id   = s.activeThemeId || 'modern';
+            var t    = (s.themes && (s.themes[id] || s.themes.modern)) || null;
+            var cols = (t && t.colors && (t.colors[mode] || t.colors.dark)) || DEFAULTS;
+            apply(cols, mode);
+            return;
+          }
+        } catch (e) {}
+        apply(DEFAULTS, 'dark');
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
