@@ -1,29 +1,57 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 
 /**
- * LazyWidget — Proactive viewport-threshold preloader
+ * LazyWidget — Viewport-threshold preloader with mount stagger.
  *
  * Wraps a React.lazy()-imported component and only mounts it when the
  * placeholder enters the viewport (or comes within `rootMargin`). This:
  *   1. Defers initial bundle parse / network hydration of off-screen widgets
- *   2. Preloads slightly ahead of scroll so users never see a "flash of skeleton"
+ *   2. Preloads slightly ahead of scroll so users never see a flash of skeleton
  *   3. Keeps a stable layout via a min-height skeleton (zero CLS)
  *
- * Usage:
- *   const Foo = React.lazy(() => import('./Foo'));
- *   <LazyWidget minHeight={400}><Foo /></LazyWidget>
+ * rootMargin is intentionally small (100px, not 400px).
+ * With 400px, on first paint 4-6 widgets simultaneously enter the "near
+ * viewport" zone, triggering parallel chunk downloads, Recharts parse, chart
+ * init, and backend fetches all in one frame — freezing the main thread.
+ * 100px means only widgets genuinely close to the viewport preload; the rest
+ * hydrate naturally as the user scrolls toward them.
  *
- * Architecture notes:
- * - Uses IntersectionObserver with a generous rootMargin so the chunk fetch
- *   begins ~one viewport before the widget actually renders.
- * - On first intersection we set mounted=true and disconnect the observer
- *   (one-shot — we never want to unmount and re-fetch).
- * - SSR / no-IO-support fallback: render immediately.
+ * Mount stagger queue: when multiple LazyWidgets intersect in the same
+ * IntersectionObserver tick (e.g. on first paint), their mounts are spread
+ * across requestAnimationFrame callbacks (~16ms each) instead of firing in
+ * one blocking burst. Visually identical — the difference is the chunk-parse
+ * cost is amortised across frames rather than one giant spike.
  */
+
+// Module-scope mount queue — one mount per animation frame when multiple
+// widgets intersect simultaneously (e.g. initial page load).
+let _mountQueue = [];
+let _rafPending = false;
+
+const _drain = () => {
+    _rafPending = false;
+    if (_mountQueue.length === 0) return;
+    const cb = _mountQueue.shift();
+    try { cb(); } catch (_) { /* host component handles render errors */ }
+    if (_mountQueue.length > 0) {
+        _rafPending = true;
+        if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(_drain);
+        else setTimeout(_drain, 16);
+    }
+};
+
+const _enqueue = (cb) => {
+    _mountQueue.push(cb);
+    if (_rafPending) return;
+    _rafPending = true;
+    if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(_drain);
+    else setTimeout(_drain, 16);
+};
+
 export function LazyWidget({
     children,
     minHeight = 320,
-    rootMargin = '400px 0px',  // preload one viewport ahead
+    rootMargin = '100px 0px',
     threshold = 0,
     fallback,
     placeholderClassName,
@@ -39,18 +67,19 @@ export function LazyWidget({
         const node = ref.current;
         if (!node) return;
 
+        let cancelled = false;
         const io = new IntersectionObserver(
             (entries) => {
                 if (entries.some(e => e.isIntersecting)) {
-                    setShouldRender(true);
                     io.disconnect();
+                    _enqueue(() => { if (!cancelled) setShouldRender(true); });
                 }
             },
             { rootMargin, threshold }
         );
         io.observe(node);
 
-        return () => io.disconnect();
+        return () => { cancelled = true; io.disconnect(); };
     }, [shouldRender, rootMargin, threshold]);
 
     const skeleton = fallback ?? (
@@ -83,7 +112,7 @@ export function LazyWidget({
     return <Suspense fallback={skeleton}>{children}</Suspense>;
 }
 
-// Inject keyframes once (module-level, idempotent)
+// Inject shimmer keyframes once (idempotent)
 if (typeof document !== 'undefined' && !document.getElementById('lazy-widget-keyframes')) {
     const style = document.createElement('style');
     style.id = 'lazy-widget-keyframes';

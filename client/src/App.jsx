@@ -1,16 +1,20 @@
-import React, { lazy, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import styles from './App.module.css';
 import { GlobalHeader } from './components/GlobalHeader';
 import { Sidebar } from './components/Sidebar';
 import { SelectionDrawer } from './components/SelectionDrawer';
-import { FloatingTimeController } from './components/FloatingTimeController';
-import { FloatingMediaPlayer } from './components/FloatingMediaPlayer';
-import { MonitorDetailModal } from './components/MonitorDetailModal';
 import { useTimeStore } from './store/useTimeStore';
-import { ThemeBuilder } from './components/ThemeBuilder';
 import { LazyWidget } from './components/LazyWidget';
 import { MobileFloatingBar } from './components/MobileFloatingBar';
 import { Target } from 'lucide-react';
+
+// These 4 are conditional — they only render when the user explicitly opens
+// them. Lazy-loading keeps them out of the initial JS bundle entirely so the
+// main dashboard doesn't pay their parse cost on every page load.
+const FloatingTimeController = lazy(() => import('./components/FloatingTimeController').then(m => ({ default: m.FloatingTimeController })));
+const FloatingMediaPlayer    = lazy(() => import('./components/FloatingMediaPlayer').then(m => ({ default: m.FloatingMediaPlayer })));
+const MonitorDetailModal     = lazy(() => import('./components/MonitorDetailModal').then(m => ({ default: m.MonitorDetailModal })));
+const ThemeBuilder           = lazy(() => import('./components/ThemeBuilder').then(m => ({ default: m.ThemeBuilder })));
 
 // CODE-SPLIT WIDGETS — each becomes its own chunk, fetched only when in viewport.
 // Above-the-fold widgets get a smaller rootMargin; deeper sections get more aggressive
@@ -194,15 +198,17 @@ function App() {
         </main>
       </div>
 
-      {/* OVERLAYS & FLOATING */}
+      {/* OVERLAYS & FLOATING — chunks only download when the user opens them */}
       <SelectionDrawer />
       {showPlayback && (
-        <>
+        <Suspense fallback={null}>
           <FloatingTimeController />
           <FloatingMediaPlayer />
-        </>
+        </Suspense>
       )}
-      <MonitorDetailModal />
+      <Suspense fallback={null}>
+        <MonitorDetailModal />
+      </Suspense>
 
       {/* FLOATING ADS BANNER (ALPHA SQUAD) */}
       <div className={styles.alphaBannerWrapper}>
@@ -221,7 +227,11 @@ function App() {
           </button>
       </div>
 
-      {showThemeBuilder && <ThemeBuilder onClose={() => setShowThemeBuilder(false)} />}
+      {showThemeBuilder && (
+        <Suspense fallback={null}>
+          <ThemeBuilder onClose={() => setShowThemeBuilder(false)} />
+        </Suspense>
+      )}
 
       {/* Mobile-only floating status bubble — hidden on desktop via CSS */}
       <MobileFloatingBar onOpenThemeBuilder={() => setShowThemeBuilder(true)} />

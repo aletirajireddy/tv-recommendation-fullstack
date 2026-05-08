@@ -1,11 +1,17 @@
-import React, { useMemo } from 'react';
+import React, { lazy, Suspense, useMemo } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
 import { TrendingUp, TrendingDown, Minus, Activity, Wifi } from 'lucide-react';
 import GenieSmart from '../services/GenieSmart';
 import TimeService from '../services/TimeService';
 import styles from './HeaderStatsDeck.module.css';
-import { MarketHeartbeatIndicator } from './AnalyticsWidgets/MarketHeartbeatIndicator';
 import { SpeedometerGauge } from './SpeedometerGauge';
+
+// Lazy-load so Recharts (~200KB) ships in a separate chunk and does NOT block
+// the initial JS parse. The header paints immediately with mood/breadth/health;
+// the heartbeat chart hydrates in the background once Recharts arrives.
+const MarketHeartbeatIndicator = lazy(() =>
+    import('./AnalyticsWidgets/MarketHeartbeatIndicator').then(m => ({ default: m.MarketHeartbeatIndicator }))
+);
 
 export function HeaderStatsDeck() {
     // 1. CONSUME GENIE SMART STATE
@@ -47,9 +53,12 @@ export function HeaderStatsDeck() {
 
                 <div className={styles.divider} />
 
-                {/* 3. MARKET HEARTBEAT */}
+                {/* 3. MARKET HEARTBEAT — Recharts in separate chunk, fallback=null so
+                    the header height stays fixed while the chart hydrates. */}
                 <div className={`${styles.card} ${styles.sectionHeartbeat}`}>
-                    <MarketHeartbeatIndicator />
+                    <Suspense fallback={null}>
+                        <MarketHeartbeatIndicator />
+                    </Suspense>
                 </div>
             <div className={styles.divider} />
             <SystemHealthGrid />
