@@ -377,6 +377,21 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_volume_events_source ON volume_events(so
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_volume_events_dedup
          ON volume_events(ticker, ts, source);`);
 
+// Rolling ATR% + RVOL% history per coin — feeds ATRRaceWidget.
+// Auto-pruned to 8h; at 2-min buckets × 50 coins = ~1,200 rows max.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS coin_metric_history (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker   TEXT    NOT NULL,
+        ts       INTEGER NOT NULL,  -- Unix ms bucket (2-min granularity)
+        atr_m15  REAL,
+        atr_h1   REAL,
+        rvol_m15 REAL,
+        rvol_h1  REAL
+    );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_cmh_ticker_ts ON coin_metric_history(ticker, ts DESC);`);
+
 db.exec(`CREATE INDEX IF NOT EXISTS idx_scans_timestamp ON scans(timestamp);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_smart_level_timestamp ON smart_level_events(timestamp);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_inst_interest_timestamp ON institutional_interest_events(timestamp);`);

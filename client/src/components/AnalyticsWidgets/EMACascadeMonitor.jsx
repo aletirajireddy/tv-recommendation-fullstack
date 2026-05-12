@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
     ComposedChart, Line, Bar, XAxis, YAxis, ReferenceLine, ReferenceDot,
     Tooltip, ResponsiveContainer, Legend,
@@ -7,7 +7,12 @@ import styles from './EMACascadeMonitor.module.css';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
-import { Zap, ChevronUp, ChevronDown, Diamond, ArrowDown, RefreshCw } from 'lucide-react';
+import { Zap, ChevronUp, ChevronDown, Diamond, ArrowDown, RefreshCw, Settings, AlertTriangle, XCircle, CheckCircle } from 'lucide-react';
+import {
+    checkCascade, passesAtrGate, validateCascadeSettings,
+    loadCascadeSeries, saveCascadeSeries, resetCascadeSeries,
+    CASCADE_SERIES_DEFAULTS, TF_ORDER, TF_LABELS as TF_LABELS_MAP,
+} from '../../utils/cascadeUtils';
 
 // Audit fix #7: cap rendered Recharts ReferenceLine/ReferenceDot to avoid
 // the ~100-marker render cliff. Older events drop off; the most recent
@@ -129,6 +134,9 @@ function loadCascadePrefs() {
     return { ...CASCADE_DEFAULTS };
 }
 
+// Warn banner auto-dismiss key
+const INVALID_RESET_MSG_MS = 5000;
+
 function loadSavedTicker() {
     try { return localStorage.getItem(LS_CASCADE_TICKER) || null; } catch { return null; }
 }
@@ -154,6 +162,55 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     };
     const setWindowMin   = (v) => updateCascadePref('windowMin', v);
     const setIntervalMin = (v) => updateCascadePref('intervalMin', v);
+
+    // ── Cascade series settings (shared with ATRRaceWidget via cascadeUtils) ──
+    const [cascadeSeries, setCascadeSeries]   = useState(loadCascadeSeries);
+    const [settingsOpen,  setSettingsOpen]    = useState(false);
+    const [draftLong,     setDraftLong]       = useState(cascadeSeries.longSeries);
+    const [draftShort,    setDraftShort]      = useState(cascadeSeries.shortSeries);
+    const [draftThreshold,setDraftThreshold]  = useState(cascadeSeries.equalThreshold);
+    const [resetBanner,   setResetBanner]     = useState(false); // auto-dismissed invalid-state banner
+
+    const { longSeries, shortSeries, equalThreshold } = cascadeSeries;
+
+    const settingsValidation = useMemo(
+        () => validateCascadeSettings(draftLong, draftShort),
+        [draftLong, draftShort]
+    );
+
+    const openSettings = () => {
+        setDraftLong(longSeries);
+        setDraftShort(shortSeries);
+        setDraftThreshold(equalThreshold);
+        setSettingsOpen(true);
+    };
+
+    const applySettings = () => {
+        if (!settingsValidation.isValid) return;
+        const next = { longSeries: draftLong, shortSeries: draftShort, equalThreshold: draftThreshold };
+        saveCascadeSeries(next);
+        setCascadeSeries(next);
+        setSettingsOpen(false);
+    };
+
+    const resetSeriesSettings = () => {
+        const def = resetCascadeSeries();
+        setCascadeSeries(def);
+        setDraftLong(def.longSeries);
+        setDraftShort(def.shortSeries);
+        setDraftThreshold(def.equalThreshold);
+        setSettingsOpen(false);
+    };
+
+    const toggleTF = (tf, list, setList, otherList) => {
+        if (list.includes(tf)) {
+            setList(list.filter(t => t !== tf));
+        } else {
+            // Insert in TF_ORDER sequence
+            const next = [...list, tf].sort((a, b) => TF_ORDER.indexOf(a) - TF_ORDER.indexOf(b));
+            setList(next);
+        }
+    };
 
     const resetCascade = () => {
         try {
@@ -185,18 +242,70 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     // every socket push; off-screen widgets are deferred via stagger queue.
     useDataInvalidation(containerRef, reloadSilent, lastDataPush);
 
-    // Fetch dynamic quick tickers from active board (limit to 12)
+    // Fetch all active streaming coins (limit=50, 2h window)
     const { data: boardData, reloadSilent: reloadBoardSilent } = usePolledFetch(
-        () => `/api/ema-distance-board?limit=12&max_dist=100&active_min=60`,
+        () => `/api/ema-distance-board?limit=50&max_dist=100&active_min=120`,
         { intervalMs: 300_000, deps: [] }
     );
-    // Also invalidate the board ticker list on data push
     useDataInvalidation(containerRef, reloadBoardSilent, lastDataPush);
 
-    const dynamicTickers = useMemo(() => {
-        if (!boardData?.board?.length) return FALLBACK_TICKERS;
-        return boardData.board.map(b => b.cleanTicker);
-    }, [boardData]);
+    // Cascade classification — uses EMA200 value stacking (not price-to-EMA distance).
+    // longSeries / shortSeries / equalThreshold come from shared cascadeUtils settings.
+    const coinsWithCascade = useMemo(() => {
+        if (!boardData?.board?.length)
+            return FALLBACK_TICKERS.map(t => ({ ticker: t, cascade: 'neutral' }));
+        return boardData.board.map(b => ({
+            ticker:  b.cleanTicker,
+            cascade: checkCascade(b.emas, longSeries, equalThreshold),
+        }));
+    }, [boardData, longSeries, equalThreshold]);
+
+    // Reversal candidates — short series fights the long cascade, gated by ATR(15m).
+    // Temp Bull: long series = bear, short series = bull, gap > ATR(15m)
+    // Temp Bear: long series = bull, short series = bear, gap > ATR(15m)
+    const reversalCoins = useMemo(() => {
+        if (!boardData?.board?.length) return { tempBull: [], tempBear: [] };
+        const tempBull = [], tempBear = [];
+        for (const b of boardData.board) {
+            if (!b.emas) continue;
+            const longDir  = checkCascade(b.emas, longSeries,  equalThreshold);
+            const shortDir = checkCascade(b.emas, shortSeries, equalThreshold);
+            const atrOk    = passesAtrGate(b.emas, shortSeries, b.atrs, b.price);
+            if (longDir === 'bear' && shortDir === 'bull' && atrOk) tempBull.push(b.cleanTicker);
+            if (longDir === 'bull' && shortDir === 'bear' && atrOk) tempBear.push(b.cleanTicker);
+        }
+        return { tempBull, tempBear };
+    }, [boardData, longSeries, shortSeries, equalThreshold]);
+
+    // Dropdown state
+    const [dropdownOpen, setDropdownOpen]   = useState(false);
+    const [searchQuery,  setSearchQuery]    = useState('');
+    const dropdownRef = useRef(null);
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        if (!dropdownOpen) return;
+        const handler = (e) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+                setDropdownOpen(false);
+                setSearchQuery('');
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [dropdownOpen]);
+
+    const filteredCoins = useMemo(() => {
+        const q = searchQuery.trim().toUpperCase();
+        if (!q) return coinsWithCascade;
+        return coinsWithCascade.filter(c => c.ticker.includes(q));
+    }, [coinsWithCascade, searchQuery]);
+
+    // Cascade status of the currently selected ticker (for trigger border colour)
+    const selectedCascade = useMemo(
+        () => coinsWithCascade.find(c => c.ticker === ticker)?.cascade || 'neutral',
+        [coinsWithCascade, ticker]
+    );
 
     const handleSubmitTicker = (e) => {
         e.preventDefault();
@@ -298,8 +407,117 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
         ? styles.regimeBull
         : regime === 'BEAR' ? styles.regimeBear : styles.regimeMixed;
 
+    // ── Settings panel ──────────────────────────────────────────────────────────
+    const settingsPanel = settingsOpen && (
+        <div className={styles.settingsOverlay}>
+            <div className={styles.settingsPanel}>
+                <div className={styles.settingsHeader}>
+                    <span className={styles.settingsTitle}>CASCADE SETTINGS</span>
+                    <button className={styles.settingsClose} onClick={() => setSettingsOpen(false)}>✕</button>
+                </div>
+
+                {/* Long series */}
+                <div className={styles.settingsSection}>
+                    <div className={styles.settingsSectionLabel}>Long-term Series <span className={styles.settingsHint}>(min 2, longest → shortest)</span></div>
+                    <div className={styles.tfToggleRow}>
+                        {TF_ORDER.map(tf => {
+                            const inShort    = draftShort.includes(tf);
+                            const inLong     = draftLong.includes(tf);
+                            return (
+                                <button
+                                    key={tf}
+                                    className={`${styles.tfToggleBtn} ${inLong ? styles.tfActive : ''} ${inShort ? styles.tfDisabled : ''}`}
+                                    disabled={inShort}
+                                    onClick={() => toggleTF(tf, draftLong, setDraftLong, draftShort)}
+                                    title={inShort ? 'Already in Short series' : ''}
+                                >
+                                    {TF_LABELS_MAP[tf]}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Short / counter series */}
+                <div className={styles.settingsSection}>
+                    <div className={styles.settingsSectionLabel}>Counter-trend Series <span className={styles.settingsHint}>(min 1, must be shorter than Long end)</span></div>
+                    <div className={styles.tfToggleRow}>
+                        {TF_ORDER.map(tf => {
+                            const inLong     = draftLong.includes(tf);
+                            const inShort    = draftShort.includes(tf);
+                            return (
+                                <button
+                                    key={tf}
+                                    className={`${styles.tfToggleBtn} ${inShort ? styles.tfActiveShort : ''} ${inLong ? styles.tfDisabled : ''}`}
+                                    disabled={inLong}
+                                    onClick={() => toggleTF(tf, draftShort, setDraftShort, draftLong)}
+                                    title={inLong ? 'Already in Long series' : ''}
+                                >
+                                    {TF_LABELS_MAP[tf]}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Threshold */}
+                <div className={styles.settingsSection}>
+                    <div className={styles.settingsSectionLabel}>
+                        Equal-level Threshold
+                        <span className={styles.settingsHint}> — EMAs within this % treated as same level</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                            type="number"
+                            min={0} max={2} step={0.05}
+                            value={draftThreshold}
+                            onChange={e => setDraftThreshold(parseFloat(e.target.value) || 0)}
+                            className={styles.thresholdInput}
+                        />
+                        <span className={styles.settingsHint}>%</span>
+                    </div>
+                </div>
+
+                {/* Validation messages */}
+                {settingsValidation.errors.map((msg, i) => (
+                    <div key={i} className={styles.validationError}>
+                        <XCircle size={13} /> {msg}
+                    </div>
+                ))}
+                {settingsValidation.warnings.map((msg, i) => (
+                    <div key={i} className={styles.validationWarning}>
+                        <AlertTriangle size={13} /> {msg}
+                    </div>
+                ))}
+                {settingsValidation.isValid && settingsValidation.warnings.length === 0 && (
+                    <div className={styles.validationOk}>
+                        <CheckCircle size={13} /> Valid configuration
+                    </div>
+                )}
+
+                {/* Actions */}
+                <div className={styles.settingsActions}>
+                    <button className={styles.settingsResetBtn} onClick={resetSeriesSettings}>
+                        ↺ Reset to defaults
+                    </button>
+                    <button className={styles.settingsCancelBtn} onClick={() => setSettingsOpen(false)}>
+                        Cancel
+                    </button>
+                    <button
+                        className={styles.settingsApplyBtn}
+                        onClick={applySettings}
+                        disabled={!settingsValidation.isValid}
+                    >
+                        Apply
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+
     return (
         <div ref={containerRef} className={styles.widget}>
+            {settingsPanel}
             {/* ── Header ── */}
             <div className={styles.header}>
                 <div className={styles.titleRow}>
@@ -308,9 +526,20 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                         <span className={styles.titleText}>EMA CASCADE MONITOR</span>
                         <span className={styles.titleSub}>200 EMA · 1m → 4h · cascade defense</span>
                     </div>
-                    <button className={styles.refreshBtn} onClick={() => load()} title="Refresh">
-                        <RefreshCw size={14} />
-                    </button>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                        <button className={styles.refreshBtn} onClick={openSettings} title="Cascade settings">
+                            <Settings size={14} />
+                            {settingsValidation && settingsOpen === false && (() => {
+                                const v = validateCascadeSettings(longSeries, shortSeries);
+                                if (v.errors.length)   return <span className={styles.settingsBadgeErr}>🔴</span>;
+                                if (v.warnings.length) return <span className={styles.settingsBadgeWarn}>⚠</span>;
+                                return null;
+                            })()}
+                        </button>
+                        <button className={styles.refreshBtn} onClick={() => load()} title="Refresh">
+                            <RefreshCw size={14} />
+                        </button>
+                    </div>
                 </div>
 
                 <div className={styles.controlsRow}>
@@ -325,12 +554,90 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                         />
                     </form>
                     {!filterTicker && (
-                        <div className={styles.controlGroup}>
-                            {dynamicTickers.map(t => (
-                                <button key={t}
-                                    className={`${styles.pill} ${ticker === t ? styles.pillActive : ''}`}
-                                    onClick={() => setQuickTicker(t)}>
-                                    {t}
+                        <div className={styles.coinDropdownWrapper} ref={dropdownRef}>
+                            {/* Trigger button — border colour reflects cascade status of selected coin */}
+                            <button
+                                className={`${styles.coinDropdownTrigger} ${
+                                    selectedCascade === 'bull' ? styles.triggerBull :
+                                    selectedCascade === 'bear' ? styles.triggerBear : ''
+                                }`}
+                                onClick={() => { setDropdownOpen(o => !o); setSearchQuery(''); }}
+                            >
+                                <span>{ticker}</span>
+                                <ChevronDown size={11} />
+                            </button>
+
+                            {dropdownOpen && (
+                                <div className={styles.coinDropdownPanel}>
+                                    {/* Search input */}
+                                    <input
+                                        className={styles.coinSearchInput}
+                                        placeholder="Search coin…"
+                                        value={searchQuery}
+                                        onChange={e => setSearchQuery(e.target.value)}
+                                        autoFocus
+                                    />
+                                    <div className={styles.coinDropdownList}>
+                                        {filteredCoins.map(c => (
+                                            <button
+                                                key={c.ticker}
+                                                className={`${styles.coinDropdownItem} ${
+                                                    c.ticker === ticker ? styles.coinItemActive : ''
+                                                } ${
+                                                    c.cascade === 'bull' ? styles.coinItemBull :
+                                                    c.cascade === 'bear' ? styles.coinItemBear : ''
+                                                }`}
+                                                onClick={() => {
+                                                    setQuickTicker(c.ticker);
+                                                    setDropdownOpen(false);
+                                                    setSearchQuery('');
+                                                }}
+                                            >
+                                                <span className={`${styles.cascadeDot} ${
+                                                    c.cascade === 'bull' ? styles.dotBull :
+                                                    c.cascade === 'bear' ? styles.dotBear :
+                                                    styles.dotNeutral
+                                                }`} />
+                                                <span className={styles.coinItemName}>{c.ticker}</span>
+                                                {c.cascade !== 'neutral' && (
+                                                    <span className={`${styles.cascadeTag} ${
+                                                        c.cascade === 'bull' ? styles.tagBull : styles.tagBear
+                                                    }`}>
+                                                        {c.cascade === 'bull' ? '▲ BULL' : '▼ BEAR'}
+                                                    </span>
+                                                )}
+                                            </button>
+                                        ))}
+                                        {filteredCoins.length === 0 && (
+                                            <div className={styles.coinDropdownEmpty}>No active coins match</div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Reversal candidate quick-chips — developing PA only, no dropdown impact */}
+                    {(reversalCoins.tempBull.length > 0 || reversalCoins.tempBear.length > 0) && (
+                        <div className={styles.reversalChips}>
+                            {reversalCoins.tempBull.map(t => (
+                                <button
+                                    key={t}
+                                    className={`${styles.reversalChip} ${styles.chipTempBull}`}
+                                    onClick={() => setQuickTicker(t)}
+                                    title="Bear cascade · 1m+5m turning bullish"
+                                >
+                                    ↗{t}
+                                </button>
+                            ))}
+                            {reversalCoins.tempBear.map(t => (
+                                <button
+                                    key={t}
+                                    className={`${styles.reversalChip} ${styles.chipTempBear}`}
+                                    onClick={() => setQuickTicker(t)}
+                                    title="Bull cascade · 1m+5m turning bearish"
+                                >
+                                    ↘{t}
                                 </button>
                             ))}
                         </div>

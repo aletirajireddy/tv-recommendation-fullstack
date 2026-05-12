@@ -8,6 +8,7 @@
     min-height: 520px;
     overflow: hidden;
     box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+    position: relative;
 }
 
 /* ─── Header ───────────────────────────────────────────────────────────────── */
@@ -273,6 +274,390 @@
 .evPULLBACK_TOUCH { color: #f6ad55; background: rgba(246,173,85,0.12); }
 .evPULLBACK_HOLD  { color: #f6ad55; background: rgba(246,173,85,0.20); }
 .transPrice { color: var(--text-muted); }
+
+/* ─── Coin searchable dropdown ──────────────────────────────────────────────── */
+.coinDropdownWrapper {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.coinDropdownTrigger {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-main);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 4px 8px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.coinDropdownTrigger:hover {
+    border-color: rgba(99,179,237,0.5);
+}
+.triggerBull {
+    border-color: rgba(104,211,145,0.55) !important;
+    box-shadow: 0 0 0 1px rgba(104,211,145,0.2);
+    color: #68d391;
+}
+.triggerBear {
+    border-color: rgba(252,129,129,0.55) !important;
+    box-shadow: 0 0 0 1px rgba(252,129,129,0.2);
+    color: #fc8181;
+}
+
+.coinDropdownPanel {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 200;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    display: flex;
+    flex-direction: column;
+    min-width: 190px;
+    max-width: 230px;
+    overflow: hidden;
+}
+
+.coinSearchInput {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-main);
+    font-size: 11px;
+    outline: none;
+    padding: 7px 10px;
+    width: 100%;
+}
+.coinSearchInput::placeholder {
+    color: var(--text-muted);
+}
+
+.coinDropdownList {
+    max-height: 220px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.coinDropdownItem {
+    align-items: center;
+    background: transparent;
+    border: none;
+    color: var(--text-main);
+    cursor: pointer;
+    display: flex;
+    font-size: 11px;
+    gap: 7px;
+    padding: 6px 10px;
+    text-align: left;
+    transition: background 0.1s;
+    width: 100%;
+}
+.coinDropdownItem:hover {
+    background: rgba(255,255,255,0.05);
+}
+.coinItemActive {
+    background: rgba(99,179,237,0.08);
+    color: #63b3ed;
+}
+.coinItemBull {
+    /* subtle left bar hint */
+    border-left: 2px solid rgba(104,211,145,0.45);
+}
+.coinItemBear {
+    border-left: 2px solid rgba(252,129,129,0.45);
+}
+
+.cascadeDot {
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+    height: 6px;
+    width: 6px;
+}
+.dotBull    { background: #68d391; box-shadow: 0 0 4px rgba(104,211,145,0.6); }
+.dotBear    { background: #fc8181; box-shadow: 0 0 4px rgba(252,129,129,0.6); }
+.dotNeutral { background: var(--border); }
+
+.coinItemName {
+    flex: 1;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+}
+
+.cascadeTag {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+.tagBull { color: #68d391; background: rgba(104,211,145,0.12); }
+.tagBear { color: #fc8181; background: rgba(252,129,129,0.12); }
+
+.coinDropdownEmpty {
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 12px 10px;
+    text-align: center;
+}
+
+/* ─── Settings overlay + panel ──────────────────────────────────────────────── */
+.settingsOverlay {
+    position: absolute;
+    inset: 0;
+    z-index: 300;
+    background: rgba(0,0,0,0.55);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 48px;
+    border-radius: 10px;
+}
+
+.settingsPanel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 320px;
+    max-width: 420px;
+    padding: 16px;
+    width: 90%;
+}
+
+.settingsHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.settingsTitle {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    color: var(--text-main);
+}
+.settingsClose {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 3px;
+    transition: color 0.15s;
+}
+.settingsClose:hover { color: var(--text-main); }
+
+.settingsSection {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.settingsSectionLabel {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-main);
+    letter-spacing: 0.4px;
+}
+.settingsHint {
+    font-size: 9px;
+    font-weight: 400;
+    color: var(--text-muted);
+    letter-spacing: 0;
+}
+
+.tfToggleRow {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+.tfToggleBtn {
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 10px;
+    transition: all 0.15s;
+    letter-spacing: 0.3px;
+}
+.tfToggleBtn:hover:not(:disabled) {
+    background: rgba(255,255,255,0.08);
+    color: var(--text-main);
+}
+.tfActive {
+    background: rgba(104,211,145,0.15);
+    border-color: rgba(104,211,145,0.5);
+    color: #68d391;
+}
+.tfActiveShort {
+    background: rgba(252,129,129,0.12);
+    border-color: rgba(252,129,129,0.45);
+    color: #fc8181;
+}
+.tfDisabled {
+    opacity: 0.3;
+    cursor: not-allowed !important;
+}
+
+.thresholdInput {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-main);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 8px;
+    width: 60px;
+    text-align: right;
+}
+.thresholdInput:focus { outline: none; border-color: rgba(99,179,237,0.5); }
+
+/* Validation messages */
+.validationError {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    background: rgba(252,129,129,0.10);
+    border: 1px solid rgba(252,129,129,0.3);
+    border-radius: 5px;
+    color: #fc8181;
+    font-size: 10px;
+    padding: 6px 8px;
+    line-height: 1.4;
+}
+.validationWarning {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    background: rgba(251,211,141,0.10);
+    border: 1px solid rgba(251,211,141,0.3);
+    border-radius: 5px;
+    color: #fbd38d;
+    font-size: 10px;
+    padding: 6px 8px;
+    line-height: 1.4;
+}
+.validationOk {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #68d391;
+    font-size: 10px;
+    opacity: 0.8;
+}
+
+/* Action buttons */
+.settingsActions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+}
+.settingsResetBtn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 10px;
+    padding: 4px 10px;
+    transition: all 0.15s;
+    margin-right: auto;
+}
+.settingsResetBtn:hover {
+    background: rgba(252,129,129,0.08);
+    border-color: rgba(252,129,129,0.35);
+    color: #fc8181;
+}
+.settingsCancelBtn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 10px;
+    padding: 4px 12px;
+    transition: all 0.15s;
+}
+.settingsCancelBtn:hover { background: rgba(255,255,255,0.05); color: var(--text-main); }
+.settingsApplyBtn {
+    background: rgba(104,211,145,0.15);
+    border: 1px solid rgba(104,211,145,0.4);
+    border-radius: 4px;
+    color: #68d391;
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 14px;
+    transition: all 0.15s;
+}
+.settingsApplyBtn:hover:not(:disabled) { background: rgba(104,211,145,0.25); }
+.settingsApplyBtn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    border-color: var(--border);
+    color: var(--text-muted);
+    background: transparent;
+}
+
+/* Header badge indicators */
+.settingsBadgeErr  { font-size: 9px; margin-left: 2px; }
+.settingsBadgeWarn { font-size: 9px; margin-left: 2px; color: #fbd38d; }
+
+/* ─── Reversal candidate quick-chips ────────────────────────────────────────── */
+.reversalChips {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-width: 260px;
+    overflow-x: auto;
+}
+
+.reversalChip {
+    background: transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    padding: 3px 6px;
+    transition: background 0.15s, opacity 0.15s;
+    white-space: nowrap;
+}
+.reversalChip:hover { opacity: 0.8; }
+
+/* Temp Bullish: bear cascade + 1m/5m flipping up → amber-green dashed border */
+.chipTempBull {
+    border: 1px dashed rgba(104,211,145,0.55);
+    color: #68d391;
+    background: rgba(104,211,145,0.06);
+}
+.chipTempBull:hover { background: rgba(104,211,145,0.12); }
+
+/* Temp Bearish: bull cascade + 1m/5m flipping down → amber-red dashed border */
+.chipTempBear {
+    border: 1px dashed rgba(252,129,129,0.55);
+    color: #fc8181;
+    background: rgba(252,129,129,0.06);
+}
+.chipTempBear:hover { background: rgba(252,129,129,0.12); }
 
 /* ─── Loading / empty / error ───────────────────────────────────────────────── */
 .loadingState, .emptyState, .errorState {

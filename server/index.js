@@ -68,6 +68,49 @@ function parsePrice(v) {
     return isFinite(n) ? n : 0;
 }
 
+// ── coin_metric_history helpers ───────────────────────────────────────────────
+// Extract ATR% or RVOL from a Stream D data object by resolution (minutes).
+function _extractStreamDField(data, pattern, resolutionMin) {
+    const re = new RegExp(pattern + resolutionMin + '$', 'i');
+    for (const key of Object.keys(data)) {
+        if (re.test(key)) {
+            const v = parseFloat(data[key]);
+            return isFinite(v) ? v : null;
+        }
+    }
+    return null;
+}
+
+// 2-min bucket dedup: floor ts to nearest 2 minutes
+function _bucket2min(tsMs) { return Math.floor(tsMs / 120000) * 120000; }
+
+const _insertCoinMetric = db.prepare(`
+    INSERT OR REPLACE INTO coin_metric_history (ticker, ts, atr_m15, atr_h1, rvol_m15, rvol_h1)
+    VALUES (@ticker, @ts, @atr_m15, @atr_h1, @rvol_m15, @rvol_h1)
+`);
+const _pruneCoinMetric = db.prepare(
+    `DELETE FROM coin_metric_history WHERE ts < ?`
+);
+
+function writeCoinMetric(ticker, tsMs, data) {
+    try {
+        const bucket = _bucket2min(tsMs);
+        const atr_m15  = _extractStreamDField(data, 'averagetruerangepercent_14Timeresolution', 15);
+        const atr_h1   = _extractStreamDField(data, 'averagetruerangepercent_14Timeresolution', 60);
+        const rvol_m15 = _extractStreamDField(data, 'relative_volume_at_time_Timeresolution', 15)
+                      ?? _extractStreamDField(data, 'relativevolume_liveTimeresolution', 15)
+                      ?? _extractStreamDField(data, 'relativevolumeattime_14Timeresolution', 15);
+        const rvol_h1  = _extractStreamDField(data, 'relative_volume_at_time_Timeresolution', 60)
+                      ?? _extractStreamDField(data, 'relativevolume_liveTimeresolution', 60)
+                      ?? _extractStreamDField(data, 'relativevolumeattime_14Timeresolution', 60);
+        // Only write if at least one metric is present
+        if (atr_m15 == null && atr_h1 == null && rvol_m15 == null && rvol_h1 == null) return;
+        _insertCoinMetric.run({ ticker, ts: bucket, atr_m15, atr_h1, rvol_m15, rvol_h1 });
+        // Prune rows older than 8 hours (runs inline, <1ms on tiny table)
+        _pruneCoinMetric.run(Date.now() - 8 * 60 * 60 * 1000);
+    } catch (e) { /* non-blocking — never crash the handler */ }
+}
+
 // 1. HEALTH CHECK
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', version: 'v3-fresh-start', timestamp: new Date() });
@@ -843,6 +886,8 @@ app.post('/api/stream-d/technicals', (req, res) => {
                 try {
                     VolumeEventService.onStreamD({ ticker, ts: timestamp, data });
                 } catch (e) { /* non-blocking */ }
+                // Rolling metric history for ATRRaceWidget
+                writeCoinMetric(ticker, Date.now(), data);
             });
             console.log(`[Stream D] 📡 Scan processed: ${payload.results.length} coins | ts=${timestamp}`);
             // Emit both events: scan-update keeps backward-compat; stream-d-update lets
@@ -1345,6 +1390,55 @@ app.get('/api/ema-cascade', (req, res) => {
 
 // Short-TTL response cache (15 s) — collapses burst requests from multiple
 // widgets polling the same endpoint (DistanceTracker + EMACascadeMonitor).
+// ── GET /api/coin-metric-history — ATRRaceWidget time-series data ─────────────
+// Returns ATR% and RVOL% readings per coin over the requested window.
+// Coins are filtered to those that have at least one reading in the window.
+app.get('/api/coin-metric-history', (req, res) => {
+    try {
+        const windowMin = Math.min(Math.max(parseInt(req.query.window_min) || 120, 15), 480);
+        const sinceMs   = Date.now() - windowMin * 60 * 1000;
+        // Optional tickers filter (comma-separated)
+        const tickerParam = (req.query.tickers || '').trim();
+        const tickers = tickerParam ? tickerParam.split(',').map(t => t.trim().toUpperCase()).filter(Boolean) : [];
+
+        let rows;
+        if (tickers.length > 0) {
+            const placeholders = tickers.map(() => '?').join(',');
+            rows = db.prepare(
+                `SELECT ticker, ts, atr_m15, atr_h1, rvol_m15, rvol_h1
+                 FROM coin_metric_history
+                 WHERE ts >= ? AND ticker IN (${placeholders})
+                 ORDER BY ticker, ts ASC`
+            ).all(sinceMs, ...tickers);
+        } else {
+            rows = db.prepare(
+                `SELECT ticker, ts, atr_m15, atr_h1, rvol_m15, rvol_h1
+                 FROM coin_metric_history
+                 WHERE ts >= ?
+                 ORDER BY ticker, ts ASC`
+            ).all(sinceMs);
+        }
+
+        // Group into per-ticker arrays
+        const result = {};
+        for (const row of rows) {
+            if (!result[row.ticker]) result[row.ticker] = [];
+            result[row.ticker].push({
+                ts:      row.ts,
+                atr_m15: row.atr_m15,
+                atr_h1:  row.atr_h1,
+                rvol_m15: row.rvol_m15,
+                rvol_h1:  row.rvol_h1,
+            });
+        }
+
+        res.json({ windowMin, sinceMs, coins: result, generatedAt: new Date().toISOString() });
+    } catch (e) {
+        console.error('[coin-metric-history]', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // Key = serialised normalised params; value = { ts, payload }.
 const _distanceBoardCache = new Map();
 const DIST_BOARD_CACHE_TTL = 15_000; // 15 seconds
