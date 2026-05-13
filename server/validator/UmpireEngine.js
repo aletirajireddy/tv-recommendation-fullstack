@@ -15,6 +15,7 @@ const EventEmitter = require('events');
 const db = require('../database');
 const settings = require('./settingsManager');
 const rules = require('./rules');
+const MasterStoreService = require('../services/MasterStoreService');
 
 const TIMER_INTERVAL_MS = 30 * 1000;
 
@@ -300,23 +301,30 @@ class UmpireEngine extends EventEmitter {
     }
 
     _extractFeatureSnapshot(payload, price, direction) {
-        const sl = payload.smart_levels || {};
-        const e200 = sl.emas_200 || {};
+        const sl  = payload.smart_levels || {};
         const rsi = payload.rsi_matrix || {};
         const dist = (p) => (p && price) ? (price - p) / p * 100 : null;
-
         const toNum = (v) => v != null ? Number(v) || null : null;
+
+        // EMA200 from Stream D only — get latest snapshot from master_coin_store.
+        // Stream C smart_levels.emas_200 is intentionally NOT used: its values
+        // diverge from TradingView's ema_200 indicator and produce wrong readings.
+        const stack = MasterStoreService.getEMA200Stack(payload.ticker);
+        const e5m  = stack.m5?.price  ?? null;
+        const e15m = stack.m15?.price ?? null;
+        const e1h  = stack.h1?.price  ?? null;
+        const e4h  = stack.h4?.price  ?? null;
 
         return {
             price, direction,
-            ema200_5m_price:      toNum(e200.m5?.p),
-            ema200_15m_price:     toNum(e200.m15?.p),
-            ema200_1h_price:      toNum(e200.h1?.p),
-            ema200_4h_price:      toNum(e200.h4?.p),
-            ema200_5m_dist_pct:   dist(e200.m5?.p),
-            ema200_15m_dist_pct:  dist(e200.m15?.p),
-            ema200_1h_dist_pct:   dist(e200.h1?.p),
-            ema200_4h_dist_pct:   dist(e200.h4?.p),
+            ema200_5m_price:      e5m,
+            ema200_15m_price:     e15m,
+            ema200_1h_price:      e1h,
+            ema200_4h_price:      e4h,
+            ema200_5m_dist_pct:   dist(e5m),
+            ema200_15m_dist_pct:  dist(e15m),
+            ema200_1h_dist_pct:   dist(e1h),
+            ema200_4h_dist_pct:   dist(e4h),
             mega_spot_price:      toNum(sl.mega_spot?.p),
             mega_spot_dist_pct:   dist(sl.mega_spot?.p),
             rsi_h1:               rsi.h1 ?? null,

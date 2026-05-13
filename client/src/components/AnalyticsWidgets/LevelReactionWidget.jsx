@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useCallback } from 'react';
+import { FreshnessChip } from '../FreshnessChip';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
@@ -703,7 +704,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
     // Audit fix #5/#3/#6: combined async fetcher — level-reactions then volume-events
     // in one chained call so both share one AbortController. ref-pattern means the
     // polling interval is created once; dep changes trigger reload via useEffect.
-    const { data, loading, error, reload, reloadSilent } = usePolledFetch(
+    const { data, loading, error, reload, reloadSilent, lastFetchedAt } = usePolledFetch(
         async (signal) => {
             const tickerParam = filterTicker ? `&ticker=${filterTicker}` : '';
             const r = await fetch(
@@ -803,13 +804,16 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                         <span className={styles.titleText}>LEVEL REACTION MONITOR</span>
                         <span className={styles.titleSub}>Path · Touch · Verdict</span>
                     </div>
-                    <button
-                        className={styles.refreshBtn}
-                        onClick={() => reload()}
-                        title="Refresh"
-                    >
-                        <RefreshCw size={14} />
-                    </button>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <FreshnessChip ts={lastFetchedAt} title="Data last fetched from server" />
+                        <button
+                            className={styles.refreshBtn}
+                            onClick={() => reload()}
+                            title="Refresh"
+                        >
+                            <RefreshCw size={14} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Controls row */}

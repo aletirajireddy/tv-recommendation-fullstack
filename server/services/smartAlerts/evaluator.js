@@ -40,9 +40,27 @@ async function evaluateAll(reason = 'scan-update') {
     }
     if (!stillActive.length) return;
 
-    // Batch fetch: latest Stream D row per distinct ticker
-    const tickers = [...new Set(stillActive.map(a => a.ticker))];
-    const placeholders = tickers.map(() => '?').join(',');
+    // Expand each alert ticker to DB variants so short forms (e.g. "PUMP") resolve
+    // to full DB forms (e.g. "PUMPUSDT.P"). variantToAlertTicker maps DB ticker → stored alert ticker.
+    function expandVariants(t) {
+        const up = t.trim().toUpperCase();
+        const stripped = up.replace(/USDT\.P$|USDT$/, '');
+        return [...new Set([up, `${stripped}USDT.P`, `${stripped}USDT`, stripped].filter(Boolean))];
+    }
+    const alertTickers = [...new Set(stillActive.map(a => a.ticker))];
+    const variantToAlertTicker = new Map();
+    const allVariants = [];
+    for (const t of alertTickers) {
+        for (const v of expandVariants(t)) {
+            if (!variantToAlertTicker.has(v)) {
+                variantToAlertTicker.set(v, t);
+                allVariants.push(v);
+            }
+        }
+    }
+    const placeholders = allVariants.map(() => '?').join(',');
+
+    // Batch fetch: latest Stream D row per distinct ticker (EMA200 + ATR)
     let dRows = [];
     try {
         dRows = _mainDb.prepare(`
@@ -56,13 +74,42 @@ async function evaluateAll(reason = 'scan-update') {
                 GROUP BY ticker
             ) t ON t.ticker=m.ticker AND t.mx=m.timestamp
             WHERE m.trigger_source = 'STREAM_D'
-        `).all(...tickers);
+        `).all(...allVariants);
     } catch (e) {
         console.error('[SmartAlerts] batch fetch failed:', e.message);
         return;
     }
 
+    // Q1b — freshest price from ANY source per ticker (same logic as board endpoint).
+    // evaluateAll fires on Stream A ticks where Stream D blob price can be minutes stale.
+    // Using the latest any-source price ensures alert distance/side matches current market.
+    const freshPrices = new Map();
+    try {
+        const priceRows = _mainDb.prepare(`
+            SELECT m.ticker, m.price
+            FROM master_coin_store m
+            INNER JOIN (
+                SELECT ticker, MAX(timestamp) AS mx
+                FROM master_coin_store
+                WHERE price IS NOT NULL AND ticker IN (${placeholders})
+                GROUP BY ticker
+            ) t ON m.ticker = t.ticker AND m.timestamp = t.mx
+        `).all(...allVariants);
+        for (const r of priceRows) {
+            const p = parseFloat(r.price);
+            if (!isNaN(p) && p > 0) {
+                // Key by canonical alert ticker so quoteByTicker lookup works for short-form alerts
+                const canonical = variantToAlertTicker.get(r.ticker) || r.ticker;
+                freshPrices.set(canonical, p);
+            }
+        }
+    } catch (e) {
+        console.error('[SmartAlerts] fresh price fetch failed:', e.message);
+        // non-fatal — falls back to Stream D blob price below
+    }
+
     // Build per-ticker quote map (price + per-TF EMA + per-TF ATR)
+    // Keyed by canonical alert ticker (handles short-form → full-form variant resolution)
     const quoteByTicker = new Map();
     for (const r of dRows) {
         let d; try { d = JSON.parse(r.stream_d_state); } catch { continue; }
@@ -95,8 +142,12 @@ async function evaluateAll(reason = 'scan-update') {
                 atrs[tf] = atrs[best];
             }
         }
-        const price = parseFloat(d.price ?? d.close ?? r.price);
-        if (!isNaN(price)) quoteByTicker.set(r.ticker, { price, emas, atrs, ts: r.timestamp });
+        // Fresh price from any source (Q1b) takes priority over Stream D blob price.
+        // Stream D blob price can be several minutes stale when eval fires on a Stream A tick.
+        const canonical = variantToAlertTicker.get(r.ticker) || r.ticker;
+        const blobPrice = parseFloat(d.price ?? d.close ?? r.price);
+        const price = freshPrices.get(canonical) ?? (isNaN(blobPrice) ? null : blobPrice);
+        if (price != null) quoteByTicker.set(canonical, { price, emas, atrs, ts: r.timestamp });
     }
 
     // Per-alert evaluation

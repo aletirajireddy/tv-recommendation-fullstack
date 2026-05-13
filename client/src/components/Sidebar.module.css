@@ -103,22 +103,31 @@
 /* ─── Nav items ─────────────────────────────────────────────────────────────── */
 .nav {
     flex: 1;
-    padding: 8px;
+    padding: 6px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* Thin scrollbar — matches dark theme */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.1) transparent;
 }
+.nav::-webkit-scrollbar       { width: 4px; }
+.nav::-webkit-scrollbar-track  { background: transparent; }
+.nav::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.1); border-radius: 2px; }
+.nav::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
 .navItem {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 10px 12px;
+    gap: 10px;
+    padding: 7px 10px;
     background: transparent;
     border: none;
     color: var(--text-muted);
     cursor: pointer;
-    border-radius: 6px;
+    border-radius: 5px;
     transition: background 0.15s, color 0.15s;
     white-space: nowrap;
     text-align: left;
@@ -130,18 +139,26 @@
     color: var(--accent-blue);
 }
 
+/* Section divider — a thin rule above certain items to group logically */
+.navDivider {
+    height: 1px;
+    background: rgba(255,255,255,0.06);
+    margin: 4px 6px;
+    flex-shrink: 0;
+}
+
 /* Brighter text in mobile drawer — solid dark bg needs higher contrast */
 @media (max-width: 1024px), (pointer: coarse) {
     .navItem {
         color: #b8c2d4;
-        padding: 12px 16px;
+        padding: 10px 14px;
     }
     .navItem:hover {
         background: rgba(255,255,255,0.07);
         color: #fff;
     }
     .label {
-        font-size: 15px;
+        font-size: 14px;
     }
 }
 
@@ -154,7 +171,7 @@
 }
 
 .label {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
 }

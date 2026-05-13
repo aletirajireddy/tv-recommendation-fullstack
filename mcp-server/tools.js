@@ -9,38 +9,85 @@ const parseJson = (s) => { try { return s ? JSON.parse(s) : null; } catch { retu
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STREAM D HELPER — normalise the long TradingView column names into a clean obj
+//
+// IMPORTANT DATA-SOURCE RULES (matches client-side authority):
+//   RSI values    → coin_metric_history ONLY (Stream D rolling history).
+//                   stream_d_state in master_coin_store has the raw TV fields, but
+//                   coin_metric_history is the deduped/bucketed source of truth.
+//                   Use get_coin_metrics tool for RSI queries, not this helper.
+//   EMA 200       → same: coin_metric_history dist_m1 … dist_h4 for % distances.
+//                   This helper exposes raw EMA price values (for cascade direction),
+//                   NOT distance %. Use get_coin_metrics for pre-computed distances.
+//   change_24h_pct here = rolling 24h window (CMC-style).
+//                   TODAY's session change% comes ONLY from stream_c_state.today_change_pct
+//                   (Stream C per-coin). These two NEVER match except at midnight UTC.
+//   today_volume  → stream_c_state.today_volume ONLY.
 // ─────────────────────────────────────────────────────────────────────────────
 function normaliseStreamD(raw, ticker, timestamp) {
     if (!raw) return null;
     const d = typeof raw === 'string' ? parseJson(raw) : raw;
     if (!d) return null;
     const price = d.price ?? d.close;
-    const ema1  = d.ema_200Timeresolution1;
-    const ema5  = d.ema_200Timeresolution5;
-    const ema15 = d.ema_200Timeresolution15;
+    const ema1   = d.ema_200Timeresolution1;
+    const ema5   = d.ema_200Timeresolution5;
+    const ema15  = d.ema_200Timeresolution15;
+    const ema60  = d.ema_200Timeresolution60;
+    const ema240 = d.ema_200Timeresolution240;
+    const pctDist = (ema) => (price && ema) ? +((price - ema) / ema * 100).toFixed(3) : null;
+    // RVOL: TV uses multiple key variants — try them all
+    const rvol = (n) =>
+        d[`relative_volume_at_time_Timeresolution${n}`] ??
+        d[`relativevolume_liveTimeresolution${n}`] ??
+        d[`relativeattime_14Timeresolution${n}`] ??
+        d[`relativevolumecexTimeresolution${n}`] ?? null;
     return {
         as_of: timestamp,
         price,
-        change_24h_pct:       d.changecryptoInterval24h,
-        volume_24h:           d.volume24hInterval24h,
+        // 24h rolling window (NOT session change% — see note above)
+        change_24h_pct:        d.changecryptoInterval24h,
+        volume_24h:            d.volume24hInterval24h,
         volume_change_24h_pct: d.volume24hchangeInterval24h,
+        // RSI 14 across all 4 TFs stored in coin_metric_history
+        // NOTE: prefer get_coin_metrics for RSI queries — this is the raw TV push value
         rsi: {
-            m5:  d.relativestrengthindex_14Timeresolution5,
-            m15: d.relativestrengthindex_14Timeresolution15,
+            m5:  d.relativestrengthindex_14Timeresolution5  ?? null,
+            m15: d.relativestrengthindex_14Timeresolution15 ?? null,
+            m30: d.relativestrengthindex_14Timeresolution30 ?? null,
+            h1:  d.relativestrengthindex_14Timeresolution60 ?? null,
         },
-        ema_200: { m1: ema1, m5: ema5, m15: ema15 },
+        // EMA 200 actual price values (for cascade direction stacking)
+        ema_200: { m1: ema1, m5: ema5, m15: ema15, h1: ema60, h4: ema240 },
+        // % distance price to EMA200 (positive = price above EMA)
+        ema_dist_pct: {
+            m1:  pctDist(ema1),
+            m5:  pctDist(ema5),
+            m15: pctDist(ema15),
+            h1:  pctDist(ema60),
+            h4:  pctDist(ema240),
+        },
+        // EMA cascade alignment (stacking, not price-vs-EMA)
         ema_alignment: {
-            above_m1:        price > ema1,
-            above_m5:        price > ema5,
-            above_m15:       price > ema15,
-            cascade_bullish: price > ema1 && price > ema5 && price > ema15,
-            cascade_bearish: price < ema1 && price < ema5 && price < ema15,
-            pct_vs_ema200_m5: ema5 ? +((price - ema5) / ema5 * 100).toFixed(3) : null,
+            above_m1:  price > ema1,
+            above_m5:  price > ema5,
+            above_m15: price > ema15,
+            above_h1:  price > ema60,
+            above_h4:  price > ema240,
+            // Bull cascade: shorter TF EMA > longer TF EMA (they react faster to rising price)
+            cascade_bullish_short:  ema1 > ema5 && ema5 > ema15,          // m1>m5>m15
+            cascade_bullish_long:   ema15 > ema60 && ema60 > ema240,      // m15>h1>h4
+            cascade_bearish_short:  ema1 < ema5 && ema5 < ema15,
+            cascade_bearish_long:   ema15 < ema60 && ema60 < ema240,
         },
-        relative_volume_1h: d.relativevolumecexTimeresolution60,
+        // Relative volume (multiple TF key variants tried)
+        relative_volume: {
+            m15: rvol(15),
+            h1:  rvol(60),
+        },
+        // ATR %
         atr_pct: {
-            m15: d.averagetruerangepercent_14Timeresolution15,
-            h1:  d.averagetruerangepercent_14Timeresolution60,
+            m15: d.averagetruerangepercent_14Timeresolution15  ?? null,
+            h1:  d.averagetruerangepercent_14Timeresolution60  ?? null,
+            h4:  d.averagetruerangepercent_14Timeresolution240 ?? null,
         },
         volatility_1d: d.volatilityInterval1d,
     };
@@ -216,6 +263,12 @@ async function analyzeTarget(ticker) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TOOL 6 — query_technical_filters
+//
+// RSI AUTHORITY NOTE: RSI values come from coin_metric_history (Stream D rolling
+// history), NOT from unified_alerts.raw_data.rsi_matrix (Stream C payload).
+// Stream C rsi_matrix is WRONG for RSI — it reflects the alert-trigger snapshot
+// and is not kept up to date. coin_metric_history is updated every ~2 min from
+// TradingView direct push and is the single source of truth for RSI m5/m15/m30/h1.
 // ─────────────────────────────────────────────────────────────────────────────
 async function queryTechnicalFilters(filters) {
     const scanRow = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
@@ -232,6 +285,20 @@ async function queryTechnicalFilters(filters) {
         GROUP BY ticker HAVING MAX(timestamp)
     `).all(last24h);
 
+    // Pre-load latest RSI from coin_metric_history (Stream D — authoritative source)
+    // This replaces the broken Stream C rsi_matrix lookups.
+    const TF_COL = { m5: 'rsi_m5', m15: 'rsi_m15', m30: 'rsi_m30', h1: 'rsi_h1' };
+    const cmhSince = Date.now() - 30 * 60 * 1000; // last 30 min
+    const cmhRows = db.prepare(`
+        WITH ranked AS (
+            SELECT ticker, rsi_m5, rsi_m15, rsi_m30, rsi_h1,
+                   ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY ts DESC) AS rn
+            FROM coin_metric_history WHERE ts > ?
+        )
+        SELECT ticker, rsi_m5, rsi_m15, rsi_m30, rsi_h1 FROM ranked WHERE rn = 1
+    `).all(cmhSince);
+    const cmhMap = new Map(cmhRows.map(r => [r.ticker, r]));
+
     let matchedCoins = [];
 
     rows.forEach(row => {
@@ -239,19 +306,20 @@ async function queryTechnicalFilters(filters) {
             const data = parseJson(row.raw_data);
             let match = true;
 
-            // RSI filter
-            if (filters.rsi?.timeframe && filters.rsi?.value) {
-                let rsiVal = data.rsi_matrix?.[filters.rsi.timeframe];
-                if (!rsiVal && filters.rsi.timeframe === 'm15') {
-                    rsiVal = data.rsi_matrix?.m5 && data.rsi_matrix?.m30
-                        ? (parseFloat(data.rsi_matrix.m5) + parseFloat(data.rsi_matrix.m30)) / 2
-                        : data.rsi_matrix?.m5 ?? data.rsi_matrix?.m30;
-                }
-                if (!rsiVal) { match = false; }
+            // RSI filter — source: coin_metric_history (Stream D ONLY)
+            // coin_metric_history may be empty for new coins until first 2-min bucket arrives.
+            if (filters.rsi?.timeframe && filters.rsi?.value !== undefined) {
+                const col = TF_COL[filters.rsi.timeframe];
+                if (!col) { match = false; }
                 else {
-                    const r = parseFloat(rsiVal);
-                    if (filters.rsi.operator === '>' && r <= filters.rsi.value) match = false;
-                    if (filters.rsi.operator === '<' && r >= filters.rsi.value) match = false;
+                    const cmh = cmhMap.get(row.ticker);
+                    const rsiVal = cmh?.[col] ?? null;
+                    if (rsiVal == null) { match = false; }  // no Stream D data yet — skip coin
+                    else {
+                        const r = parseFloat(rsiVal);
+                        if (filters.rsi.operator === '>' && r <= filters.rsi.value) match = false;
+                        if (filters.rsi.operator === '<' && r >= filters.rsi.value) match = false;
+                    }
                 }
             }
 
@@ -356,11 +424,12 @@ async function getDatabaseSchema() {
     const TABLE_DESCRIPTIONS = {
         scan_results:                 "Stream A — Raw TradingView 26-column macro scan results per cycle. raw_data is JSON {market_sentiment, results:[{ticker, data:{score,breakout,volSpike,momScore,...}}]}",
         scans:                        "Scan event registry — one row per scan cycle (id + timestamp + trigger source)",
-        unified_alerts:               "Stream C normalised alerts — smart level touch events with strength score and direction (-1 BEAR / +1 BULL)",
+        unified_alerts:               "Stream C normalised alerts — smart level touch events with strength score and direction (-1 BEAR / +1 BULL). WARNING: raw_data.rsi_matrix is Stream C data — do NOT use for RSI values. Use coin_metric_history instead.",
         smart_level_events:           "Raw Stream C ingestion — price interaction with smart levels (Mega Spot, EMA200 key TFs, Fib, Logic). raw_data has full smart_levels tree + trigger metadata",
         institutional_interest_events:"Stream A bar-anomaly detector — unusual bar-move events with bar_move_pct and today_volume",
-        master_coin_store:            "V4 event-sourced ledger — every state change per coin across all 4 streams. stream_d_state is JSON EMA cascade matrix from TradingView direct push. trigger_source: STREAM_A|B|C|D",
-        volume_events:                "Unified volume event ledger — all volume spikes from every stream. source: STREAM_A_EDGE | STREAM_C_ALERT. strength: 1=normal, >1.5=strong spike. meta has price + direction",
+        master_coin_store:            "V4 event-sourced ledger — every state change per coin across all 4 streams. stream_d_state is JSON EMA cascade matrix from TradingView direct push. trigger_source: STREAM_A|B|C|D. stream_c_state.today_change_pct = session change% (authoritative). stream_c_state.rsi_matrix = WRONG for RSI — use coin_metric_history.",
+        coin_metric_history:          "*** PRIMARY SOURCE FOR RSI, RVOL, ATR, EMA-DISTANCE *** Rolling 8h history (2-min buckets, ~1200 rows max). Columns: ticker, ts (Unix ms), rsi_m5, rsi_m15, rsi_m30, rsi_h1, rvol_m15, rvol_h1, atr_m15, atr_h1, atr_h4, dist_m1, dist_m5, dist_m15, dist_h1, dist_h4. dist_* = (price - ema200) / ema200 * 100. Use get_coin_metrics tool to query this table.",
+        volume_events:                "Unified volume event ledger — all volume spikes from every stream. source: STREAM_A_EDGE | STREAM_C_ALERT | STREAM_D_RVOL. strength: 1=normal, >1.5=strong spike. meta has price + direction",
         validation_trials:            "3rd Umpire Validator — each Stream C event spawns a trial. state machine: WATCHING→EARLY_FAVORABLE→CONFIRMED|FAILED. feature_snapshot is market context at detection",
         validation_state_log:         "Step-by-step rule evaluation log per trial. rule_snapshot shows pass/fail for each EMA cascade rule at every state transition",
         pattern_statistics:           "Pre-computed win rates by setup combination (direction × trigger_type × vol_filter × ema_align). win_rate_30m is primary edge metric",
@@ -369,7 +438,7 @@ async function getDatabaseSchema() {
         ghost_approval_queue:         "Coins flagged for GHOST status pending manual approval. confidence_score + score_breakdown JSON",
         area1_scout_logs:             "Stream B scout activity — STABLE / ORPHANED_STABLE_RETRY / NEW coin state transitions in the watchlist pipeline",
         pulse_events:                 "High-level market pulse events (significant volume / alert combos)",
-        market_context_logs:          "Snapshot log of market context metadata (total screener count, watchlist count) per scan cycle",
+        market_context_logs:          "Stream B batch watchlist snapshot — payload_json.watchlist_active_snapshot[] has {short, price, change_pct, vol_raw}. change_pct here = session-based (midnight UTC reset). Use stream_c_state.today_change_pct for fresher per-coin data.",
         qualified_picks:              "Current active algo-qualified coin picks",
         qualified_picks_log:          "Historical log of all ever-qualified picks",
         system_settings:              "Key-value config store (telegram_enabled, auto_approve, etc.)",
@@ -731,25 +800,38 @@ async function getStreamDMatrix(ticker) {
         `).all();
 
         return {
-            description: "Latest Stream D EMA cascade matrix for all tickers (2-min push cadence)",
+            description: "Latest Stream D EMA cascade matrix for all tickers (2-min push cadence). NOTE: for RSI queries prefer get_coin_metrics which reads from the authoritative coin_metric_history table.",
             count: rows.length,
             tickers: rows.map(r => {
                 const nd = normaliseStreamD(r.stream_d_state, r.ticker, r.timestamp);
                 if (!nd) return { ticker: r.ticker, error: 'parse_failed' };
                 return {
-                    ticker:            r.ticker,
-                    as_of:             nd.as_of,
-                    price:             nd.price,
-                    change_24h_pct:    nd.change_24h_pct,
-                    rsi_m5:            nd.rsi.m5,
-                    rsi_m15:           nd.rsi.m15,
-                    ema200_m1:         nd.ema_200.m1,
-                    ema200_m5:         nd.ema_200.m5,
-                    ema200_m15:        nd.ema_200.m15,
-                    cascade_bullish:   nd.ema_alignment.cascade_bullish,
-                    cascade_bearish:   nd.ema_alignment.cascade_bearish,
-                    pct_vs_ema200_m5:  nd.ema_alignment.pct_vs_ema200_m5,
-                    rel_vol_1h:        nd.relative_volume_1h,
+                    ticker:                 r.ticker,
+                    as_of:                  nd.as_of,
+                    price:                  nd.price,
+                    change_24h_pct:         nd.change_24h_pct,   // rolling 24h — NOT session change%
+                    rsi_m5:                 nd.rsi.m5,
+                    rsi_m15:                nd.rsi.m15,
+                    rsi_m30:                nd.rsi.m30,
+                    rsi_h1:                 nd.rsi.h1,
+                    ema200_m1:              nd.ema_200.m1,
+                    ema200_m5:              nd.ema_200.m5,
+                    ema200_m15:             nd.ema_200.m15,
+                    ema200_h1:              nd.ema_200.h1,
+                    ema200_h4:              nd.ema_200.h4,
+                    dist_pct_m5:            nd.ema_dist_pct.m5,
+                    dist_pct_m15:           nd.ema_dist_pct.m15,
+                    dist_pct_h1:            nd.ema_dist_pct.h1,
+                    dist_pct_h4:            nd.ema_dist_pct.h4,
+                    cascade_bull_short:     nd.ema_alignment.cascade_bullish_short,
+                    cascade_bear_short:     nd.ema_alignment.cascade_bearish_short,
+                    cascade_bull_long:      nd.ema_alignment.cascade_bullish_long,
+                    cascade_bear_long:      nd.ema_alignment.cascade_bearish_long,
+                    rvol_m15:               nd.relative_volume.m15,
+                    rvol_h1:                nd.relative_volume.h1,
+                    atr_pct_m15:            nd.atr_pct.m15,
+                    atr_pct_h1:             nd.atr_pct.h1,
+                    atr_pct_h4:             nd.atr_pct.h4,
                 };
             }),
         };
@@ -938,6 +1020,95 @@ async function getStreamHealth() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NEW TOOL 23 — get_coin_metrics
+//
+// Queries coin_metric_history — the AUTHORITATIVE source for:
+//   RSI (m5, m15, m30, h1)       ← Stream D rolling history, 2-min buckets
+//   RVOL (m15, h1)               ← Relative Volume
+//   ATR% (m15, h1, h4)           ← Average True Range %
+//   EMA200 distance% (m1–h4)     ← (price - ema200) / ema200 × 100
+//
+// NEVER use unified_alerts.rsi_matrix or stream_c_state.rsi_matrix for RSI.
+// Those are Stream C snapshot values captured at alert time — not kept current.
+//
+// Params:
+//   ticker  (optional) — single ticker, e.g. "BTCUSDT.P". Omit for all.
+//   hours   (default 0.5) — lookback window in hours (max 8 — table prunes beyond that)
+//   latest_only (default true) — when true, returns only the most recent bucket per ticker
+// ─────────────────────────────────────────────────────────────────────────────
+async function getCoinMetrics({ ticker, hours = 0.5, latest_only = true } = {}) {
+    try {
+        const cutoffTs = Date.now() - Math.min(8, hours) * 60 * 60 * 1000;
+        const cleanTicker = ticker ? ticker.replace('BINANCE:', '') : null;
+
+        if (latest_only) {
+            // Efficient: one row per ticker using window function
+            let sql = `
+                WITH ranked AS (
+                    SELECT ticker, ts, rsi_m5, rsi_m15, rsi_m30, rsi_h1,
+                           rvol_m15, rvol_h1, atr_m15, atr_h1, atr_h4,
+                           dist_m1, dist_m5, dist_m15, dist_h1, dist_h4,
+                           ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY ts DESC) AS rn
+                    FROM coin_metric_history WHERE ts > ?
+                    ${cleanTicker ? 'AND ticker = ?' : ''}
+                )
+                SELECT * FROM ranked WHERE rn = 1 ORDER BY ticker
+            `;
+            const params = cleanTicker ? [cutoffTs, cleanTicker] : [cutoffTs];
+            const rows = db.prepare(sql).all(...params);
+
+            const enriched = rows.map(r => ({
+                ticker:   r.ticker,
+                as_of_ms: r.ts,
+                rsi:      { m5: r.rsi_m5, m15: r.rsi_m15, m30: r.rsi_m30, h1: r.rsi_h1 },
+                rsi_cascade: (() => {
+                    const { rsi_m15, rsi_m30, rsi_h1 } = r;
+                    if (rsi_m15 < 30 && rsi_h1 < 40)    return 'MULTI_TF_OVERSOLD';
+                    if (rsi_m15 > 70 && rsi_h1 > 60)    return 'MULTI_TF_OVERBOUGHT';
+                    if (rsi_h1 < 30 && rsi_m30 < 30)    return 'BEAR_RSI_CASCADE';
+                    if (rsi_h1 > 70 && rsi_m30 > 70)    return 'BULL_RSI_CASCADE';
+                    if (rsi_m15 != null && rsi_m15 < 30) return 'OVERSOLD_15M';
+                    if (rsi_m15 != null && rsi_m15 > 70) return 'OVERBOUGHT_15M';
+                    return 'NEUTRAL';
+                })(),
+                rvol:     { m15: r.rvol_m15, h1: r.rvol_h1 },
+                atr_pct:  { m15: r.atr_m15,  h1: r.atr_h1, h4: r.atr_h4 },
+                ema_dist_pct: {
+                    m1: r.dist_m1, m5: r.dist_m5, m15: r.dist_m15,
+                    h1: r.dist_h1, h4: r.dist_h4,
+                    // dist positive = price above EMA200 (bullish); negative = below (bearish)
+                },
+            }));
+
+            return {
+                description: "Latest RSI / RVOL / ATR / EMA-distance from coin_metric_history (Stream D, 2-min buckets). This is the AUTHORITATIVE source — do not use stream_c_state.rsi_matrix.",
+                as_of_window_hours: hours,
+                count: enriched.length,
+                coins: cleanTicker ? (enriched[0] ?? { error: `No data for ${cleanTicker}` }) : enriched,
+            };
+        }
+
+        // Time-series mode — return all buckets within window for one ticker
+        if (!cleanTicker) return { error: "ticker is required when latest_only=false" };
+        const series = db.prepare(`
+            SELECT ts, rsi_m5, rsi_m15, rsi_m30, rsi_h1,
+                   rvol_m15, rvol_h1, atr_m15, atr_h1, atr_h4,
+                   dist_m15, dist_h1
+            FROM coin_metric_history
+            WHERE ticker = ? AND ts > ?
+            ORDER BY ts ASC
+        `).all(cleanTicker, cutoffTs);
+
+        return {
+            description: `Time-series RSI/RVOL/ATR history for ${cleanTicker} (last ${hours}h, 2-min buckets)`,
+            ticker: cleanTicker,
+            bucket_count: series.length,
+            series,
+        };
+    } catch(e) { return { error: e.message }; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
@@ -964,4 +1135,6 @@ module.exports = {
     getMarketRegime,
     getSmartLevelReactions,
     getStreamHealth,
+    // NEW v3
+    getCoinMetrics,
 };

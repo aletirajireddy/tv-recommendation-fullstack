@@ -1,6 +1,11 @@
 import React, { useEffect } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
-import { Target, Layers, Activity, Ruler, Zap, Hexagon, Users, PanelLeftClose, PanelLeft, Brain, Bell, MonitorPlay } from 'lucide-react';
+import {
+    Target, Layers, Activity, Ruler, Zap, Hexagon, Users,
+    PanelLeftClose, PanelLeft, Brain, Bell, MonitorPlay,
+    TrendingUp, BarChart2, Gauge, Heart, PieChart, Map,
+    LayoutGrid, Search, Star, Calendar, Flame,
+} from 'lucide-react';
 import styles from './Sidebar.module.css';
 
 export const Sidebar = () => {
@@ -28,18 +33,31 @@ export const Sidebar = () => {
         };
     }, [mobileMenuOpen, setMobileMenuOpen]);
 
-    // Each entry maps a nav id → its underlying widget chunk import.
-    // On hover/focus we trigger the dynamic import so the chunk is warm
-    // by the time the user actually navigates to it (zero-skeleton scroll).
+    // Items listed in top-to-bottom page order. `divider: true` inserts a thin
+    // rule between groups so the 18-item list stays scannable.
     const menuItems = [
-        { id: 'umpire',  label: '3rd Umpire',     icon: Target,  prefetch: () => import('./AnalyticsWidgets/ValidatorTimelineWidget') },
-        { id: 'levels',  label: 'Levels Monitor', icon: Layers,  prefetch: () => import('./AnalyticsWidgets/LevelReactionWidget') },
-        { id: 'cascade', label: 'EMA Cascade',    icon: Activity, prefetch: () => import('./AnalyticsWidgets/EMACascadeMonitor') },
-        { id: 'dist',    label: 'Distance Board', icon: Ruler,   prefetch: () => import('./AnalyticsWidgets/DistanceTracker') },
-        { id: 'alerts',  label: 'Smart Alerts',   icon: Bell,    prefetch: () => import('./AnalyticsWidgets/SmartAlertsWidget') },
-        { id: 'alpha',   label: 'Alpha Squad',    icon: Zap,     prefetch: () => import('./AnalyticsWidgets/AlphaScatter') },
-        { id: 'fusion',  label: 'Fusion Command', icon: Hexagon, prefetch: () => import('./AnalyticsWidgets/FusionDashboard') },
-        { id: 'scout',   label: 'Participation',  icon: Users,   prefetch: () => import('./AnalyticsWidgets/ParticipationPulseWidget') },
+        { id: 'umpire',           label: '3rd Umpire',       icon: Target,     prefetch: () => import('./AnalyticsWidgets/ValidatorTimelineWidget') },
+        { divider: true },
+        { id: 'levels',           label: 'Levels Monitor',   icon: Layers,     prefetch: () => import('./AnalyticsWidgets/LevelReactionWidget') },
+        { id: 'cascade',          label: 'EMA Cascade',      icon: Activity,   prefetch: () => import('./AnalyticsWidgets/EMACascadeMonitor') },
+        { id: 'scout',            label: 'Participation',    icon: Users,      prefetch: () => import('./AnalyticsWidgets/ParticipationPulseWidget') },
+        { id: 'alpha',            label: 'Alpha Squad',      icon: Zap,        prefetch: () => import('./AnalyticsWidgets/AlphaScatter') },
+        { id: 'dist',             label: 'Distance Board',   icon: Ruler,      prefetch: () => import('./AnalyticsWidgets/DistanceTracker') },
+        { divider: true },
+        { id: 'race',             label: 'Cascade Board',    icon: TrendingUp, prefetch: () => import('./AnalyticsWidgets/ATRRaceWidget') },
+        { id: 'alerts',           label: 'Smart Alerts',     icon: Bell,       prefetch: () => import('./AnalyticsWidgets/SmartAlertsWidget') },
+        { id: 'fusion',           label: 'Fusion Command',   icon: Hexagon,    prefetch: () => import('./AnalyticsWidgets/FusionDashboard') },
+        { divider: true },
+        { id: 'rsi-dist',         label: 'RSI Distribution', icon: PieChart,   prefetch: () => import('./AnalyticsWidgets/RSIDistributionWidget') },
+        { id: 'market-structure', label: 'Market Structure', icon: Map,        prefetch: () => import('./AnalyticsWidgets/MarketStructureWidget') },
+        { id: 'confluence',       label: 'Confluence Grid',  icon: LayoutGrid, prefetch: () => import('./AnalyticsWidgets/ConfluenceGrid') },
+        { id: 'alerts-analyzer',  label: 'Alerts Analyzer',  icon: Search,     prefetch: () => import('./AnalyticsWidgets/AlertsAnalyzer') },
+        { id: 'recommendations',  label: 'Recommendations',  icon: Star,       prefetch: () => import('./AnalyticsWidgets/RecommendationsFeed') },
+        { divider: true },
+        { id: 'rsi-grid',         label: 'RSI Grid Wall',    icon: BarChart2,  prefetch: () => import('./AnalyticsWidgets/RSIGridWall') },
+        { id: 'momentum-pulse',   label: 'Momentum Pulse',   icon: Gauge,      prefetch: () => import('./AnalyticsWidgets/MomentumPulse') },
+        { id: 'smart-mood',       label: 'Smart Mood',       icon: Heart,      prefetch: () => import('./AnalyticsWidgets/SmartMoodChart') },
+        { id: 'calendar',         label: 'Daily Calendar',   icon: Calendar,   prefetch: () => import('./AnalyticsWidgets/DailyCalendarWidget') },
     ];
 
     // Idempotent prefetch: webpack/vite cache the dynamic import promise,
@@ -73,19 +91,26 @@ export const Sidebar = () => {
             </div>
             
             <nav className={styles.nav}>
-                {menuItems.map(item => (
-                    <button
-                        key={item.id}
-                        className={styles.navItem}
-                        onClick={() => scrollTo(item)}
-                        onMouseEnter={() => handlePrefetch(item)}
-                        onFocus={() => handlePrefetch(item)}
-                        title={item.label}
-                    >
-                        <span className={styles.icon}><item.icon size={16} strokeWidth={2.5} /></span>
-                        {!collapsed && <span className={styles.label}>{item.label}</span>}
-                    </button>
-                ))}
+                {menuItems.map((item, i) => {
+                    if (item.divider) {
+                        return !collapsed
+                            ? <div key={`div-${i}`} className={styles.navDivider} />
+                            : <div key={`div-${i}`} className={styles.navDivider} style={{ margin: '4px 4px' }} />;
+                    }
+                    return (
+                        <button
+                            key={item.id}
+                            className={styles.navItem}
+                            onClick={() => scrollTo(item)}
+                            onMouseEnter={() => handlePrefetch(item)}
+                            onFocus={() => handlePrefetch(item)}
+                            title={item.label}
+                        >
+                            <span className={styles.icon}><item.icon size={15} strokeWidth={2.2} /></span>
+                            {!collapsed && <span className={styles.label}>{item.label}</span>}
+                        </button>
+                    );
+                })}
             </nav>
 
             <div className={styles.footer}>

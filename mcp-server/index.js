@@ -18,10 +18,10 @@ app.use(cors({
 
 app.get('/mcp', (req, res) => {
     res.json({
-        name: "Trade View Dashboard MCP — v2",
-        version: "2.0.0",
+        name: "Trade View Dashboard MCP — v3",
+        version: "3.0.0",
         status: "Online",
-        tools_count: 22,
+        tools_count: 23,
         streams: ["A:MACRO", "B:SCOUT", "C:ALERT", "D:REALTIME"],
         endpoints: { sse: "/mcp/sse", message: "/mcp/message", health: "/mcp/health" },
         transport: "sse"
@@ -217,10 +217,24 @@ function createMcpServer() {
                 inputSchema: { type: "object", properties: {} }
             },
 
+            // ── STREAM D METRICS (RSI / RVOL / ATR / EMA-DIST) ───────────────
+            {
+                name: "get_coin_metrics",
+                description: "*** PRIMARY TOOL FOR RSI, RVOL, ATR, EMA-DISTANCE QUERIES ***\n\nReads from coin_metric_history — the authoritative Stream D rolling table (2-min buckets, 8h window). Returns RSI m5/m15/m30/h1, RVOL m15/h1, ATR% m15/h1/h4, and EMA200 distance% m1–h4 (positive = price above EMA).\n\nIncludes a pre-computed rsi_cascade field: MULTI_TF_OVERSOLD | MULTI_TF_OVERBOUGHT | BEAR_RSI_CASCADE | BULL_RSI_CASCADE | OVERSOLD_15M | OVERBOUGHT_15M | NEUTRAL.\n\nCRITICAL: Do NOT use unified_alerts.rsi_matrix or stream_c_state.rsi_matrix for RSI — those are Stream C snapshot values frozen at alert time. This table is the ONLY correct RSI source.\n\nUse get_stream_d_matrix for raw EMA cascade price values (for stacking direction). Use this tool for zone/threshold RSI queries.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        ticker:      { type: "string", description: "Optional. e.g. BTCUSDT.P — omit to get all active coins" },
+                        hours:       { type: "number", description: "Lookback window in hours (default 0.5, max 8). Table is pruned beyond 8h." },
+                        latest_only: { type: "boolean", description: "true (default) = one row per ticker (current state). false = full time-series for one ticker (requires ticker param)." }
+                    }
+                }
+            },
+
             // ── POWER TOOLS ──────────────────────────────────────────────────
             {
                 name: "query_technical_filters",
-                description: "Multi-criteria filter across the latest scan. Supports: RSI by timeframe (m5/m15/m30/h1/h4), EMA200 price position (above/below by TF), smart level proximity + confluence count, 26-column macro flags (breakout/volSpike/momScore), volume filter, and 24h change %. Combine criteria to find setups like 'RSI < 45 on h1 AND price > 1H EMA200 AND within 2% of any smart level'.",
+                description: "Multi-criteria filter across active coins. RSI filter reads from coin_metric_history (Stream D — correct). Supports: RSI by timeframe (m5/m15/m30/h1), EMA200 price position (above/below by TF), smart level proximity + confluence count, 26-column macro flags (breakout/volSpike/momScore), volume filter, and 24h change %. Combine criteria to find setups like 'RSI < 35 on m15 AND within 2% of any smart level'.",
                 inputSchema: {
                     type: "object",
                     properties: {
@@ -389,6 +403,7 @@ function createMcpServer() {
                     volume:        args?.volume,
                     change_pct:    args?.change_pct,
                 }); break;
+                case 'get_coin_metrics':        result = await tools.getCoinMetrics(args || {}); break;
                 case 'get_database_schema':     result = await tools.getDatabaseSchema(); break;
                 case 'run_readonly_sql_query':  result = await tools.runReadonlySqlQuery(args.query); break;
 
@@ -429,6 +444,6 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.log(`🚀 MCP Express Server v2 running on HTTP!`);
     console.log(`👉 SSE endpoint: http://localhost:${PORT}/mcp/sse`);
-    console.log(`📡 22 tools registered across 4 stream sources (A/B/C/D)`);
+    console.log(`📡 23 tools registered across 4 stream sources (A/B/C/D)`);
     console.log(`🌐 Tailscale: route Funnel to localhost:${PORT}`);
 });

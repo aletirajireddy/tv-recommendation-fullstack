@@ -20,16 +20,19 @@ export const CASCADE_SERIES_DEFAULTS = {
 export function checkCascade(emas, seriesTFs, threshold = 0.2) {
     if (!emas || !seriesTFs || seriesTFs.length < 2) return 'neutral';
     let isBull = true, isBear = true;
+    let validPairs = 0;
     for (let i = 0; i < seriesTFs.length - 1; i++) {
         const emaLonger  = emas[seriesTFs[i]];
         const emaShorter = emas[seriesTFs[i + 1]];
-        if (!emaLonger || !emaShorter || emaLonger === 0) return 'neutral';
+        // Skip pairs where either TF has no data yet — don't let missing TFs
+        // invalidate pairs that DO have data.
+        if (!emaLonger || !emaShorter || emaLonger === 0) continue;
+        validPairs++;
         const pctDiff = ((emaShorter - emaLonger) / emaLonger) * 100;
-        // Bull: each shorter-TF EMA must be >= longer (within threshold)
         if (pctDiff < -threshold) isBull = false;
-        // Bear: each shorter-TF EMA must be <= longer (within threshold)
         if (pctDiff >  threshold) isBear = false;
     }
+    if (validPairs === 0) return 'neutral'; // no usable data at all
     if (isBull && !isBear) return 'bull';
     if (isBear && !isBull) return 'bear';
     return 'neutral';
@@ -40,13 +43,16 @@ export function checkCascade(emas, seriesTFs, threshold = 0.2) {
 // exceeds the coin's ATR(15m) in price terms — filters out noise moves.
 export function passesAtrGate(emas, shortSeries, atrs, price) {
     if (!shortSeries || shortSeries.length === 0) return false;
-    const atr15Pct  = atrs?.m15 || 0;
-    const atrPrice  = (price || 1) * (atr15Pct / 100);
     const emaFirst  = emas?.[shortSeries[0]];
     const emaLast   = emas?.[shortSeries[shortSeries.length - 1]];
-    if (!emaFirst || !emaLast) return false;
-    const gap = Math.abs(emaFirst - emaLast);
-    return gap > atrPrice;
+    // If EMA data is missing for the short series, pass the gate — we have a
+    // cascade direction signal but can't measure the gap, so don't suppress it.
+    if (!emaFirst || !emaLast) return true;
+    const atr15Pct = atrs?.m15 || 0;
+    // If ATR data is missing, pass the gate — no noise floor to compare against.
+    if (!atr15Pct) return true;
+    const atrPrice = (price || 1) * (atr15Pct / 100);
+    return Math.abs(emaFirst - emaLast) > atrPrice;
 }
 
 // ─── Classify a single board coin into one of 5 groups ────────────────────────

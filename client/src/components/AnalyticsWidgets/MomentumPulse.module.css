@@ -1,0 +1,209 @@
+/* ─── Widget shell ─────────────────────────────────────────────────────── */
+.widget {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* ─── Header ───────────────────────────────────────────────────────────── */
+.header { display: flex; flex-direction: column; gap: 6px; }
+.titleRow { display: flex; align-items: center; justify-content: space-between; }
+.titleIcon { display: flex; align-items: center; }
+.titleText { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; color: var(--text-main); }
+.titleSub  { font-size: 9px; color: var(--text-muted); letter-spacing: 0.4px; margin-left: 6px; }
+
+.iconBtn {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 3px 5px;
+    display: flex;
+    align-items: center;
+}
+.iconBtn:hover { color: var(--text-main); }
+
+/* ─── Filter row ────────────────────────────────────────────────────────── */
+.filterRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.filterChip {
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: none;
+    color: var(--text-muted);
+    font-size: 9px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.filterChip:hover { color: var(--text-main); border-color: rgba(255,255,255,0.2); }
+.filterActive {
+    background: rgba(99,179,237,0.15);
+    border-color: rgba(99,179,237,0.5);
+    color: #63b3ed;
+}
+
+.hint {
+    font-size: 8px;
+    color: var(--text-muted);
+    margin-left: auto;
+    cursor: help;
+    opacity: 0.7;
+}
+
+/* ─── States ───────────────────────────────────────────────────────────── */
+.loading, .error, .empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 160px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.error { color: #fc8181; }
+
+.spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.08);
+    border-top-color: #63b3ed;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── Table ─────────────────────────────────────────────────────────────── */
+.tableWrap {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 420px;
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 5px;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-panel);
+}
+
+.table th {
+    padding: 5px 7px;
+    text-align: right;
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    white-space: nowrap;
+    user-select: none;
+}
+.table th:first-child { text-align: left; }
+
+.thCoin { text-align: left !important; min-width: 56px; }
+.thSignal { text-align: left !important; min-width: 90px; }
+
+.thSort {
+    cursor: pointer;
+}
+.thSort:hover { color: var(--text-main); }
+.thActive { color: #63b3ed !important; }
+
+/* ─── Rows ──────────────────────────────────────────────────────────────── */
+.row {
+    cursor: pointer;
+    transition: background 0.1s;
+    background: var(--sig-bg, transparent);
+}
+.row:hover { background: rgba(255,255,255,0.04); }
+.row td {
+    padding: 5px 7px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    white-space: nowrap;
+}
+
+.tdCoin { text-align: left; }
+.coinName {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-main);
+    letter-spacing: 0.3px;
+}
+
+.tdSignal { text-align: left; }
+.signalBadge {
+    display: inline-block;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid;
+    white-space: nowrap;
+}
+
+.tdNum {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+}
+
+/* ─── Persist bar ───────────────────────────────────────────────────────── */
+.persistWrap {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 60px;
+    justify-content: flex-end;
+}
+.persistTrack {
+    width: 36px;
+    height: 5px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.persistFill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+.persistN {
+    font-size: 9px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 14px;
+    text-align: right;
+}
+
+/* ─── Footer legend ─────────────────────────────────────────────────────── */
+.legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 3px 4px;
+    font-size: 8px;
+    color: var(--text-muted);
+    border-top: 1px solid rgba(255,255,255,0.04);
+    margin-top: 2px;
+}

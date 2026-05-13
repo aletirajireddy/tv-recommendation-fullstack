@@ -5,10 +5,89 @@
     border-radius: 10px;
     display: flex;
     flex-direction: column;
-    min-height: 480px;
+    min-height: 420px;
     overflow: hidden;
     position: relative;
 }
+
+/* ─── Settings overlay ──────────────────────────────────────────────────────── */
+.settingsOverlay {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    border-radius: 10px 10px 0 0;
+    padding: 12px 14px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.settingsHeader { display: flex; align-items: center; justify-content: space-between; }
+.settingsTitle  { font-size: 11px; font-weight: 700; color: var(--text-main); letter-spacing: 0.4px; }
+.settingsClose  { background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 2px 5px; }
+.settingsClose:hover { color: var(--text-main); }
+.settingsSection { display: flex; flex-direction: column; gap: 5px; }
+.settingsSectionLabel { font-size: 10px; color: var(--text-muted); font-weight: 600; }
+.tfRow { display: flex; gap: 4px; flex-wrap: wrap; }
+.tfBtn {
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 9px;
+    transition: all 0.15s;
+}
+.tfBtn:hover     { background: rgba(255,255,255,0.07); color: var(--text-main); }
+.tfBtnLong    { background: rgba(99,179,237,0.15);  border-color: rgba(99,179,237,0.45);  color: #63b3ed; }
+.tfBtnShort   { background: rgba(246,173,85,0.15);  border-color: rgba(246,173,85,0.4);   color: #f6ad55; }
+.tfBtnBlocked { background: transparent; border-color: rgba(252,129,129,0.25); color: rgba(252,129,129,0.4); cursor: not-allowed; opacity: 0.5; }
+.threshInput {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-main);
+    font-size: 10px;
+    padding: 2px 5px;
+    width: 48px;
+    text-align: center;
+}
+.validationErrors {
+    background: rgba(252,129,129,0.08);
+    border: 1px solid rgba(252,129,129,0.25);
+    border-radius: 4px;
+    color: #fc8181;
+    display: flex; flex-direction: column;
+    font-size: 10px; gap: 3px; padding: 6px 8px;
+}
+.validationWarnings {
+    background: rgba(246,173,85,0.08);
+    border: 1px solid rgba(246,173,85,0.25);
+    border-radius: 4px;
+    color: #f6ad55;
+    display: flex; flex-direction: column;
+    font-size: 10px; gap: 3px; padding: 6px 8px;
+}
+.settingsActions  { display: flex; gap: 5px; justify-content: flex-end; }
+.settingsResetBtn {
+    background: transparent; border: 1px dashed var(--border); border-radius: 4px;
+    color: var(--text-muted); cursor: pointer; font-size: 10px; margin-right: auto; padding: 3px 8px;
+}
+.settingsResetBtn:hover  { color: var(--text-main); border-color: var(--text-muted); }
+.settingsCancelBtn {
+    background: transparent; border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text-muted); cursor: pointer; font-size: 10px; padding: 3px 10px;
+}
+.settingsCancelBtn:hover { color: var(--text-main); }
+.settingsApplyBtn {
+    align-items: center; background: rgba(99,179,237,0.15); border: 1px solid rgba(99,179,237,0.4);
+    border-radius: 4px; color: #63b3ed; cursor: pointer; display: flex; font-size: 10px;
+    font-weight: 600; gap: 4px; padding: 3px 10px;
+}
+.settingsApplyBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ─── Header ───────────────────────────────────────────────────────────────── */
 .header {
@@ -19,168 +98,214 @@
     flex-direction: column;
     gap: 8px;
 }
-
 .titleRow {
     display: flex;
     align-items: center;
     justify-content: space-between;
 }
-.titleText {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--text-main);
-    letter-spacing: 0.5px;
-}
-.titleSub {
-    font-size: 10px;
-    color: var(--text-muted);
-    font-weight: 400;
-    letter-spacing: 0.3px;
-}
-
+.titleText { font-size: 13px; font-weight: 700; color: var(--text-main); letter-spacing: 0.5px; }
+.titleSub  { font-size: 10px; color: var(--text-muted); font-weight: 400; letter-spacing: 0.3px; }
 .iconBtn {
-    background: rgba(0,0,0,0.04);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: 13px;
-    line-height: 1;
-    padding: 4px 8px;
+    background: rgba(0,0,0,0.04); border: 1px solid var(--border); border-radius: 5px;
+    color: var(--text-muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 4px 8px;
     transition: color 0.15s, background 0.15s;
 }
-.iconBtn:hover {
-    color: var(--text-main);
-    background: rgba(255,255,255,0.08);
-}
+.iconBtn:hover { color: var(--text-main); background: rgba(255,255,255,0.08); }
 
-/* ─── Filter group row ──────────────────────────────────────────────────────── */
-.filterRow {
-    display: flex;
-    gap: 5px;
-    flex-wrap: wrap;
-}
+/* ─── Filter row ────────────────────────────────────────────────────────────── */
+.filterRow { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.filterLabel { color: var(--text-muted); font-size: 9px; font-weight: 600; letter-spacing: 0.4px; white-space: nowrap; }
+.clauseToggle { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.clauseBtn { background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 9px; font-weight: 700; padding: 3px 6px; transition: all 0.15s; }
+.clauseActive { background: rgba(167,139,250,0.2); color: #a78bfa; }
+.matchCount { color: var(--text-muted); font-size: 9px; margin-left: auto; white-space: nowrap; }
 .filterBtn {
-    background: var(--border);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 3px 9px;
-    transition: all 0.15s;
-    letter-spacing: 0.3px;
+    background: var(--border); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text-muted); cursor: pointer; font-size: 10px; font-weight: 600;
+    padding: 3px 9px; transition: all 0.15s; letter-spacing: 0.3px;
 }
-.filterBtn:hover { background: rgba(255,255,255,0.07); color: var(--text-main); }
-.filterActive {
-    background: rgba(99,179,237,0.15);
-    border-color: rgba(99,179,237,0.45);
-    color: #63b3ed;
-}
+.filterBtn:hover  { background: rgba(255,255,255,0.07); color: var(--text-main); }
+.filterActive { background: rgba(99,179,237,0.15); border-color: rgba(99,179,237,0.45); color: #63b3ed; }
 
-/* ─── Controls row ─────────────────────────────────────────────────────────── */
-.controlsRow {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-}
-.controlGroup {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
+/* ─── Controls row ──────────────────────────────────────────────────────────── */
+.controlsRow { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .pill {
-    background: var(--border);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: 10px;
-    padding: 3px 7px;
-    transition: all 0.15s;
+    background: var(--border); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text-muted); cursor: pointer; font-size: 10px; padding: 3px 7px; transition: all 0.15s;
 }
-.pill:hover { background: rgba(255,255,255,0.07); color: var(--text-main); }
-.pillActive {
-    background: rgba(246,173,85,0.15);
-    border-color: rgba(246,173,85,0.4);
-    color: #f6ad55;
+.pill:hover   { background: rgba(255,255,255,0.07); color: var(--text-main); }
+.pillActive   { background: rgba(246,173,85,0.15); border-color: rgba(246,173,85,0.4); color: #f6ad55; }
+
+/* ─── Board area ────────────────────────────────────────────────────────────── */
+.boardArea {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
 }
 
-/* ─── Active coin chips ─────────────────────────────────────────────────────── */
-.coinChips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    align-items: center;
+/* ─── Candle grid ───────────────────────────────────────────────────────────── */
+.candleGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+    gap: 8px;
+    padding: 10px;
 }
-.coinChip {
-    background: transparent;
+
+/* ─── Individual candle card ────────────────────────────────────────────────── */
+.candleCard {
+    background: rgba(255,255,255,0.02);
     border: 1px solid;
-    border-radius: 4px;
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 9px;
+    transition: background 0.12s;
+    overflow: hidden;
+}
+.candleCard:hover { background: rgba(255,255,255,0.045); }
+
+/* Card header */
+.candleHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 7px 3px;
+}
+.candleTicker {
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.4px;
-    padding: 2px 6px;
-    transition: opacity 0.15s, background 0.15s;
 }
-.coinChip:hover { opacity: 0.75; }
-.coinChipPinned { background: rgba(255,255,255,0.07); }
-.clearPinBtn {
-    background: transparent;
-    border: 1px dashed rgba(252,129,129,0.4);
-    border-radius: 4px;
-    color: #fc8181;
-    cursor: pointer;
-    font-size: 9px;
-    padding: 2px 6px;
-    transition: background 0.15s;
-}
-.clearPinBtn:hover { background: rgba(252,129,129,0.08); }
-
-/* ─── Chart area ────────────────────────────────────────────────────────────── */
-.chartArea {
-    flex: 1;
-    min-height: 280px;
-    padding: 8px 4px 0;
-}
-
-/* ─── Tooltip ───────────────────────────────────────────────────────────────── */
-.tooltip {
-    background: var(--bg-panel);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    font-size: 11px;
-    padding: 8px 10px;
-}
-.tooltipTime {
-    color: var(--text-muted);
-    font-size: 10px;
-    margin-bottom: 5px;
-}
-.tooltipRow {
-    align-items: center;
+.candleRight {
     display: flex;
-    gap: 6px;
-    padding: 1px 0;
+    align-items: center;
+    gap: 4px;
 }
-.tooltipDot {
-    border-radius: 50%;
-    flex-shrink: 0;
-    height: 6px;
-    width: 6px;
-}
-.tooltipTicker {
-    color: var(--text-main);
-    flex: 1;
-    font-weight: 700;
-}
-.tooltipVal {
+.atrMini {
+    font-size: 8px;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
+}
+.counterChip {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+.counterBull { background: rgba(104,211,145,0.15); color: #68D391; }
+.counterBear { background: rgba(252,129,129,0.15); color: #FC8181; }
+
+/* ─── Candle visualization area ─────────────────────────────────────────────── */
+.candleViz {
+    position: relative;
+    height: 190px;
+    margin: 0 6px 6px;
+}
+
+/* Center stick — thin vertical bar spanning full range */
+.cStick {
+    position: absolute;
+    left: calc(50% - 1px);
+    width: 2px;
+    background: rgba(255,255,255,0.10);
+    border-radius: 1px;
+}
+
+/* Short-series wick — 5m+1m merged range, slightly wider, purple tint */
+.cWick {
+    position: absolute;
+    left: calc(50% - 3px);
+    width: 6px;
+    background: rgba(167,139,250,0.35);
+    border-radius: 2px;
+}
+
+/* Body — rectangle from 1h EMA200 to current price */
+.cBody {
+    position: absolute;
+    left: 22%;
+    width: 56%;
+    border: 1px solid;
+    border-radius: 2px;
+}
+
+/* ─── EMA level rows ─────────────────────────────────────────────────────────── */
+/* Each row is absolutely positioned and centered on its EMA price level */
+.emaRow {
+    position: absolute;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    transform: translateY(-50%);
+    z-index: 3;
+    pointer-events: none;
+}
+
+.tfLbl {
+    font-size: 8px;
+    font-weight: 700;
+    white-space: nowrap;
+    min-width: 20px;
+    text-align: right;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+/* Solid or dashed EMA line — flex:1 fills between labels */
+.emaLine {
+    flex: 1;
+    border-top-width: 1px;
+    min-width: 0;
+}
+
+.distLbl {
+    font-size: 8px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+/* ─── Gap label — % distance between adjacent levels (right-aligned, midpoint) ─ */
+.gapLbl {
+    position: absolute;
+    right: 5px;
+    transform: translateY(-50%);
+    font-size: 7px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.22);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.2px;
+    z-index: 4;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+/* ─── Price line row ─────────────────────────────────────────────────────────── */
+.priceRow {
+    position: absolute;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    transform: translateY(-50%);
+    z-index: 5;
+    pointer-events: none;
+}
+.pLbl {
+    font-size: 8px;
+    font-weight: 800;
+    color: #fff;
+    min-width: 20px;
+    text-align: right;
+    flex-shrink: 0;
+    line-height: 1;
+}
+.priceLine {
+    flex: 1;
+    border-top: 2px solid rgba(255,255,255,0.85);
 }
 
 /* ─── Footer ────────────────────────────────────────────────────────────────── */
@@ -194,26 +319,17 @@
     padding: 5px 14px;
     flex-shrink: 0;
 }
-.footerDot { color: #f6ad55; }
 
-/* ─── Loading / empty ───────────────────────────────────────────────────────── */
+/* ─── Empty / loading ───────────────────────────────────────────────────────── */
 .emptyState {
-    align-items: center;
-    color: #4a5568;
-    display: flex;
-    flex-direction: column;
-    font-size: 12px;
-    gap: 10px;
-    height: 100%;
-    justify-content: center;
-    min-height: 200px;
+    align-items: center; color: #4a5568; display: flex; flex-direction: column;
+    font-size: 12px; gap: 10px; height: 100%; justify-content: center; min-height: 200px;
 }
 .spinner {
     animation: spin 0.8s linear infinite;
     border: 2px solid rgba(255,255,255,0.08);
     border-radius: 50%;
     border-top-color: #f6ad55;
-    height: 22px;
-    width: 22px;
+    height: 22px; width: 22px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }

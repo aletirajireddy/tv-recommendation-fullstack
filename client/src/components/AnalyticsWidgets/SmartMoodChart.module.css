@@ -1,0 +1,150 @@
+/* ─── Widget shell ─────────────────────────────────────────────────────── */
+.widget {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* ─── Header ───────────────────────────────────────────────────────────── */
+.header { display: flex; flex-direction: column; gap: 6px; }
+.titleRow { display: flex; align-items: center; justify-content: space-between; }
+.titleIcon { display: flex; align-items: center; }
+.titleText { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; color: var(--text-main); }
+.titleSub  { font-size: 9px; color: var(--text-muted); letter-spacing: 0.4px; margin-left: 6px; }
+.refreshBtn {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 3px 5px;
+    display: flex;
+    align-items: center;
+}
+.refreshBtn:hover { color: var(--text-main); }
+
+.controlsRow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.controlGroup { display: flex; align-items: center; gap: 4px; }
+.controlLabel { font-size: 9px; color: var(--text-muted); letter-spacing: 0.4px; margin-right: 2px; }
+
+.pill {
+    padding: 2px 7px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: none;
+    color: var(--text-muted);
+    font-size: 9px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.pill:hover { color: var(--text-main); }
+.pillActive { background: rgba(99,179,237,0.15); border-color: rgba(99,179,237,0.5); color: #63b3ed; }
+
+.liveDot {
+    font-size: 9px;
+    color: #68d391;
+    letter-spacing: 0.5px;
+    animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* ─── Stats strip ──────────────────────────────────────────────────────── */
+.statsStrip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 8px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 5px;
+    border: 1px solid rgba(255,255,255,0.04);
+    flex-wrap: wrap;
+}
+.statBlock { display: flex; flex-direction: column; align-items: center; min-width: 30px; }
+.statLabel { font-size: 8px; color: var(--text-muted); letter-spacing: 0.5px; }
+.statValue { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.statSub   { font-size: 8px; letter-spacing: 0.4px; }
+.statDivider { width: 1px; height: 24px; background: rgba(255,255,255,0.07); flex-shrink: 0; }
+
+.shiftGroup { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-left: auto; }
+.shiftChip {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 9px;
+    border: 1px solid;
+    border-radius: 10px;
+    padding: 2px 7px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ─── Chart area ───────────────────────────────────────────────────────── */
+.chartWrap { position: relative; min-height: 260px; }
+.loading, .error, .empty {
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px; height: 260px; font-size: 11px; color: var(--text-muted);
+}
+.spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.08);
+    border-top-color: #63b3ed;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── Tooltip ──────────────────────────────────────────────────────────── */
+.tooltip {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 11px;
+    font-size: 11px;
+    color: var(--text-main);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+    min-width: 170px;
+    max-width: 260px;
+}
+.tooltipTime { color: var(--text-muted); font-size: 9px; margin-bottom: 5px; }
+.tooltipRow  { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.tooltipLabel { font-size: 9px; color: var(--text-muted); min-width: 40px; }
+.tooltipBadge {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    margin-left: auto;
+}
+.tooltipSection { margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(255,255,255,0.06); }
+.tooltipSectionLabel { font-size: 8px; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 4px; }
+.coinPillRow { display: flex; flex-wrap: wrap; gap: 4px; }
+.coinPill {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 9px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid;
+    font-variant-numeric: tabular-nums;
+}
+.srcTag {
+    font-size: 7px;
+    opacity: 0.7;
+    font-weight: 400;
+    margin-left: 1px;
+}
+.strTag {
+    font-size: 8px;
+    opacity: 0.8;
+    margin-left: 1px;
+}
+
+/* ─── Legend ───────────────────────────────────────────────────────────── */
+.legend { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 2px 4px; }
+.legendItem { display: flex; align-items: center; font-size: 9px; color: var(--text-muted); }

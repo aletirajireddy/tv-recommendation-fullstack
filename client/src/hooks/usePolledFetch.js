@@ -39,9 +39,10 @@ export function usePolledFetch(fetcher, {
     invalidateOn = null, // external signal: when this value changes, do a silent reload
     initialData = null,  // caller can pass [] for array endpoints to avoid null-check boilerplate
 } = {}) {
-    const [data, setData]       = useState(initialData);
-    const [loading, setLoading] = useState(true);
-    const [error, setError]     = useState(null);
+    const [data, setData]             = useState(initialData);
+    const [loading, setLoading]       = useState(true);
+    const [error, setError]           = useState(null);
+    const [lastFetchedAt, setLastFetchedAt] = useState(null);
 
     // Ref pattern — fetcher closure can change every render without
     // recreating the polling interval.
@@ -75,7 +76,10 @@ export function usePolledFetch(fetcher, {
             }
             if (!mountedRef.current || ctrl.signal.aborted) return;
             if (payload?.error) setError(payload.error);
-            else setData(prev => JSON.stringify(prev) === JSON.stringify(payload) ? prev : payload);
+            else {
+                setData(prev => JSON.stringify(prev) === JSON.stringify(payload) ? prev : payload);
+                setLastFetchedAt(Date.now());
+            }
         } catch (e) {
             if (e.name === 'AbortError') return;          // expected on unmount/dep-change
             if (!mountedRef.current) return;
@@ -142,7 +146,7 @@ export function usePolledFetch(fetcher, {
         };
     }, [intervalMs, pauseOnHidden, refetchOnVisible, reloadSilent]);
 
-    return { data, loading, error, reload, reloadSilent };
+    return { data, loading, error, reload, reloadSilent, lastFetchedAt };
 }
 
 export default usePolledFetch;

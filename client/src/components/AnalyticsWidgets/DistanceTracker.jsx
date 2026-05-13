@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, lazy, Suspense } from 'react';
+import { FreshnessChip } from '../FreshnessChip';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
@@ -153,7 +154,7 @@ export function DistanceTracker({ filterTicker, compact }) {
     const closeModal = () => setAlertPrefill(null);
 
     // Audit fix #4/#5/#6: ref-pattern poll
-    const { data, loading, error, reload, reloadSilent } = usePolledFetch(
+    const { data, loading, error, reload, reloadSilent, lastFetchedAt } = usePolledFetch(
         () => {
             const tParam = filterTicker ? `&ticker=${filterTicker}&max_dist=100` : `&max_dist=${maxDist}`;
             return `/api/ema-distance-board?limit=60${tParam}&active_min=60`;
@@ -233,9 +234,12 @@ export function DistanceTracker({ filterTicker, compact }) {
                         <span className={styles.titleText}>DISTANCE TRACKER</span>
                         <span className={styles.titleSub}>200 EMA · 1m → 4h · sortable</span>
                     </div>
-                    <button className={styles.refreshBtn} onClick={() => reload()} title="Refresh">
-                        <RefreshCw size={14} />
-                    </button>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <FreshnessChip ts={lastFetchedAt} title="Board data last fetched from server" />
+                        <button className={styles.refreshBtn} onClick={() => reload()} title="Refresh">
+                            <RefreshCw size={14} />
+                        </button>
+                    </div>
                 </div>
                 <div className={styles.controlsRow}>
                     <div className={styles.controlGroup}>

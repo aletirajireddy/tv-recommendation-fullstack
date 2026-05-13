@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import { FreshnessChip } from '../FreshnessChip';
 import {
     ComposedChart, Line, Bar, XAxis, YAxis, ReferenceLine, ReferenceDot,
     Tooltip, ResponsiveContainer, Legend,
@@ -7,7 +8,11 @@ import styles from './EMACascadeMonitor.module.css';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
-import { Zap, ChevronUp, ChevronDown, Diamond, ArrowDown, RefreshCw, Settings, AlertTriangle, XCircle, CheckCircle } from 'lucide-react';
+import { Zap, ChevronUp, ChevronDown, Diamond, ArrowDown, RefreshCw, Settings, AlertTriangle, XCircle, CheckCircle, Bell } from 'lucide-react';
+
+const SmartAlertCreateModal = lazy(() =>
+    import('../SmartAlerts/SmartAlertCreateModal').then(m => ({ default: m.SmartAlertCreateModal || m.default }))
+);
 import {
     checkCascade, passesAtrGate, validateCascadeSettings,
     loadCascadeSeries, saveCascadeSeries, resetCascadeSeries,
@@ -243,7 +248,7 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     useDataInvalidation(containerRef, reloadSilent, lastDataPush);
 
     // Fetch all active streaming coins (limit=50, 2h window)
-    const { data: boardData, reloadSilent: reloadBoardSilent } = usePolledFetch(
+    const { data: boardData, reloadSilent: reloadBoardSilent, lastFetchedAt: boardFetchedAt } = usePolledFetch(
         () => `/api/ema-distance-board?limit=50&max_dist=100&active_min=120`,
         { intervalMs: 300_000, deps: [] }
     );
@@ -253,29 +258,30 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     // longSeries / shortSeries / equalThreshold come from shared cascadeUtils settings.
     const coinsWithCascade = useMemo(() => {
         if (!boardData?.board?.length)
-            return FALLBACK_TICKERS.map(t => ({ ticker: t, cascade: 'neutral' }));
+            return FALLBACK_TICKERS.map(t => ({ ticker: t, cascade: 'neutral', shortCascade: 'neutral' }));
         return boardData.board.map(b => ({
-            ticker:  b.cleanTicker,
-            cascade: checkCascade(b.emas, longSeries, equalThreshold),
+            ticker:       b.cleanTicker,
+            cascade:      checkCascade(b.emas, longSeries,  equalThreshold),
+            shortCascade: checkCascade(b.emas, shortSeries, equalThreshold),
         }));
-    }, [boardData, longSeries, equalThreshold]);
+    }, [boardData, longSeries, shortSeries, equalThreshold]);
 
-    // Reversal candidates — short series fights the long cascade, gated by ATR(15m).
-    // Temp Bull: long series = bear, short series = bull, gap > ATR(15m)
-    // Temp Bear: long series = bull, short series = bear, gap > ATR(15m)
+    // Counter chips — ALL coins with a clear short-series direction (ATR-gated).
+    // ↗ chip: shortDir = bull (any long direction — counter-trend OR aligned)
+    // ↘ chip: shortDir = bear (any long direction)
+    // The S▲/S▼ badge in the dropdown already shows whether long and short agree.
     const reversalCoins = useMemo(() => {
         if (!boardData?.board?.length) return { tempBull: [], tempBear: [] };
         const tempBull = [], tempBear = [];
         for (const b of boardData.board) {
             if (!b.emas) continue;
-            const longDir  = checkCascade(b.emas, longSeries,  equalThreshold);
             const shortDir = checkCascade(b.emas, shortSeries, equalThreshold);
             const atrOk    = passesAtrGate(b.emas, shortSeries, b.atrs, b.price);
-            if (longDir === 'bear' && shortDir === 'bull' && atrOk) tempBull.push(b.cleanTicker);
-            if (longDir === 'bull' && shortDir === 'bear' && atrOk) tempBear.push(b.cleanTicker);
+            if (shortDir === 'bull' && atrOk) tempBull.push(b.cleanTicker);
+            if (shortDir === 'bear' && atrOk) tempBear.push(b.cleanTicker);
         }
         return { tempBull, tempBear };
-    }, [boardData, longSeries, shortSeries, equalThreshold]);
+    }, [boardData, shortSeries, equalThreshold]);
 
     // Dropdown state
     const [dropdownOpen, setDropdownOpen]   = useState(false);
@@ -396,7 +402,39 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
         [data]
     );
 
-    const stackNow       = data?.stackNow       || {};
+    // Prefer board endpoint for current EMA snapshot — uses Q1b fresh price and
+    // the same Stream D values as the Candle Wall, ensuring perfect consistency.
+    // Falls back to cascade endpoint's stackNow if the ticker isn't on the board.
+    const STACK_TTL_MS = 6 * 60 * 1000; // 6-min Stream D TTL
+    const stackNow = useMemo(() => {
+        const boardCoin = boardData?.board?.find(b => b.cleanTicker === ticker);
+        if (boardCoin?.emas) {
+            const tfs = ['m1','m5','m15','h1','h4'];
+            return Object.fromEntries(tfs.map(tf => {
+                const price = boardCoin.emas[tf];
+                if (price == null) return [tf, null];
+                const ageMs = boardCoin.ages?.[tf] ?? 0;
+                return [tf, {
+                    price,
+                    source: boardCoin.sources?.[tf] || 'STREAM_D',
+                    ageMs,
+                    stale:  ageMs > STACK_TTL_MS,
+                }];
+            }));
+        }
+        return data?.stackNow || {};
+    }, [boardData, ticker, data]);
+
+    // Distances from board — uses Q1b fresh price, consistent with Candle Wall gap labels.
+    const boardCoin = useMemo(
+        () => boardData?.board?.find(b => b.cleanTicker === ticker) || null,
+        [boardData, ticker]
+    );
+    const boardDists = boardCoin?.dists || null;
+
+    // Smart-alert modal state
+    const [alertPrefill, setAlertPrefill] = useState(null);
+
     const sourceHealth   = data?.sourceHealth   || {};
     const defense        = data?.defenseLevelNow || {};
     const lastBreak      = data?.lastBreak;
@@ -526,7 +564,8 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                         <span className={styles.titleText}>EMA CASCADE MONITOR</span>
                         <span className={styles.titleSub}>200 EMA · 1m → 4h · cascade defense</span>
                     </div>
-                    <div style={{ display: 'flex', gap: 4 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <FreshnessChip ts={boardFetchedAt} title="Board data last fetched from server" />
                         <button className={styles.refreshBtn} onClick={openSettings} title="Cascade settings">
                             <Settings size={14} />
                             {settingsValidation && settingsOpen === false && (() => {
@@ -599,13 +638,20 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                                                     styles.dotNeutral
                                                 }`} />
                                                 <span className={styles.coinItemName}>{c.ticker}</span>
-                                                {c.cascade !== 'neutral' && (
-                                                    <span className={`${styles.cascadeTag} ${
-                                                        c.cascade === 'bull' ? styles.tagBull : styles.tagBear
-                                                    }`}>
-                                                        {c.cascade === 'bull' ? '▲ BULL' : '▼ BEAR'}
-                                                    </span>
-                                                )}
+                                                <span className={`${styles.cascadeTag} ${
+                                                    c.cascade === 'bull' ? styles.tagBull :
+                                                    c.cascade === 'bear' ? styles.tagBear :
+                                                    styles.tagNeutral
+                                                }`}>
+                                                    {c.cascade === 'bull' ? '▲ L' : c.cascade === 'bear' ? '▼ L' : '— L'}
+                                                </span>
+                                                <span className={`${styles.cascadeTag} ${styles.tagShort} ${
+                                                    c.shortCascade === 'bull' ? styles.tagBull :
+                                                    c.shortCascade === 'bear' ? styles.tagBear :
+                                                    styles.tagNeutral
+                                                }`}>
+                                                    {c.shortCascade === 'bull' ? 'S▲' : c.shortCascade === 'bear' ? 'S▼' : 'S—'}
+                                                </span>
                                             </button>
                                         ))}
                                         {filteredCoins.length === 0 && (
@@ -617,31 +663,33 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                         </div>
                     )}
 
-                    {/* Reversal candidate quick-chips — developing PA only, no dropdown impact */}
-                    {(reversalCoins.tempBull.length > 0 || reversalCoins.tempBear.length > 0) && (
-                        <div className={styles.reversalChips}>
-                            {reversalCoins.tempBull.map(t => (
-                                <button
-                                    key={t}
-                                    className={`${styles.reversalChip} ${styles.chipTempBull}`}
-                                    onClick={() => setQuickTicker(t)}
-                                    title="Bear cascade · 1m+5m turning bullish"
-                                >
-                                    ↗{t}
-                                </button>
-                            ))}
-                            {reversalCoins.tempBear.map(t => (
-                                <button
-                                    key={t}
-                                    className={`${styles.reversalChip} ${styles.chipTempBear}`}
-                                    onClick={() => setQuickTicker(t)}
-                                    title="Bull cascade · 1m+5m turning bearish"
-                                >
-                                    ↘{t}
-                                </button>
-                            ))}
-                        </div>
-                    )}
+                    {/* Reversal candidate quick-chips — always visible, empty state when none qualify */}
+                    <div className={styles.reversalChips}>
+                        <span className={styles.reversalLabel}>Counter:</span>
+                        {reversalCoins.tempBull.map(t => (
+                            <button
+                                key={t}
+                                className={`${styles.reversalChip} ${styles.chipTempBull}`}
+                                onClick={() => setQuickTicker(t)}
+                                title="Bear cascade · short TF turning bullish"
+                            >
+                                ↗{t}
+                            </button>
+                        ))}
+                        {reversalCoins.tempBear.map(t => (
+                            <button
+                                key={t}
+                                className={`${styles.reversalChip} ${styles.chipTempBear}`}
+                                onClick={() => setQuickTicker(t)}
+                                title="Bull cascade · short TF turning bearish"
+                            >
+                                ↘{t}
+                            </button>
+                        ))}
+                        {reversalCoins.tempBull.length === 0 && reversalCoins.tempBear.length === 0 && (
+                            <span className={styles.reversalNone}>no counter signals</span>
+                        )}
+                    </div>
 
                     {/* Window */}
                     <div className={styles.controlGroup}>
@@ -875,17 +923,32 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                                 }
                                 const last = chartData[chartData.length - 1];
                                 const cs = last?.cascadeState?.[tf];
-                                const distPct = last?.distPct?.[tf];
+                                // Board dists use Q1b fresh price; fall back to cascade history.
+                                const distPct = boardDists?.[tf] ?? last?.distPct?.[tf];
                                 const stateClass = cs === 'ABOVE'
                                     ? styles.tfAbove
                                     : cs === 'BELOW' ? styles.tfBelow : styles.tfTesting;
+                                const canAlert = boardCoin?.price != null && s.price != null;
                                 return (
                                     <div key={tf}
-                                         className={`${styles.tfBadge} ${stateClass} ${s.stale ? styles.tfStale : ''}`}
-                                         title={`source=${s.source} · age ${ageStr(s.ageMs)}${s.stale ? ' (stale)' : ''}`}>
+                                         className={`${styles.tfBadge} ${stateClass} ${s.stale ? styles.tfStale : ''} ${canAlert ? styles.tfBadgeAlertable : ''}`}
+                                         title={canAlert
+                                            ? `Click to create smart alert · source=${s.source} · age ${ageStr(s.ageMs)}${s.stale ? ' (stale)' : ''}`
+                                            : `source=${s.source} · age ${ageStr(s.ageMs)}${s.stale ? ' (stale)' : ''}`}
+                                         onClick={canAlert ? () => setAlertPrefill({
+                                             ticker: boardCoin.ticker,
+                                             cleanTicker: ticker,
+                                             timeframe: tf,
+                                             price: boardCoin.price,
+                                             ema: s.price,
+                                             atr: boardCoin.atrs?.[tf],
+                                             distancePct: distPct,
+                                         }) : undefined}
+                                         style={canAlert ? { cursor: 'pointer' } : undefined}>
                                         <div className={styles.tfTop}>
                                             <span className={styles.tfLabel}>{TF_LABELS[tf]}</span>
                                             <span className={styles.tfState}>{cs || '—'}</span>
+                                            {canAlert && <Bell size={9} style={{ opacity: 0.4, marginLeft: 'auto' }} />}
                                         </div>
                                         <span className={styles.tfPrice}>{smartFmt(s.price)}</span>
                                         {distPct != null && (
@@ -923,6 +986,17 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                     </>
                 )}
             </div>
+
+            {alertPrefill && (
+                <Suspense fallback={null}>
+                    <SmartAlertCreateModal
+                        open={!!alertPrefill}
+                        prefill={alertPrefill}
+                        onClose={() => setAlertPrefill(null)}
+                        onCreated={() => { /* badge auto-updates via socket */ }}
+                    />
+                </Suspense>
+            )}
         </div>
     );
 }

@@ -365,74 +365,12 @@ class MasterStoreService {
             break;
         }
 
-        // ── Stream C from master_coin_store.stream_c_state (primary path) ──
-        //   Bridge confirmed: webhook handler at index.js writes the FULL alert
-        //   payload (incl. smart_levels) into stream_c_state via ingestStreamC.
-        //   Single source of truth — no cross-join to smart_level_events needed.
-        //   smart_level_events remains the immutable audit log; master_coin_store
-        //   is the unified read layer.
-        let resolvedTicker = dTicker;
-
-        const readSmartLevelsFromState = (rows, sourceTag) => {
-            for (const row of rows) {
-                const stateField = row.stream_c_state || row.raw_data;
-                if (!stateField) continue;
-                let parsed;
-                try { parsed = JSON.parse(stateField); } catch { continue; }
-                const e200 = parsed?.smart_levels?.emas_200 || null;
-                if (!e200) continue;
-
-                for (const tf of ['m1', 'm5', 'm15', 'h1', 'h4']) {
-                    if (tfPicks[tf]) continue;             // D already won
-                    const slot = e200[tf];
-                    if (!slot) continue;
-                    const p = slot.p ?? slot;               // {p,s} OR raw
-                    if (p == null) continue;
-                    tfPicks[tf] = buildEntry(p, sourceTag, row.timestamp);
-                }
-                if (tfPicks.m1 && tfPicks.m5 && tfPicks.m15
-                    && tfPicks.h1 && tfPicks.h4) break;
-            }
-        };
-
-        for (const v of variants) {
-            // Primary: master_coin_store (unified V4 path)
-            const mcsRows = db.prepare(
-                asOfISO
-                    ? `SELECT stream_c_state, timestamp FROM master_coin_store
-                        WHERE ticker = ? AND trigger_source = 'STREAM_C'
-                          AND stream_c_state IS NOT NULL AND timestamp <= ?
-                        ORDER BY timestamp DESC LIMIT 30`
-                    : `SELECT stream_c_state, timestamp FROM master_coin_store
-                        WHERE ticker = ? AND trigger_source = 'STREAM_C'
-                          AND stream_c_state IS NOT NULL
-                        ORDER BY timestamp DESC LIMIT 30`
-            ).all(...(asOfISO ? [v, asOfISO] : [v]));
-
-            if (mcsRows.length && !resolvedTicker) resolvedTicker = v;
-            readSmartLevelsFromState(mcsRows, 'STREAM_C');
-
-            // Backstop: smart_level_events (only if master_coin_store had no
-            // smart_levels — covers historical rows ingested before the bridge).
-            const stillMissing = ['m1','m5','m15','h1','h4'].some(tf => !tfPicks[tf]);
-            if (stillMissing) {
-                const slRows = db.prepare(
-                    asOfISO
-                        ? `SELECT raw_data, timestamp FROM smart_level_events
-                            WHERE ticker = ? AND timestamp <= ?
-                            ORDER BY id DESC LIMIT 30`
-                        : `SELECT raw_data, timestamp FROM smart_level_events
-                            WHERE ticker = ? ORDER BY id DESC LIMIT 30`
-                ).all(...(asOfISO ? [v, asOfISO] : [v]));
-                if (slRows.length && !resolvedTicker) resolvedTicker = v;
-                readSmartLevelsFromState(slRows, 'STREAM_C');
-            }
-
-            if (Object.values(tfPicks).some(Boolean)) break;
-        }
+        // Stream C EMA200 intentionally NOT used — smart_levels.emas_200 diverges
+        // from TradingView's ema_200 indicator and produces wrong cascade/distance readings.
+        // EMA200 is Stream D only. If Stream D hasn't sent a TF yet, it stays null.
 
         return {
-            ticker: resolvedTicker || t,
+            ticker: dTicker || t,
             asOf:   asOfISO || new Date(nowMs).toISOString(),
             m1:     tfPicks.m1,
             m5:     tfPicks.m5,
@@ -455,13 +393,27 @@ class MasterStoreService {
         // PERF AUDIT FIX (H2): single GROUP BY query instead of 4 separate
         // MAX scans. With idx_master_source_ticker_time the planner uses
         // a covering index lookup ~25× faster than 4 round-trips.
-        const rows = ticker
-            ? db.prepare(`SELECT trigger_source AS src, MAX(timestamp) AS ts
-                          FROM master_coin_store WHERE ticker = ?
-                          GROUP BY trigger_source`).all(ticker)
-            : db.prepare(`SELECT trigger_source AS src, MAX(timestamp) AS ts
-                          FROM master_coin_store
-                          GROUP BY trigger_source`).all();
+        let rows;
+        if (ticker) {
+            // Resolve ticker variants — DB stores BTCUSDT.P; callers may pass BTC.
+            const t = ticker.trim().toUpperCase();
+            const variants = [...new Set([
+                t,
+                `${t}USDT.P`,
+                `${t}USDT`,
+                t.replace(/USDT\.P$|USDT$/, ''),
+            ].filter(Boolean))];
+            const ph = variants.map(() => '?').join(',');
+            rows = db.prepare(
+                `SELECT trigger_source AS src, MAX(timestamp) AS ts
+                 FROM master_coin_store WHERE ticker IN (${ph})
+                 GROUP BY trigger_source`
+            ).all(...variants);
+        } else {
+            rows = db.prepare(`SELECT trigger_source AS src, MAX(timestamp) AS ts
+                               FROM master_coin_store
+                               GROUP BY trigger_source`).all();
+        }
 
         const byKey = new Map(rows.map(r => [r.src, r.ts]));
         const result = {};

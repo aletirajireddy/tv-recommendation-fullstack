@@ -392,6 +392,11 @@ db.exec(`
 `);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_cmh_ticker_ts ON coin_metric_history(ticker, ts DESC);`);
 
+// Add EMA-distance columns if upgrading from earlier schema
+['dist_m15', 'dist_h1'].forEach(col => {
+    try { db.exec(`ALTER TABLE coin_metric_history ADD COLUMN ${col} REAL`); } catch {}
+});
+
 db.exec(`CREATE INDEX IF NOT EXISTS idx_scans_timestamp ON scans(timestamp);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_smart_level_timestamp ON smart_level_events(timestamp);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_inst_interest_timestamp ON institutional_interest_events(timestamp);`);

@@ -85,8 +85,18 @@ function _extractStreamDField(data, pattern, resolutionMin) {
 function _bucket2min(tsMs) { return Math.floor(tsMs / 120000) * 120000; }
 
 const _insertCoinMetric = db.prepare(`
-    INSERT OR REPLACE INTO coin_metric_history (ticker, ts, atr_m15, atr_h1, rvol_m15, rvol_h1)
-    VALUES (@ticker, @ts, @atr_m15, @atr_h1, @rvol_m15, @rvol_h1)
+    INSERT OR REPLACE INTO coin_metric_history
+      (ticker, ts,
+       atr_m15, atr_h1, atr_h4,
+       rvol_m15, rvol_h1,
+       dist_m1, dist_m5, dist_m15, dist_h1, dist_h4,
+       rsi_m5, rsi_m15, rsi_m30, rsi_h1)
+    VALUES
+      (@ticker, @ts,
+       @atr_m15, @atr_h1, @atr_h4,
+       @rvol_m15, @rvol_h1,
+       @dist_m1, @dist_m5, @dist_m15, @dist_h1, @dist_h4,
+       @rsi_m5, @rsi_m15, @rsi_m30, @rsi_h1)
 `);
 const _pruneCoinMetric = db.prepare(
     `DELETE FROM coin_metric_history WHERE ts < ?`
@@ -95,17 +105,48 @@ const _pruneCoinMetric = db.prepare(
 function writeCoinMetric(ticker, tsMs, data) {
     try {
         const bucket = _bucket2min(tsMs);
-        const atr_m15  = _extractStreamDField(data, 'averagetruerangepercent_14Timeresolution', 15);
-        const atr_h1   = _extractStreamDField(data, 'averagetruerangepercent_14Timeresolution', 60);
-        const rvol_m15 = _extractStreamDField(data, 'relative_volume_at_time_Timeresolution', 15)
-                      ?? _extractStreamDField(data, 'relativevolume_liveTimeresolution', 15)
-                      ?? _extractStreamDField(data, 'relativevolumeattime_14Timeresolution', 15);
-        const rvol_h1  = _extractStreamDField(data, 'relative_volume_at_time_Timeresolution', 60)
-                      ?? _extractStreamDField(data, 'relativevolume_liveTimeresolution', 60)
-                      ?? _extractStreamDField(data, 'relativevolumeattime_14Timeresolution', 60);
-        // Only write if at least one metric is present
-        if (atr_m15 == null && atr_h1 == null && rvol_m15 == null && rvol_h1 == null) return;
-        _insertCoinMetric.run({ ticker, ts: bucket, atr_m15, atr_h1, rvol_m15, rvol_h1 });
+
+        // ATR%
+        const atr_m15 = _extractStreamDField(data, 'averagetruerangepercent_14Timeresolution', 15);
+        const atr_h1  = _extractStreamDField(data, 'averagetruerangepercent_14Timeresolution', 60);
+        const atr_h4  = _extractStreamDField(data, 'averagetruerangepercent_14Timeresolution', 240);
+
+        // Relative Volume (try multiple key variants TV has used)
+        const _rvol = (res) =>
+            _extractStreamDField(data, 'relative_volume_at_time_Timeresolution', res)
+         ?? _extractStreamDField(data, 'relativevolume_liveTimeresolution', res)
+         ?? _extractStreamDField(data, 'relativevolumeattime_14Timeresolution', res)
+         ?? _extractStreamDField(data, 'relativevolumecexTimeresolution', res);
+        const rvol_m15 = _rvol(15);
+        const rvol_h1  = _rvol(60);
+
+        // EMA 200 distances: ((price - ema200) / ema200) × 100
+        const price  = parseFloat(data.close || data.price) || null;
+        const _ema   = (res) => _extractStreamDField(data, 'ema_200Timeresolution', res);
+        const _dist  = (ema) => (price && ema) ? ((price - ema) / ema) * 100 : null;
+        const dist_m1  = _dist(_ema(1));
+        const dist_m5  = _dist(_ema(5));
+        const dist_m15 = _dist(_ema(15));
+        const dist_h1  = _dist(_ema(60));
+        const dist_h4  = _dist(_ema(240));
+
+        // RSI 14 — all 4 TFs now arriving from Stream D
+        const rsi_m5  = _extractStreamDField(data, 'relativestrengthindex_14Timeresolution', 5);
+        const rsi_m15 = _extractStreamDField(data, 'relativestrengthindex_14Timeresolution', 15);
+        const rsi_m30 = _extractStreamDField(data, 'relativestrengthindex_14Timeresolution', 30);
+        const rsi_h1  = _extractStreamDField(data, 'relativestrengthindex_14Timeresolution', 60);
+
+        // Skip entirely if nothing arrived
+        if ([atr_m15, atr_h1, rvol_m15, rvol_h1, dist_m15, dist_h1,
+             rsi_m5, rsi_m15, rsi_m30, rsi_h1].every(v => v == null)) return;
+
+        _insertCoinMetric.run({
+            ticker, ts: bucket,
+            atr_m15, atr_h1, atr_h4,
+            rvol_m15, rvol_h1,
+            dist_m1, dist_m5, dist_m15, dist_h1, dist_h4,
+            rsi_m5, rsi_m15, rsi_m30, rsi_h1,
+        });
         // Prune rows older than 8 hours (runs inline, <1ms on tiny table)
         _pruneCoinMetric.run(Date.now() - 8 * 60 * 60 * 1000);
     } catch (e) { /* non-blocking — never crash the handler */ }
@@ -1163,22 +1204,7 @@ app.get('/api/ema-cascade', (req, res) => {
                     }
                 } catch {}
             }
-            // Stream C: smart_levels.emas_200.{tf}.p
-            if (row.stream_c_state) {
-                try {
-                    const s = JSON.parse(row.stream_c_state);
-                    const e200 = s?.smart_levels?.emas_200 || null;
-                    if (e200) {
-                        for (const tf of ['m1', 'm5', 'm15', 'h1', 'h4']) {
-                            if (b.emas[tf] != null) continue;  // D already won
-                            const slot = e200[tf];
-                            if (!slot) continue;
-                            const v = parseFloat(slot.p ?? slot);
-                            if (!isNaN(v)) { b.emas[tf] = v; b.emaSrc[tf] = 'STREAM_C'; }
-                        }
-                    }
-                } catch {}
-            }
+            // Stream C EMA200 intentionally skipped — only Stream D values are trusted.
             buckets.set(key, b);
         }
 
@@ -1385,7 +1411,7 @@ app.get('/api/ema-cascade', (req, res) => {
 // GET /api/ema-distance-board?limit=40&max_dist=10[&active_min=60]
 //   Cross-coin board of distance to 200 EMA across m1/m5/m15/h1/h4.
 //   For every ticker active in master_coin_store within the last `active_min`
-//   minutes, computes the merged EMA stack (Stream D + Stream C) and returns
+//   minutes, computes the EMA stack (Stream D ONLY — Stream C intentionally excluded) and returns
 //   distance % per TF along with a synthetic "minAbsDist" sort key.
 
 // Short-TTL response cache (15 s) — collapses burst requests from multiple
@@ -1397,38 +1423,49 @@ app.get('/api/coin-metric-history', (req, res) => {
     try {
         const windowMin = Math.min(Math.max(parseInt(req.query.window_min) || 120, 15), 480);
         const sinceMs   = Date.now() - windowMin * 60 * 1000;
-        // Optional tickers filter (comma-separated)
-        const tickerParam = (req.query.tickers || '').trim();
-        const tickers = tickerParam ? tickerParam.split(',').map(t => t.trim().toUpperCase()).filter(Boolean) : [];
+        // Accept clean tickers (BTC) or full (BTCUSDT.P) — expand to all DB variants
+        const tickerParam  = (req.query.tickers || '').trim();
+        const cleanTickers = tickerParam
+            ? tickerParam.split(',').map(t => t.trim().toUpperCase()).filter(Boolean)
+            : [];
+        const expanded = cleanTickers.length > 0
+            ? [...new Set(cleanTickers.flatMap(t => {
+                const base = t.replace(/USDT(\.P)?$/i, '');
+                return [`${base}USDT.P`, `${base}USDT`, base];
+              }))]
+            : [];
 
         let rows;
-        if (tickers.length > 0) {
-            const placeholders = tickers.map(() => '?').join(',');
+        if (expanded.length > 0) {
+            const placeholders = expanded.map(() => '?').join(',');
             rows = db.prepare(
-                `SELECT ticker, ts, atr_m15, atr_h1, rvol_m15, rvol_h1
+                `SELECT ticker, ts, atr_m15, atr_h1, rvol_m15, rvol_h1, dist_m15, dist_h1
                  FROM coin_metric_history
                  WHERE ts >= ? AND ticker IN (${placeholders})
                  ORDER BY ticker, ts ASC`
-            ).all(sinceMs, ...tickers);
+            ).all(sinceMs, ...expanded);
         } else {
             rows = db.prepare(
-                `SELECT ticker, ts, atr_m15, atr_h1, rvol_m15, rvol_h1
+                `SELECT ticker, ts, atr_m15, atr_h1, rvol_m15, rvol_h1, dist_m15, dist_h1
                  FROM coin_metric_history
                  WHERE ts >= ?
                  ORDER BY ticker, ts ASC`
             ).all(sinceMs);
         }
 
-        // Group into per-ticker arrays
+        // Group by clean ticker (strip USDT.P / USDT suffix) so frontend keys match
         const result = {};
         for (const row of rows) {
-            if (!result[row.ticker]) result[row.ticker] = [];
-            result[row.ticker].push({
-                ts:      row.ts,
-                atr_m15: row.atr_m15,
-                atr_h1:  row.atr_h1,
+            const key = row.ticker.replace(/USDT(\.P)?$/i, '').toUpperCase();
+            if (!result[key]) result[key] = [];
+            result[key].push({
+                ts:       row.ts,
+                atr_m15:  row.atr_m15,
+                atr_h1:   row.atr_h1,
                 rvol_m15: row.rvol_m15,
                 rvol_h1:  row.rvol_h1,
+                dist_m15: row.dist_m15,
+                dist_h1:  row.dist_h1,
             });
         }
 
@@ -1522,20 +1559,7 @@ app.get('/api/ema-distance-board', (req, res) => {
         `).all(...tickers);
         const dByTicker = new Map(dRows.map(r => [r.ticker, r]));
 
-        // Q3 — latest STREAM_C row per ticker (carries h1/h4 smart_levels)
-        const cRows = db.prepare(`
-            SELECT m.ticker, m.timestamp, m.stream_c_state
-            FROM master_coin_store m
-            INNER JOIN (
-                SELECT ticker, MAX(timestamp) AS mx
-                FROM master_coin_store
-                WHERE trigger_source = 'STREAM_C' AND stream_c_state IS NOT NULL
-                  AND ticker IN (${placeholders})
-                GROUP BY ticker
-            ) t ON t.ticker = m.ticker AND t.mx = m.timestamp
-            WHERE m.trigger_source = 'STREAM_C'
-        `).all(...tickers);
-        const cByTicker = new Map(cRows.map(r => [r.ticker, r]));
+        // Q3 (Stream C) intentionally removed — EMA200 is sourced from Stream D only.
 
         const TFS = ['m1','m5','m15','h1','h4'];
         const TF_BY_RES = { 1: 'm1', 5: 'm5', 15: 'm15', 60: 'h1', 240: 'h4' };
@@ -1613,27 +1637,9 @@ app.get('/api/ema-distance-board', (req, res) => {
                 }
             }
 
-            // Stream C — smart_levels.emas_200 (fills h1/h4 typically)
-            const cRow = cByTicker.get(r.ticker);
-            if (cRow) {
-                let c; try { c = JSON.parse(cRow.stream_c_state); } catch { c = null; }
-                const e200 = c?.smart_levels?.emas_200;
-                if (e200) {
-                    const cTsMs = new Date(cRow.timestamp).getTime();
-                    const cAge  = nowMs - cTsMs;
-                    const cStale = cAge > (TTL.STREAM_C || 60 * 60 * 1000);
-                    for (const tf of TFS) {
-                        if (tfPicks[tf]) continue;
-                        const slot = e200[tf];
-                        if (!slot) continue;
-                        const p = slot.p ?? slot;
-                        const num = parseFloat(p);
-                        if (!isNaN(num)) {
-                            tfPicks[tf] = { price: num, source: 'STREAM_C', ts: cRow.timestamp, ageMs: cAge, stale: cStale };
-                        }
-                    }
-                }
-            }
+            // EMA200 is Stream D ONLY — Stream C smart_levels.emas_200 is intentionally
+            // not used here because its values can diverge from TradingView's ema_200
+            // indicator and produce incorrect cascade / distance readings.
 
             // Q1b result: batch price (eliminates correlated subquery)
             const px = priceByTicker.get(r.ticker);
@@ -3416,6 +3422,409 @@ setTimeout(() => {
 //
 // For each coin in the latest scan that is within ±maxDist% of a structural
 // level (support or resistance), pulls master_coin_store price history and
+// ─── RSI Grid Wall ─────────────────────────────────────────────────────────
+// Per-coin RSI "candle wall": body = cascade series TFs (e.g. 1h+30m RSI span),
+// white line = temp TF (e.g. 15m) RSI. Pullback signal = cascade active + temp near 50.
+app.get('/api/rsi-grid-wall', (req, res) => {
+    try {
+        const seriesTFsRaw  = (req.query.series_tfs  || 'h1,m30').split(',').map(s => s.trim());
+        const tempTF        = (req.query.temp_tf      || 'm15').trim();
+        const oversold      = parseFloat(req.query.oversold      ?? 30);
+        const overbought    = parseFloat(req.query.overbought     ?? 70);
+        const pullbackZone  = parseFloat(req.query.pullback_zone  ?? 5);
+
+        const TF_COL = { m5: 'rsi_m5', m15: 'rsi_m15', m30: 'rsi_m30', h1: 'rsi_h1' };
+        const validTFs  = Object.keys(TF_COL);
+        const seriesTFs = seriesTFsRaw.filter(tf => validTFs.includes(tf));
+        if (!seriesTFs.length) return res.status(400).json({ error: 'no valid series_tfs' });
+        if (!validTFs.includes(tempTF)) return res.status(400).json({ error: 'invalid temp_tf' });
+
+        const since = Date.now() - 30 * 60 * 1000;
+
+        // Latest 2 rows per ticker — row 1 = current, row 2 = previous (for direction)
+        const rows = db.prepare(`
+            WITH ranked AS (
+                SELECT ticker, ts, rsi_m5, rsi_m15, rsi_m30, rsi_h1,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY ts DESC) AS rn
+                FROM coin_metric_history
+                WHERE ts > ?
+            )
+            SELECT
+                r1.ticker, r1.ts,
+                r1.rsi_m5, r1.rsi_m15, r1.rsi_m30, r1.rsi_h1,
+                r2.rsi_m5  AS prev_m5,  r2.rsi_m15 AS prev_m15,
+                r2.rsi_m30 AS prev_m30, r2.rsi_h1  AS prev_h1
+            FROM ranked r1
+            LEFT JOIN ranked r2 ON r1.ticker = r2.ticker AND r2.rn = 2
+            WHERE r1.rn = 1
+        `).all(since);
+
+        const getZone = (v) => {
+            if (v == null) return null;
+            if (v < oversold)  return 'oversold';
+            if (v > overbought) return 'overbought';
+            return 'middle';
+        };
+
+        const CASCADE_ORDER = { BEAR_CASCADE: 0, BULL_CASCADE: 1, PARTIAL_BEAR: 2, PARTIAL_BULL: 3, NEUTRAL: 4 };
+
+        const coins = rows.map(row => {
+            const rsi     = { m5: row.rsi_m5,  m15: row.rsi_m15,  m30: row.rsi_m30,  h1: row.rsi_h1  };
+            const prevRsi = { m5: row.prev_m5, m15: row.prev_m15, m30: row.prev_m30, h1: row.prev_h1 };
+
+            if (seriesTFs.every(tf => rsi[tf] == null)) return null;
+
+            const seriesZones = seriesTFs.map(tf => getZone(rsi[tf]));
+            let cascadeState = 'NEUTRAL';
+            if (seriesZones.every(z => z === 'oversold'))    cascadeState = 'BEAR_CASCADE';
+            else if (seriesZones.every(z => z === 'overbought')) cascadeState = 'BULL_CASCADE';
+            else if (seriesZones.some(z => z === 'oversold'))    cascadeState = 'PARTIAL_BEAR';
+            else if (seriesZones.some(z => z === 'overbought'))  cascadeState = 'PARTIAL_BULL';
+
+            const tempRsi  = rsi[tempTF];
+            const prevTemp = prevRsi[tempTF];
+            const tempZone = getZone(tempRsi);
+            const tempDir  = (tempRsi == null || prevTemp == null) ? 'flat'
+                           : tempRsi > prevTemp + 0.5 ? 'up'
+                           : tempRsi < prevTemp - 0.5 ? 'down' : 'flat';
+            const prevTempZone = getZone(prevTemp);
+
+            const cascadeActive = cascadeState === 'BEAR_CASCADE' || cascadeState === 'BULL_CASCADE';
+            const pullback = cascadeActive && tempZone === 'middle'
+                          && tempRsi != null && Math.abs(tempRsi - 50) <= (pullbackZone + 5);
+
+            const clean = row.ticker.replace(/USDT\.P$|USDT$|BUSD$|USD$/, '');
+            return { ticker: row.ticker, clean, ts: row.ts, rsi, cascadeState, tempZone, tempDir, prevTempZone, pullback };
+        }).filter(Boolean);
+
+        coins.sort((a, b) => {
+            const od = (CASCADE_ORDER[a.cascadeState] ?? 5) - (CASCADE_ORDER[b.cascadeState] ?? 5);
+            return od !== 0 ? od : (b.pullback ? 1 : 0) - (a.pullback ? 1 : 0);
+        });
+
+        res.json({ coins, config: { seriesTFs, tempTF, oversold, overbought, pullbackZone } });
+    } catch (e) {
+        console.error('[RSI Grid Wall]', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ─── Momentum Pulse ────────────────────────────────────────────────────────
+// Combines Stream B (day change%, volume) with Stream D rolling history
+// (RVOL, ATR, EMA-distance) to show which coins are pushing with persistence.
+//
+// RVOL persistence = how many consecutive 2-min buckets had rvol_m15 > threshold
+// EMA distance    = price % above/below 15m EMA200 (overbought/oversold proxy)
+app.get('/api/momentum-pulse', (req, res) => {
+    try {
+        const rvolThresh  = parseFloat(req.query.rvol_thresh) || 1.2;
+        const histBuckets = Math.min(120, parseInt(req.query.hist) || 30);
+        const cutoffTs    = Date.now() - histBuckets * 2 * 60 * 1000;
+
+        // ── 1. Primary: latest Stream C state per ticker (master_coin_store) ──
+        // Stream C fires per-coin on every scan/alert cycle — fresher than Stream B's
+        // batched watchlist snapshot. Provides today_change_pct, today_volume, rsi_matrix,
+        // momentum.roc_pct. Use a 2h window so we still cover slow-moving coins.
+        const scSince = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const scRows = db.prepare(`
+            WITH ranked AS (
+                SELECT ticker, stream_c_state, timestamp, price,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) AS rn
+                FROM master_coin_store
+                WHERE stream_c_state IS NOT NULL AND timestamp > ?
+            )
+            SELECT ticker, stream_c_state, timestamp, price FROM ranked WHERE rn = 1
+        `).all(scSince);
+
+        // ── 2. Fallback: Stream B watchlist for any ticker not in Stream C ─────
+        const bRow = db.prepare(
+            `SELECT payload_json FROM market_context_logs ORDER BY id DESC LIMIT 1`
+        ).get();
+        const bWatchlist = bRow
+            ? (JSON.parse(bRow.payload_json || '{}').watchlist_active_snapshot || [])
+            : [];
+        const bMap = new Map(bWatchlist.map(w => [w.short, w]));
+
+        // ── 3. Parse Stream C into a unified coin map ─────────────────────────
+        // Stream C provides ONLY: today_change_pct, today_volume, price, rocPct.
+        // All RSI and EMA values come exclusively from Stream D (coin_metric_history).
+        const coinMap = new Map();
+        for (const row of scRows) {
+            let sc = {};
+            try { sc = JSON.parse(row.stream_c_state); } catch {}
+            coinMap.set(row.ticker, {
+                price:     parseFloat(sc.price || row.price) || null,
+                changePct: parseFloat(sc.today_change_pct)   || 0,
+                volume:    parseFloat(sc.today_volume)        || 0,
+                rocPct:    parseFloat(sc.momentum?.roc_pct)   || 0,
+                direction: parseInt(sc.momentum?.direction)   || 0,
+                scTs: row.timestamp,
+                src: 'STREAM_C',
+            });
+        }
+        // Merge in any Stream B tickers not covered by Stream C
+        for (const w of bWatchlist) {
+            if (!coinMap.has(w.short) && w.short) {
+                coinMap.set(w.short, {
+                    price:     w.price      ?? null,
+                    changePct: w.change_pct ?? 0,
+                    volume:    w.vol_raw    ?? 0,
+                    rocPct:    0,
+                    direction: 0,
+                    scTs:      null,
+                    src: 'STREAM_B',
+                });
+            }
+        }
+
+        if (!coinMap.size) return res.json({ coins: [], ts: Date.now() });
+
+        // ── 4. Rolling coin_metric_history for RVOL + RSI + EMA dist ─────────
+        const tickers = [...coinMap.keys()];
+        const ph = tickers.map(() => '?').join(',');
+        const metricRows = db.prepare(`
+            SELECT ticker, ts, rvol_m15, atr_m15, dist_m15,
+                   rsi_m15, rsi_m30, rsi_h1
+            FROM coin_metric_history
+            WHERE ticker IN (${ph}) AND ts >= ?
+            ORDER BY ticker, ts ASC
+        `).all(...tickers, cutoffTs);
+
+        const byTicker = new Map();
+        for (const r of metricRows) {
+            if (!byTicker.has(r.ticker)) byTicker.set(r.ticker, []);
+            byTicker.get(r.ticker).push(r);
+        }
+
+        // ── 5. Per-coin signals ───────────────────────────────────────────────
+        const coins = [];
+        for (const [ticker, coinData] of coinMap) {
+            const rows   = byTicker.get(ticker) || [];
+            const latest = rows[rows.length - 1] || {};
+
+            const rvolNow = latest.rvol_m15 ?? null;
+            const atrNow  = latest.atr_m15  ?? null;
+            const distNow = latest.dist_m15  ?? null;
+            // RSI exclusively from Stream D (coin_metric_history) — no Stream C fallback
+            const rsi_m15 = latest.rsi_m15 ?? null;
+            const rsi_m30 = latest.rsi_m30 ?? null;
+            const rsi_h1  = latest.rsi_h1  ?? null;
+
+            // RVOL persistence (consecutive 2-min buckets above threshold)
+            let rvolPersist = 0;
+            for (let i = rows.length - 1; i >= 0; i--) {
+                if ((rows[i].rvol_m15 ?? 0) >= rvolThresh) rvolPersist++;
+                else break;
+            }
+
+            // RVOL trend (avg last-3 vs prev-3 buckets)
+            let rvolTrend = 'flat';
+            if (rows.length >= 6) {
+                const r3  = rows.slice(-3).map(r => r.rvol_m15 ?? 0);
+                const p3  = rows.slice(-6, -3).map(r => r.rvol_m15 ?? 0);
+                const avgR = r3.reduce((s, v) => s + v, 0) / 3;
+                const avgP = p3.reduce((s, v) => s + v, 0) / 3;
+                if (avgR > avgP * 1.2)      rvolTrend = 'rising';
+                else if (avgR < avgP * 0.8) rvolTrend = 'fading';
+            }
+
+            // EMA distance zone
+            let distState = 'neutral';
+            if      (distNow != null && distNow >  3) distState = 'extended_high';
+            else if (distNow != null && distNow >  1) distState = 'above';
+            else if (distNow != null && distNow < -3) distState = 'extended_low';
+            else if (distNow != null && distNow < -1) distState = 'below';
+            else if (distNow != null)                  distState = 'near_ema';
+
+            // Synthesised signal — now RSI-aware
+            const chg = coinData.changePct;
+            let signal = 'WATCH';
+            if      (rvolPersist >= 5 && chg > 2 && distNow != null && distNow > 1)
+                signal = 'SURGING';
+            else if (rvolPersist >= 3 && chg > 0)
+                signal = 'BUILDING';
+            else if (rsi_m15 != null && rsi_m15 < 30 && (rsi_h1 ?? 50) < 40)
+                signal = 'RSI_OS';   // multi-TF oversold cascade
+            else if (rsi_m15 != null && rsi_m15 > 70 && (rsi_h1 ?? 50) > 60)
+                signal = 'RSI_OB';   // multi-TF overbought cascade
+            else if (rvolTrend === 'fading' && distNow != null && distNow > 2)
+                signal = 'FADING';
+            else if (distNow != null && distNow > 4 && (rvolNow ?? 0) < 1)
+                signal = 'EXTENDED';
+            else if (distNow != null && distNow < -4 && (rvolNow ?? 0) < 1)
+                signal = 'STRETCHED';
+            else if (distNow != null && Math.abs(distNow) < 0.5)
+                signal = 'AT EMA';
+
+            const rvolSpark = rows.slice(-15).map(r => +(r.rvol_m15 ?? 0).toFixed(2));
+            const clean = ticker.replace(/USDT\.P$|USDT$|BUSD$|USD$/, '');
+
+            coins.push({
+                ticker, clean,
+                price:       coinData.price,
+                changePct:   +coinData.changePct.toFixed(2),
+                volume:      coinData.volume,
+                rocPct:      +coinData.rocPct.toFixed(2),
+                direction:   coinData.direction,
+                rvolNow:     rvolNow != null ? +rvolNow.toFixed(2) : null,
+                atrNow:      atrNow  != null ? +atrNow.toFixed(2)  : null,
+                distNow:     distNow != null ? +distNow.toFixed(2) : null,
+                rsi_m15:     rsi_m15 != null ? +rsi_m15.toFixed(1) : null,
+                rsi_m30:     rsi_m30 != null ? +rsi_m30.toFixed(1) : null,
+                rsi_h1:      rsi_h1  != null ? +rsi_h1.toFixed(1)  : null,
+                rvolPersist, rvolTrend, distState, signal, rvolSpark,
+                src: coinData.src,
+                scTs: coinData.scTs,
+            });
+        }
+
+        res.json({ coins, ts: Date.now(), rvolThresh });
+    } catch (e) {
+        console.error('[momentum-pulse]', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ─── Smart Mood Chart ──────────────────────────────────────────────────────
+// Aggregated market mood + breadth timeline with shift detection, volume
+// spikes and Stream C events — feeds SmartMoodChart widget.
+//
+// Query params:
+//   hours        (default 8, max 48) — history window
+//   interval_min (default 5, max 60) — bucket size in minutes
+app.get('/api/smart-mood-chart', (req, res) => {
+    try {
+        const hours       = Math.min(48, Math.max(0.5, parseFloat(req.query.hours)       || 8));
+        const intervalMin = Math.min(60, Math.max(1,   parseInt(req.query.interval_min)  || 5));
+        const sinceMs     = Date.now() - hours * 3600 * 1000;
+        const sinceIso    = new Date(sinceMs).toISOString();
+        const intervalMs  = intervalMin * 60 * 1000;
+
+        // 1. Mood + breadth from raw_market_sentiment_log
+        const moodRows = db.prepare(`
+            SELECT timestamp, raw_mood_score as mood, raw_bullish as bull, raw_bearish as bear
+            FROM raw_market_sentiment_log
+            WHERE timestamp >= ?
+            ORDER BY timestamp ASC
+        `).all(sinceIso);
+
+        // Bucket into intervalMin bins
+        const bucketMap = new Map();
+        for (const row of moodRows) {
+            const ts  = new Date(row.timestamp).getTime();
+            const key = Math.floor(ts / intervalMs) * intervalMs;
+            if (!bucketMap.has(key)) bucketMap.set(key, { ts: key, moodSum: 0, bullSum: 0, bearSum: 0, n: 0 });
+            const b = bucketMap.get(key);
+            b.moodSum += (row.mood || 0);
+            b.bullSum += (row.bull || 0);
+            b.bearSum += (row.bear || 0);
+            b.n++;
+        }
+        const timeline = [...bucketMap.values()].sort((a, b) => a.ts - b.ts).map(b => ({
+            ts:   b.ts,
+            mood: Math.round(b.moodSum / b.n),
+            bull: Math.round(b.bullSum  / b.n),
+            bear: Math.round(b.bearSum  / b.n),
+            net:  Math.round((b.bullSum - b.bearSum) / b.n),
+        }));
+
+        // 2. Shift / inflection detection
+        const shifts = [];
+        for (let i = 1; i < timeline.length; i++) {
+            const prev = timeline[i - 1];
+            const cur  = timeline[i];
+            // Net-breadth zero crossing
+            if (prev.net !== 0 && cur.net !== 0 && Math.sign(prev.net) !== Math.sign(cur.net)) {
+                shifts.push({ ts: cur.ts, type: 'net_cross', direction: cur.net > 0 ? 'bull' : 'bear', from: prev.net, to: cur.net });
+            }
+            // Mood zero crossing
+            if (prev.mood !== 0 && cur.mood !== 0 && Math.sign(prev.mood) !== Math.sign(cur.mood)) {
+                shifts.push({ ts: cur.ts, type: 'mood_cross', direction: cur.mood > 0 ? 'bull' : 'bear', from: prev.mood, to: cur.mood });
+            }
+            // Momentum reversal (second-derivative sign change with >5pt magnitude)
+            if (i >= 2) {
+                const prev2 = timeline[i - 2];
+                const d1 = prev.mood - prev2.mood;
+                const d2 = cur.mood  - prev.mood;
+                if (Math.abs(d1) > 5 && Math.abs(d2) > 5 && Math.sign(d1) !== Math.sign(d2)) {
+                    shifts.push({ ts: cur.ts, type: 'momentum_flip', direction: d2 > 0 ? 'bull' : 'bear', magnitude: Math.abs(d2) });
+                }
+            }
+        }
+
+        // 3. Volume spikes
+        const allVolEvents = db.prepare(`
+            SELECT ticker, ts, source, strength
+            FROM volume_events
+            WHERE ts >= ?
+            ORDER BY ts ASC
+            LIMIT 600
+        `).all(sinceIso).map(r => ({
+            ticker:   r.ticker,
+            ts:       typeof r.ts === 'number' ? r.ts : new Date(r.ts).getTime(),
+            source:   r.source,
+            strength: r.strength,
+            clean:    r.ticker.replace(/USDT\.P$|USDT$/, ''),
+        }));
+
+        // 4. Stream C alerts
+        const allStreamC = db.prepare(`
+            SELECT ticker, timestamp as ts, direction, roc_pct as strength, price
+            FROM smart_level_events
+            WHERE timestamp >= ?
+            ORDER BY timestamp ASC
+            LIMIT 600
+        `).all(sinceIso).map(r => ({
+            ticker:    r.ticker,
+            ts:        new Date(r.ts).getTime(),
+            direction: r.direction,
+            strength:  r.strength,
+            price:     r.price,
+            clean:     r.ticker.replace(/USDT\.P$|USDT$/, ''),
+        }));
+
+        // 5. Annotate timeline buckets with participating coin names
+        //    so the tooltip can show which coins contributed to each bucket.
+        const volByBucket  = new Map();
+        const scByBucket   = new Map();
+        for (const e of allVolEvents) {
+            const key = Math.floor(e.ts / intervalMs) * intervalMs;
+            if (!volByBucket.has(key)) volByBucket.set(key, []);
+            volByBucket.get(key).push({ clean: e.clean, source: e.source, strength: e.strength });
+        }
+        for (const e of allStreamC) {
+            const key = Math.floor(e.ts / intervalMs) * intervalMs;
+            if (!scByBucket.has(key)) scByBucket.set(key, []);
+            scByBucket.get(key).push({ clean: e.clean, direction: e.direction });
+        }
+        for (const b of timeline) {
+            const vols = volByBucket.get(b.ts) || [];
+            const scs  = scByBucket.get(b.ts)  || [];
+            // Deduplicate by coin name, keep highest-strength entry
+            const volMap = new Map();
+            for (const v of vols) {
+                if (!volMap.has(v.clean) || (v.strength || 0) > (volMap.get(v.clean).strength || 0))
+                    volMap.set(v.clean, v);
+            }
+            b.volCoins = [...volMap.values()].sort((a, b) => (b.strength || 0) - (a.strength || 0)).slice(0, 8)
+                .map(v => ({ c: v.clean, s: v.source, str: +(v.strength || 1).toFixed(2) }));
+            // Deduplicate stream C by coin
+            const scMap = new Map();
+            for (const s of scs) { if (!scMap.has(s.clean)) scMap.set(s.clean, s.direction); }
+            b.scCoins = [...scMap.entries()].slice(0, 8).map(([c, d]) => ({ c, d }));
+        }
+
+        // Keep raw overlay events for the chart markers (capped for perf)
+        const volEvents    = allVolEvents.slice(-400);
+        const streamCEvents= allStreamC.slice(-400);
+
+        res.json({ timeline, shifts, volEvents, streamCEvents, hours, intervalMin });
+    } catch (e) {
+        console.error('[smart-mood-chart]', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // returns the path normalized as % above/below the level.  Used by the new
 // LevelReactionWidget to draw swim-lane reaction charts.
 //

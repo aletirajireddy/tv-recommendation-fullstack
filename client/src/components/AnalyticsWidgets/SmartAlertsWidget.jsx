@@ -4,6 +4,7 @@
 // expand to view full state-transition history, soft-delete.
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { FreshnessChip } from '../FreshnessChip';
 import { Bell, RefreshCw, Trash2, CheckCheck, Power, ChevronDown, ChevronRight, Clock, Activity, AlertTriangle } from 'lucide-react';
 import socketService from '../../services/SocketService';
 import styles from './SmartAlertsWidget.module.css';
@@ -35,18 +36,19 @@ function timeAgo(iso) {
 }
 
 export function SmartAlertsWidget() {
-    const [tab,    setTab]    = useState('active');
-    const [data,   setData]   = useState({ alerts: [], counts: {}, unread: 0 });
-    const [loading,setLoading]= useState(true);
-    const [error,  setError]  = useState(null);
-    const [expandedId, setExpandedId] = useState(null);
+    const [tab,          setTab]         = useState('active');
+    const [data,         setData]        = useState({ alerts: [], counts: {}, unread: 0 });
+    const [loading,      setLoading]     = useState(true);
+    const [error,        setError]       = useState(null);
+    const [expandedId,   setExpandedId]  = useState(null);
+    const [lastFetchedAt, setLastFetchedAt] = useState(null);
 
     const reload = useCallback(async () => {
         try {
             const r = await fetch(`/api/smart-alerts?state=${tab}&limit=200`);
             const j = await r.json();
             if (j.error) throw new Error(j.error);
-            setData(j); setError(null);
+            setData(j); setError(null); setLastFetchedAt(Date.now());
         } catch (e) { setError(e.message); }
         finally    { setLoading(false); }
     }, [tab]);
@@ -114,9 +116,12 @@ export function SmartAlertsWidget() {
                         <span className={styles.titleText}>SMART ALERTS</span>
                         <span className={styles.titleSub}>EMA200 · ATR-normalised triggers</span>
                     </div>
-                    <button className={styles.refreshBtn} onClick={reload} title="Refresh">
-                        <RefreshCw size={14} />
-                    </button>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <FreshnessChip ts={lastFetchedAt} title="Alerts last fetched from server" />
+                        <button className={styles.refreshBtn} onClick={reload} title="Refresh">
+                            <RefreshCw size={14} />
+                        </button>
+                    </div>
                 </div>
 
                 <div className={styles.tabsRow}>

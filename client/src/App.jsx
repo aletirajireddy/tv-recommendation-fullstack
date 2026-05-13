@@ -37,6 +37,10 @@ const CoinAgeWidget             = lazy(() => import('./components/AnalyticsWidge
 const GhostCoinWidget           = lazy(() => import('./components/AnalyticsWidgets/GhostCoinWidget').then(m => ({ default: m.GhostCoinWidget })));
 const AlphaScatter              = lazy(() => import('./components/AnalyticsWidgets/AlphaScatter').then(m => ({ default: m.AlphaScatter })));
 const SmartAlertsWidget         = lazy(() => import('./components/AnalyticsWidgets/SmartAlertsWidget').then(m => ({ default: m.SmartAlertsWidget })));
+const ATRRaceWidget             = lazy(() => import('./components/AnalyticsWidgets/ATRRaceWidget').then(m => ({ default: m.ATRRaceWidget })));
+const SmartMoodChart            = lazy(() => import('./components/AnalyticsWidgets/SmartMoodChart').then(m => ({ default: m.SmartMoodChart })));
+const MomentumPulse             = lazy(() => import('./components/AnalyticsWidgets/MomentumPulse').then(m => ({ default: m.MomentumPulse })));
+const RSIGridWall               = lazy(() => import('./components/AnalyticsWidgets/RSIGridWall').then(m => ({ default: m.RSIGridWall })));
 
 function App() {
   const isLive = useTimeStore(s => s.timeline.length > 0 ? s.currentIndex === s.timeline.length - 1 : false);
@@ -130,6 +134,13 @@ function App() {
           </div>
 
 
+          {/* SECTION: ATR RACE — multi-coin ATR% / RVOL% momentum flow */}
+          <section id="section-race" className={styles.widgetSection}>
+            <LazyWidget minHeight={480}>
+              <ATRRaceWidget />
+            </LazyWidget>
+          </section>
+
           {/* SECTION: SMART ALERTS — created from DistanceTracker cell-clicks */}
           <section id="section-alerts" className={styles.widgetSection}>
             <LazyWidget minHeight={420}>
@@ -145,35 +156,35 @@ function App() {
           </section>
 
           {/* RSI DISTRIBUTION */}
-          <section className={styles.widgetSection}>
+          <section id="section-rsi-dist" className={styles.widgetSection}>
             <LazyWidget minHeight={320}>
               <RSIDistributionWidget />
             </LazyWidget>
           </section>
 
           {/* MARKET STRUCTURE (FULL WIDTH) */}
-          <section className={styles.widgetSection}>
+          <section id="section-market-structure" className={styles.widgetSection}>
             <LazyWidget minHeight={420}>
               <MarketStructureWidget />
             </LazyWidget>
           </section>
 
           {/* CONFLUENCE GRID (FULL WIDTH) */}
-          <section className={styles.widgetSection}>
+          <section id="section-confluence" className={styles.widgetSection}>
             <LazyWidget minHeight={420}>
               <ConfluenceGrid />
             </LazyWidget>
           </section>
 
           {/* ALERTS ANALYZER (FULL WIDTH) */}
-          <section className={styles.widgetSection}>
+          <section id="section-alerts-analyzer" className={styles.widgetSection}>
             <LazyWidget minHeight={420}>
               <AlertsAnalyzer />
             </LazyWidget>
           </section>
 
           {/* RECOMMENDATIONS FEED (FULL WIDTH) */}
-          <section className={styles.widgetSection}>
+          <section id="section-recommendations" className={styles.widgetSection}>
             <LazyWidget minHeight={420}>
               <RecommendationsFeed />
             </LazyWidget>
@@ -181,15 +192,36 @@ function App() {
 
           {/* INSTITUTIONAL (LIVE ONLY) */}
           {isLive && (
-            <section className={styles.widgetSection}>
+            <section id="section-coin-age" className={styles.widgetSection}>
               <LazyWidget minHeight={320}>
                 <CoinAgeWidget />
               </LazyWidget>
             </section>
           )}
 
+          {/* SECTION: RSI GRID WALL — per-coin RSI candle wall (cascade series + wick line) */}
+          <section id="section-rsi-grid" className={styles.widgetSection}>
+            <LazyWidget minHeight={360}>
+              <RSIGridWall />
+            </LazyWidget>
+          </section>
+
+          {/* SECTION: MOMENTUM PULSE — RVOL persistence × EMA distance × day change */}
+          <section id="section-momentum-pulse" className={styles.widgetSection}>
+            <LazyWidget minHeight={340}>
+              <MomentumPulse />
+            </LazyWidget>
+          </section>
+
+          {/* SECTION: SMART MOOD CHART — breadth/mood timeline with shift detection */}
+          <section id="section-smart-mood" className={styles.widgetSection}>
+            <LazyWidget minHeight={340}>
+              <SmartMoodChart />
+            </LazyWidget>
+          </section>
+
           {/* SECTION: DAILY CALENDAR (FOOTER) */}
-          <section className={styles.widgetSection} style={{ marginTop: '24px' }}>
+          <section id="section-calendar" className={styles.widgetSection} style={{ marginTop: '24px' }}>
             <LazyWidget minHeight={300}>
               <DailyCalendarWidget />
             </LazyWidget>
