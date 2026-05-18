@@ -959,11 +959,31 @@ app.post('/api/market-context', (req, res) => {
         const now = new Date().toISOString();
 
         // ── Step 1: Deduplicate & filter raw snapshot ──────────────────────────
-        const rawSnaps    = payload.watchlist_active_snapshot || [];
-        const deduped     = _deduplicateStreamB(rawSnaps);
+        const rawSnaps     = payload.watchlist_active_snapshot || [];
+        const deduped      = _deduplicateStreamB(rawSnaps);
         const rawPerpCount = rawSnaps.filter(w => w.full && w.full.endsWith('.P')).length;
         const uniqueCount  = deduped.length;
         const isOverloaded = uniqueCount > _B_MAX_COINS;
+
+        // Build the clean watchlist from THIS snapshot — the exact set of
+        // EXCHANGE:TICKER.P strings the scanner should keep after dedup.
+        // Returned in every response so the scanner can always self-correct
+        // its watchlist without waiting for a separate "fix" push.
+        const cleanWatchlist = deduped.map(({ exchange, baseSymbol }) => `${exchange}:${baseSymbol}`);
+
+        // Detect coins that were in the raw push but dropped by the gatekeeper.
+        // "Dropped" = sent by the scanner but not in the clean list.
+        const rawFullSet    = new Set(rawSnaps.map(w => w.full).filter(Boolean));
+        const cleanSet      = new Set(cleanWatchlist);
+        const rejectedTickers = [...rawFullSet].filter(f => !cleanSet.has(f));
+        const dedupApplied  = rawSnaps.length !== uniqueCount;
+
+        if (dedupApplied) {
+            console.log(
+                `[Stream B] 🧹 Dedup: raw=${rawSnaps.length} perps=${rawPerpCount} → accepted=${uniqueCount}` +
+                (rejectedTickers.length ? ` rejected=${rejectedTickers.length} (${rejectedTickers.slice(0, 5).join(', ')}${rejectedTickers.length > 5 ? '…' : ''})` : '')
+            );
+        }
 
         // Log to DB — always, even when overloaded, so we have an audit trail
         db.prepare(`
@@ -987,18 +1007,24 @@ app.post('/api/market-context', (req, res) => {
                 maxAllowed:  _B_MAX_COINS,
                 timestamp:   now,
                 message:     msg,
+                cleanWatchlist,  // give dashboard the clean list too
             });
-            // Still respond OK so the scanner script doesn't retry-spam
-            const feedback = generateScannerFeedback(uniqueCount);
             io.emit('market-context-update', { timestamp: now, counts: { screener: payload.screener_total_count, watchlist: uniqueCount }, overloaded: true });
+            // Still respond OK — include the clean list so the scanner can
+            // immediately shrink its watchlist without waiting for a manual fix.
+            const feedback = generateScannerFeedback(uniqueCount);
             return res.json({
                 success: true,
-                warning: 'OVERLOADED — qualification skipped',
-                unique_count: uniqueCount,
-                raw_count: rawSnaps.length,
-                master_targets: feedback.master_targets,
-                prune_list: feedback.prune_list,
-                new_graduates: feedback.new_graduates,
+                warning:          'OVERLOADED — qualification skipped',
+                action_required:  'RESET_WATCHLIST',  // ← scanner should apply clean_watchlist immediately
+                raw_count:        rawSnaps.length,
+                unique_count:     uniqueCount,
+                max_allowed:      _B_MAX_COINS,
+                clean_watchlist:  cleanWatchlist,      // ← exact list scanner should keep
+                rejected_tickers: rejectedTickers,     // ← what was dropped + why (spot/dup)
+                master_targets:   feedback.master_targets,
+                prune_list:       feedback.prune_list,
+                new_graduates:    feedback.new_graduates,
             });
         }
 
@@ -1018,13 +1044,17 @@ app.post('/api/market-context', (req, res) => {
         });
 
         res.json({
-            success: true,
-            message: 'Market Context Telemetry Saved',
-            unique_count: uniqueCount,
-            raw_count: rawSnaps.length,
-            master_targets: feedback.master_targets,
-            prune_list:     feedback.prune_list,
-            new_graduates:  feedback.new_graduates,
+            success:          true,
+            message:          'Market Context Telemetry Saved',
+            raw_count:        rawSnaps.length,
+            unique_count:     uniqueCount,
+            dedup_applied:    dedupApplied,           // ← true if any coins were merged/dropped
+            clean_watchlist:  cleanWatchlist,          // ← always returned — exact accepted list
+            rejected_tickers: rejectedTickers,         // ← dropped entries (spot, duplicates)
+            action_required:  dedupApplied ? 'UPDATE_WATCHLIST' : null, // ← scanner hint
+            master_targets:   feedback.master_targets,
+            prune_list:       feedback.prune_list,
+            new_graduates:    feedback.new_graduates,
         });
     } catch (e) {
         console.error('Market Context Error:', e);
