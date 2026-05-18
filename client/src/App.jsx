@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import styles from './App.module.css';
 import { GlobalHeader } from './components/GlobalHeader';
 import { Sidebar } from './components/Sidebar';
@@ -6,7 +6,8 @@ import { SelectionDrawer } from './components/SelectionDrawer';
 import { useTimeStore } from './store/useTimeStore';
 import { LazyWidget } from './components/LazyWidget';
 import { MobileFloatingBar } from './components/MobileFloatingBar';
-import { Target } from 'lucide-react';
+import { Target, AlertTriangle, X } from 'lucide-react';
+import socketService from './services/SocketService';
 
 // These 4 are conditional — they only render when the user explicitly opens
 // them. Lazy-loading keeps them out of the initial JS bundle entirely so the
@@ -41,6 +42,7 @@ const ATRRaceWidget             = lazy(() => import('./components/AnalyticsWidge
 const SmartMoodChart            = lazy(() => import('./components/AnalyticsWidgets/SmartMoodChart').then(m => ({ default: m.SmartMoodChart })));
 const MomentumPulse             = lazy(() => import('./components/AnalyticsWidgets/MomentumPulse').then(m => ({ default: m.MomentumPulse })));
 const RSIGridWall               = lazy(() => import('./components/AnalyticsWidgets/RSIGridWall').then(m => ({ default: m.RSIGridWall })));
+const BYCWidget                 = lazy(() => import('./components/AnalyticsWidgets/BYCWidget').then(m => ({ default: m.BYCWidget })));
 
 function App() {
   const isLive = useTimeStore(s => s.timeline.length > 0 ? s.currentIndex === s.timeline.length - 1 : false);
@@ -58,6 +60,27 @@ function App() {
     }
   }, [hasInstitutionalActivity, isAlphaBannerVisible]);
 
+  // ── Stream B overload banner ────────────────────────────────────────────────
+  // Fires when backend receives > 40 unique .P coins in a single Stream B push.
+  // Qualification is suppressed server-side; banner tells user to fix the scanner.
+  const [streamBAlert, setStreamBAlert] = useState(null); // { uniqueCount, rawCount, maxAllowed, timestamp }
+  const alertTimerRef = useRef(null);
+
+  useEffect(() => {
+    const sock = socketService.connect();
+    const handle = (data) => {
+      setStreamBAlert(data);
+      // Auto-clear after 5 minutes if not manually dismissed
+      clearTimeout(alertTimerRef.current);
+      alertTimerRef.current = setTimeout(() => setStreamBAlert(null), 5 * 60 * 1000);
+    };
+    sock.on('stream-b-overload', handle);
+    return () => {
+      sock.off('stream-b-overload', handle);
+      clearTimeout(alertTimerRef.current);
+    };
+  }, []);
+
   return (
     <div className={styles.appContainer}>
       <header className={styles.topBar}>
@@ -68,6 +91,13 @@ function App() {
         <Sidebar />
 
         <main className={styles.mainContent}>
+
+          {/* SECTION: BYOC SCREENER (top of page — dynamic coin screener) */}
+          <section id="section-byc" className={styles.widgetSection}>
+            <LazyWidget minHeight={80} rootMargin="0px">
+              <BYCWidget />
+            </LazyWidget>
+          </section>
 
           {/* SECTION: 3rd UMPIRE VALIDATOR (above-the-fold — small margin) */}
           <section id="section-umpire" className={styles.widgetSection}>
@@ -267,6 +297,45 @@ function App() {
 
       {/* Mobile-only floating status bubble — hidden on desktop via CSS */}
       <MobileFloatingBar onOpenThemeBuilder={() => setShowThemeBuilder(true)} />
+
+      {/* ── Stream B overload sticky footer banner ── */}
+      {streamBAlert && (
+        <div style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 9999,
+          background: 'linear-gradient(90deg, #7c2d12, #92400e)',
+          borderTop: '2px solid #f97316',
+          padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: 10,
+          boxShadow: '0 -4px 20px rgba(249,115,22,0.35)',
+          animation: 'none',
+        }}>
+          <AlertTriangle size={16} color="#fb923c" style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ fontWeight: 700, fontSize: 12, color: '#fb923c', marginRight: 8 }}>
+              ⚠ STREAM B OVERLOADED
+            </span>
+            <span style={{ fontSize: 11, color: '#fcd34d' }}>
+              {streamBAlert.uniqueCount} unique .P coins received (raw: {streamBAlert.rawCount} · max: {streamBAlert.maxAllowed}).
+              {' '}Qualification was <strong style={{ color: '#f87171' }}>SKIPPED</strong> to protect data integrity.
+              {' '}Fix your TradingView watchlist scanner — reduce to under {streamBAlert.maxAllowed} coins.
+            </span>
+            <span style={{ fontSize: 10, color: '#f97316', marginLeft: 8, opacity: 0.7 }}>
+              {new Date(streamBAlert.timestamp).toLocaleTimeString()}
+            </span>
+          </div>
+          <button
+            onClick={() => setStreamBAlert(null)}
+            style={{
+              background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)',
+              borderRadius: 4, color: '#fb923c', cursor: 'pointer', padding: '3px 6px',
+              display: 'flex', alignItems: 'center', flexShrink: 0,
+            }}
+            title="Dismiss"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import {
     Target, Layers, Activity, Ruler, Zap, Hexagon, Users,
     PanelLeftClose, PanelLeft, Brain, Bell, MonitorPlay,
     TrendingUp, BarChart2, Gauge, Heart, PieChart, Map,
-    LayoutGrid, Search, Star, Calendar, Flame,
+    LayoutGrid, Search, Star, Calendar, Flame, Filter,
 } from 'lucide-react';
 import styles from './Sidebar.module.css';
 
@@ -36,6 +36,8 @@ export const Sidebar = () => {
     // Items listed in top-to-bottom page order. `divider: true` inserts a thin
     // rule between groups so the 18-item list stays scannable.
     const menuItems = [
+        { id: 'byc',              label: 'BYOC Screener',    icon: Filter,     prefetch: () => import('./AnalyticsWidgets/BYCWidget') },
+        { divider: true },
         { id: 'umpire',           label: '3rd Umpire',       icon: Target,     prefetch: () => import('./AnalyticsWidgets/ValidatorTimelineWidget') },
         { divider: true },
         { id: 'levels',           label: 'Levels Monitor',   icon: Layers,     prefetch: () => import('./AnalyticsWidgets/LevelReactionWidget') },

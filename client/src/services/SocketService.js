@@ -1,6 +1,10 @@
 import { io } from "socket.io-client";
 
-// URL for the Backend V3
+// Use same-origin proxy URL so all traffic routes through vite preview's HTTP proxy.
+// polling transport is plain HTTP (GET/POST) — works through any HTTP proxy without
+// requiring a WebSocket upgrade. socket.io automatically upgrades to WebSocket once
+// the session is established. This is the only transport strategy that reliably works
+// via Tailscale → vite preview → Express/Socket.IO regardless of firewall rules.
 const SOCKET_URL = '/';
 
 class SocketService {
@@ -13,7 +17,7 @@ class SocketService {
 
         console.log(`🔌 [SocketService] Connecting to ${SOCKET_URL}...`);
         this.socket = io(SOCKET_URL, {
-            transports: ["websocket"], // Force WebSocket for speed
+            transports: ['polling', 'websocket'], // polling first (plain HTTP, proxy-safe), upgrades to WS once session is established
             reconnection: true,
             reconnectionAttempts: 10,
             reconnectionDelay: 1000,

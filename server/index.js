@@ -846,51 +846,124 @@ app.post('/qualified-pick', (req, res) => {
     }
 });
 
+// ─── Stream B gatekeeper helpers ─────────────────────────────────────────────
+// Exchange preference order for deduplication: higher index = lower priority.
+// When two entries share the same base ticker, we keep the one from the
+// highest-priority exchange so the stored ticker has no exchange prefix.
+const _B_EXCHANGE_PRIORITY = [
+    'BINANCE', 'OKX', 'BYBIT', 'BITGET', 'BINGX', 'GATE', 'KUCOIN',
+    'COINBASE', 'WEEX', 'BLOFIN', 'LBANK', 'BITUNIX', 'PHEMEX',
+    'MEXC', 'HTX', 'COINEX', 'COINW', 'PIONEX', 'KCEX', 'TOOBIT',
+    'BYDFI', 'BITRUE', 'WHITEBIT', 'ZOOMEX', 'BYBIT', 'POLONIEX',
+    'UPBIT', 'CRYPTOCOM', 'DERIBIT', 'PHEMEX',
+];
+const _B_MAX_COINS = 40; // overload threshold — more than this skips qualification
+
+/**
+ * Normalises the raw watchlist_active_snapshot from Stream B:
+ *  1. Keep only perpetual contracts (w.full ends with '.P')
+ *  2. Deduplicate by base ticker — prefer highest-priority exchange
+ *  3. Return array of { baseSymbol, price, raw } objects
+ */
+function _deduplicateStreamB(rawSnaps) {
+    const best = new Map(); // baseSymbol → { exchangeRank, raw }
+    for (const w of rawSnaps) {
+        if (!w.full || !w.full.endsWith('.P')) continue; // ← .P gate
+        const colonIdx = w.full.indexOf(':');
+        if (colonIdx < 0) continue;
+        const exchange   = w.full.slice(0, colonIdx).toUpperCase();
+        const baseSymbol = w.full.slice(colonIdx + 1); // e.g. "XRPUSDT.P"
+        const rank = _B_EXCHANGE_PRIORITY.indexOf(exchange);
+        const effectiveRank = rank === -1 ? 9999 : rank;
+        const existing = best.get(baseSymbol);
+        if (!existing || effectiveRank < existing.rank) {
+            best.set(baseSymbol, { rank: effectiveRank, exchange, raw: w });
+        }
+    }
+    return [...best.entries()].map(([baseSymbol, { exchange, raw }]) => ({
+        baseSymbol,
+        exchange,
+        price: parsePrice(raw.price || raw.close),
+        raw,
+    }));
+}
+
 // 3B. MARKET CONTEXT TELEMETRY (Stream B)
 app.post('/api/market-context', (req, res) => {
     try {
         const payload = req.body;
         const now = new Date().toISOString();
 
+        // ── Step 1: Deduplicate & filter raw snapshot ──────────────────────────
+        const rawSnaps    = payload.watchlist_active_snapshot || [];
+        const deduped     = _deduplicateStreamB(rawSnaps);
+        const rawPerpCount = rawSnaps.filter(w => w.full && w.full.endsWith('.P')).length;
+        const uniqueCount  = deduped.length;
+        const isOverloaded = uniqueCount > _B_MAX_COINS;
+
+        // Log to DB — always, even when overloaded, so we have an audit trail
         db.prepare(`
             INSERT INTO market_context_logs (timestamp, screener_total_count, watchlist_count, payload_json)
             VALUES (?, ?, ?, ?)
         `).run(
             now,
             payload.screener_total_count || 0,
-            payload.watchlist_count || 0,
+            uniqueCount,   // store the DEDUPED count, not the raw noisy count
             JSON.stringify(payload)
         );
 
-        // Generate Stateful Feedback for Coin Scanner
-        const feedback = generateScannerFeedback(payload.watchlist_count);
+        // ── Step 2: Overload guard ─────────────────────────────────────────────
+        if (isOverloaded) {
+            const msg = `Stream B overloaded — ${uniqueCount} unique .P coins (raw: ${rawSnaps.length}, perps: ${rawPerpCount}). Max allowed: ${_B_MAX_COINS}. Qualification SKIPPED.`;
+            console.warn(`[Stream B] ⚠️  ${msg}`);
+            io.emit('stream-b-overload', {
+                rawCount:    rawSnaps.length,
+                perpCount:   rawPerpCount,
+                uniqueCount,
+                maxAllowed:  _B_MAX_COINS,
+                timestamp:   now,
+                message:     msg,
+            });
+            // Still respond OK so the scanner script doesn't retry-spam
+            const feedback = generateScannerFeedback(uniqueCount);
+            io.emit('market-context-update', { timestamp: now, counts: { screener: payload.screener_total_count, watchlist: uniqueCount }, overloaded: true });
+            return res.json({
+                success: true,
+                warning: 'OVERLOADED — qualification skipped',
+                unique_count: uniqueCount,
+                raw_count: rawSnaps.length,
+                master_targets: feedback.master_targets,
+                prune_list: feedback.prune_list,
+                new_graduates: feedback.new_graduates,
+            });
+        }
 
-        io.emit('market-context-update', { timestamp: now, counts: { screener: payload.screener_total_count, watchlist: payload.watchlist_count } });
+        // ── Step 3: Normal path — ingest deduped .P coins only ────────────────
+        console.log(`[Stream B] ✅ Accepted ${uniqueCount} unique .P coins (raw ${rawSnaps.length} → perps ${rawPerpCount} → deduped ${uniqueCount})`);
 
-        // [V4 MASTER STORE INGESTION] - Stream B (market context)
+        const feedback = generateScannerFeedback(uniqueCount);
+        io.emit('market-context-update', { timestamp: now, counts: { screener: payload.screener_total_count, watchlist: uniqueCount } });
+
         setImmediate(() => {
-            const watchlistSnaps = payload.watchlist_active_snapshot || [];
-            watchlistSnaps.forEach(w => {
-                if (w.full) {
-                    const ticker = w.full.replace('BINANCE:', '');
-                    const price = parsePrice(w.price || w.close);
-                    MasterStoreService.ingestStreamB(ticker, w, price, {
-                        timestampISO: w.timestamp || payload.timestamp || now,
-                        ingestionSource: 'SCOUT_B',
-                    }).catch(e => console.error(e));
-                }
+            deduped.forEach(({ baseSymbol, price, raw }) => {
+                MasterStoreService.ingestStreamB(baseSymbol, raw, price, {
+                    timestampISO: raw.timestamp || payload.timestamp || now,
+                    ingestionSource: 'SCOUT_B',
+                }).catch(e => console.error('[Stream B] ingestStreamB error:', e.message));
             });
         });
 
         res.json({
             success: true,
-            message: "Market Context Telemetry Saved",
+            message: 'Market Context Telemetry Saved',
+            unique_count: uniqueCount,
+            raw_count: rawSnaps.length,
             master_targets: feedback.master_targets,
-            prune_list: feedback.prune_list,
-            new_graduates: feedback.new_graduates
+            prune_list:     feedback.prune_list,
+            new_graduates:  feedback.new_graduates,
         });
     } catch (e) {
-        console.error("Market Context Error:", e);
+        console.error('Market Context Error:', e);
         res.status(500).json({ error: e.message });
     }
 });
@@ -3505,6 +3578,161 @@ app.get('/api/rsi-grid-wall', (req, res) => {
         res.json({ coins, config: { seriesTFs, tempTF, oversold, overbought, pullbackZone } });
     } catch (e) {
         console.error('[RSI Grid Wall]', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ─── BYOC Screener — Bring Your Own Coins ─────────────────────────────────
+// Dynamic multi-criteria filter across all coin metrics.
+// Clause fields from coin_metric_history (RSI/RVOL/ATR/EMA-dist) + Stream C
+// (change%, volume, price). Clauses joined by AND or OR.
+//
+// Query params:
+//   clauses  JSON array of {field, op, value}
+//   mode     'AND' | 'OR'  (default AND)
+
+// Module-level cached prepared statements — compiled once, reused on every request.
+const _bycCmhStmt = db.prepare(`
+    WITH ranked AS (
+        SELECT ticker, ts,
+               rsi_m5, rsi_m15, rsi_m30, rsi_h1,
+               rvol_m15, rvol_h1,
+               atr_m15, atr_h1, atr_h4,
+               dist_m1, dist_m5, dist_m15, dist_h1, dist_h4,
+               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY ts DESC) AS rn
+        FROM coin_metric_history WHERE ts > ?
+    )
+    SELECT * FROM ranked WHERE rn = 1
+`);
+const _bycScStmt = db.prepare(`
+    WITH ranked AS (
+        SELECT ticker, stream_c_state, price, timestamp,
+               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) AS rn
+        FROM master_coin_store
+        WHERE stream_c_state IS NOT NULL AND timestamp > ?
+    )
+    SELECT ticker, stream_c_state, price, timestamp FROM ranked WHERE rn = 1
+`);
+// Whitelist sets — constant, computed once.
+const _bycValidFields = new Set([
+    'rsi_m5','rsi_m15','rsi_m30','rsi_h1',
+    'rvol_m15','rvol_h1',
+    'atr_m15','atr_h1','atr_h4',
+    'dist_m1','dist_m5','dist_m15','dist_h1','dist_h4',
+    'change_pct','volume','price',
+]);
+const _bycValidOps = new Set(['>', '<', '>=', '<=', '=', 'above_ema', 'below_ema', 'at_ema']);
+
+app.get('/api/byc-screener', (req, res) => {
+    try {
+        let clauses = [];
+        try { clauses = JSON.parse(req.query.clauses || '[]'); } catch {}
+        const mode = (req.query.mode || 'AND').toUpperCase() === 'OR' ? 'OR' : 'AND';
+
+        // Sanitise — drop anything with unknown field/op (SQL injection guard)
+        const safeClauses = clauses.filter(c =>
+            c && _bycValidFields.has(c.field) && _bycValidOps.has(c.op)
+        );
+
+        // 1. Latest coin_metric_history per ticker (Stream D — last 30 min)
+        const cmhRows = _bycCmhStmt.all(Date.now() - 30 * 60 * 1000);
+
+        // 2. Latest stream_c_state per ticker (change%, volume, price — last 2h)
+        const scRows  = _bycScStmt.all(new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
+
+        // 3. Build unified coin map (Stream D keys authoritative; Stream C adds change%/vol)
+        const coinMap = new Map();
+        for (const r of cmhRows) {
+            coinMap.set(r.ticker, {
+                ticker: r.ticker, ts: r.ts,
+                rsi_m5: r.rsi_m5, rsi_m15: r.rsi_m15, rsi_m30: r.rsi_m30, rsi_h1: r.rsi_h1,
+                rvol_m15: r.rvol_m15, rvol_h1: r.rvol_h1,
+                atr_m15: r.atr_m15, atr_h1: r.atr_h1, atr_h4: r.atr_h4,
+                dist_m1: r.dist_m1, dist_m5: r.dist_m5, dist_m15: r.dist_m15,
+                dist_h1: r.dist_h1, dist_h4: r.dist_h4,
+                price: null, change_pct: null, volume: null, src: 'D',
+            });
+        }
+        for (const r of scRows) {
+            let sc = {};
+            try { sc = JSON.parse(r.stream_c_state); } catch {}
+            const ex = coinMap.get(r.ticker) || { ticker: r.ticker };
+            coinMap.set(r.ticker, {
+                ...ex,
+                price:      parseFloat(sc.price      ?? r.price) || ex.price,
+                change_pct: sc.today_change_pct != null ? parseFloat(sc.today_change_pct) : ex.change_pct,
+                volume:     sc.today_volume     != null ? parseFloat(sc.today_volume)     : ex.volume,
+                scTs: r.timestamp,
+                src: ex.rsi_m15 != null ? 'D+C' : 'C',
+            });
+        }
+
+        // 4. Clause evaluator
+        function evalClause(coin, c) {
+            let val = coin[c.field];
+            if (val == null) return false;
+            val = parseFloat(val);
+            if (!isFinite(val)) return false;
+            const threshold = parseFloat(c.value);
+            switch (c.op) {
+                case '>':         return val > threshold;
+                case '<':         return val < threshold;
+                case '>=':        return val >= threshold;
+                case '<=':        return val <= threshold;
+                case '=':         return Math.abs(val - threshold) < 0.01;
+                case 'above_ema': return val > 0;
+                case 'below_ema': return val < 0;
+                case 'at_ema':    return Math.abs(val) <= (isFinite(threshold) ? threshold : 0.5);
+                default:          return false;
+            }
+        }
+
+        // 5. Filter + shape output
+        const fmt = (v, dp = 2) => v != null ? +parseFloat(v).toFixed(dp) : null;
+        const coins = [];
+        for (const [ticker, coin] of coinMap) {
+            let match;
+            if (!safeClauses.length) {
+                match = true;
+            } else if (mode === 'OR') {
+                match = safeClauses.some(c => evalClause(coin, c));
+            } else {
+                match = safeClauses.every(c => evalClause(coin, c));
+            }
+            if (!match) continue;
+
+            const clean = ticker.replace(/USDT\.P$|USDT$|BUSD$|USD$/, '');
+            coins.push({
+                ticker, clean, src: coin.src,
+                price:      fmt(coin.price, 4),
+                change_pct: fmt(coin.change_pct),
+                volume:     coin.volume ? Math.round(coin.volume) : null,
+                rsi: {
+                    m5:  fmt(coin.rsi_m5,  1),
+                    m15: fmt(coin.rsi_m15, 1),
+                    m30: fmt(coin.rsi_m30, 1),
+                    h1:  fmt(coin.rsi_h1,  1),
+                },
+                rvol: { m15: fmt(coin.rvol_m15), h1: fmt(coin.rvol_h1) },
+                atr:  { m15: fmt(coin.atr_m15),  h1: fmt(coin.atr_h1), h4: fmt(coin.atr_h4) },
+                dist: {
+                    m1:  fmt(coin.dist_m1),  m5:  fmt(coin.dist_m5),
+                    m15: fmt(coin.dist_m15), h1:  fmt(coin.dist_h1), h4: fmt(coin.dist_h4),
+                },
+                ts: coin.ts, scTs: coin.scTs,
+            });
+        }
+
+        // Sort: most data first, then by |change%| desc
+        coins.sort((a, b) => {
+            const s = (x) => x.src === 'D+C' ? 2 : x.src === 'D' ? 1 : 0;
+            const sd = s(b) - s(a);
+            return sd !== 0 ? sd : (Math.abs(b.change_pct ?? 0) - Math.abs(a.change_pct ?? 0));
+        });
+
+        res.json({ coins, matched: coins.length, ts: Date.now(), mode, clauses: safeClauses });
+    } catch (e) {
+        console.error('[byc-screener]', e);
         res.status(500).json({ error: e.message });
     }
 });

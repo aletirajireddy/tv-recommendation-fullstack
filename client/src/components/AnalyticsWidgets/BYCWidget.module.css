@@ -1,0 +1,904 @@
+/* BYCWidget.module.css — BYOC Screener widget styles */
+
+/* ─── Widget shell ─────────────────────────────────────────────────────────── */
+
+.widget {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: visible;
+    position: relative;
+}
+
+/* ─── Header ────────────────────────────────────────────────────────────────── */
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+    min-height: 36px;
+}
+
+.headerLeft {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+}
+
+.headerIcon {
+    color: var(--accent-blue);
+    flex-shrink: 0;
+    opacity: 0.85;
+}
+
+.title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.clauseChips {
+    display: flex;
+    gap: 4px;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+.clauseChip {
+    font-size: 9px;
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.headerRight {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+}
+
+.matchBadge {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    border-radius: 3px;
+    padding: 1px 6px;
+    white-space: nowrap;
+}
+
+/* ─── AND / OR mode toggle ─────────────────────────────────────────────────── */
+
+.modeToggle {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.modeBtn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 7px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+.modeBtn:hover { background: rgba(255,255,255,0.05); }
+
+.modeBtnOn {
+    background: var(--accent-blue);
+    color: #fff;
+}
+
+/* ─── Presets dropdown ─────────────────────────────────────────────────────── */
+
+.presetsWrap {
+    position: relative;
+}
+
+.presetsDropdown {
+    position: absolute;
+    top: calc(100% + 5px);
+    right: 0;
+    z-index: 200;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    min-width: 210px;
+    max-height: 320px;
+    overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+    padding: 4px 0;
+}
+
+.presetsSectionLabel {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    padding: 6px 12px 3px;
+    opacity: 0.6;
+}
+
+.presetRowWrap {
+    display: flex;
+    align-items: center;
+}
+
+.presetRow {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: transparent;
+    border: none;
+    text-align: left;
+    padding: 6px 12px;
+    cursor: pointer;
+    width: 100%;
+    color: var(--text-main);
+    transition: background 0.1s;
+}
+.presetRow:hover { background: rgba(255,255,255,0.05); }
+
+.presetIcon { font-size: 13px; flex-shrink: 0; }
+
+.presetName {
+    font-size: 11px;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.presetMeta {
+    font-size: 9px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.presetDelete {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 6px 8px;
+    display: flex;
+    align-items: center;
+    opacity: 0.5;
+    transition: opacity 0.1s, color 0.1s;
+}
+.presetDelete:hover { opacity: 1; color: var(--accent-red); }
+
+/* ─── Icon button ──────────────────────────────────────────────────────────── */
+
+.iconBtn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    border-radius: 4px;
+    padding: 3px 5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.iconBtn:hover { background: rgba(255,255,255,0.05); color: var(--text-main); }
+.iconBtnOn { background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.4); color: var(--accent-blue); }
+
+/* ─── Live toggle button ───────────────────────────────────────────────────── */
+
+.liveBtn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 3px 7px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+}
+.liveBtn:hover { background: rgba(255,255,255,0.05); color: var(--text-main); }
+
+.liveBtnOn {
+    border-color: rgba(34, 197, 94, 0.5);
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.08);
+    animation: livePulse 2s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+    50%       { box-shadow: 0 0 0 3px rgba(34,197,94,0.15); }
+}
+
+/* ─── Run button ───────────────────────────────────────────────────────────── */
+
+.runBtn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--accent-blue);
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+}
+.runBtn:hover { opacity: 0.85; }
+.runBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.runBtnLoading { opacity: 0.75; }
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+.spinner {
+    animation: spin 0.8s linear infinite;
+    display: block;
+}
+
+/* ─── Builder panel ────────────────────────────────────────────────────────── */
+
+.builderPanel {
+    padding: 8px 10px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+.emptyBuilder {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 12px 0;
+    text-align: center;
+    opacity: 0.7;
+}
+.emptyBuilder strong { color: var(--text-main); }
+
+/* ─── Clause row ───────────────────────────────────────────────────────────── */
+
+.clauseRow {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 30px;
+    flex-wrap: nowrap;
+}
+
+.clauseConnector {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--accent-orange);
+    min-width: 32px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.clauseSelect {
+    background: var(--bg-app, #0d0d12);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-main);
+    font-size: 11px;
+    padding: 3px 6px;
+    cursor: pointer;
+    min-width: 110px;
+    max-width: 130px;
+}
+.clauseSelect:focus { outline: none; border-color: var(--accent-blue); }
+
+.clauseSelectSm {
+    background: var(--bg-app, #0d0d12);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-main);
+    font-size: 11px;
+    padding: 3px 5px;
+    cursor: pointer;
+    min-width: 90px;
+    max-width: 120px;
+}
+.clauseSelectSm:focus { outline: none; border-color: var(--accent-blue); }
+
+.clauseInput {
+    background: var(--bg-app, #0d0d12);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-main);
+    font-size: 12px;
+    padding: 3px 6px;
+    width: 72px;
+    text-align: right;
+}
+.clauseInput:focus { outline: none; border-color: var(--accent-blue); }
+
+.clauseImplicit {
+    font-size: 10px;
+    color: var(--text-muted);
+    width: 72px;
+    text-align: center;
+    opacity: 0.7;
+}
+
+/* ─── Quick zone buttons ───────────────────────────────────────────────────── */
+
+.quickGroup {
+    display: flex;
+    gap: 3px;
+}
+
+.quickBtn {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 5px;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+    white-space: nowrap;
+}
+.quickBtn:hover { background: rgba(255,255,255,0.1); color: var(--text-main); }
+
+/* ─── Remove clause button ─────────────────────────────────────────────────── */
+
+.removeBtn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 3px;
+    display: flex;
+    align-items: center;
+    border-radius: 3px;
+    opacity: 0.5;
+    transition: opacity 0.1s, color 0.1s;
+    margin-left: auto;
+}
+.removeBtn:hover { opacity: 1; color: var(--accent-red); }
+
+/* ─── Builder footer ───────────────────────────────────────────────────────── */
+
+.builderFooter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 0 2px;
+    flex-wrap: wrap;
+}
+
+.addBtn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 4px 9px;
+    cursor: pointer;
+    transition: border-color 0.1s, color 0.1s;
+}
+.addBtn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+.clearBtn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 10px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    opacity: 0.6;
+    transition: opacity 0.1s, color 0.1s;
+}
+.clearBtn:hover { opacity: 1; color: var(--accent-red); }
+
+.saveBtn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 10px;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: border-color 0.1s, color 0.1s;
+    margin-left: auto;
+}
+.saveBtn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+.saveDialog {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+}
+
+.saveInput {
+    background: var(--bg-app, #0d0d12);
+    border: 1px solid var(--accent-blue);
+    border-radius: 4px;
+    color: var(--text-main);
+    font-size: 11px;
+    padding: 3px 7px;
+    width: 140px;
+}
+.saveInput:focus { outline: none; }
+
+.saveConfirmBtn {
+    background: var(--accent-blue);
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 9px;
+    cursor: pointer;
+    transition: opacity 0.1s;
+}
+.saveConfirmBtn:hover { opacity: 0.85; }
+
+/* ─── Results panel ────────────────────────────────────────────────────────── */
+
+.resultsPanel {
+    padding: 0;
+}
+
+.resultsHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+}
+
+.resultsMeta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.matchInfo { color: var(--text-main); }
+
+.lastRunTime {
+    font-size: 10px;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.scanningText {
+    color: var(--accent-blue);
+    font-size: 11px;
+    font-style: italic;
+}
+
+.errorText {
+    color: var(--accent-red);
+    font-size: 11px;
+}
+
+.viewTabs {
+    display: flex;
+    gap: 3px;
+}
+
+.viewTab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 10px;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+    white-space: nowrap;
+}
+.viewTab:hover { background: rgba(255,255,255,0.04); color: var(--text-main); }
+
+.viewTabOn {
+    background: rgba(59,130,246,0.12);
+    border-color: rgba(59,130,246,0.4);
+    color: var(--accent-blue);
+}
+
+.noResults {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 18px 14px;
+    text-align: center;
+    opacity: 0.7;
+}
+
+/* ─── List view ────────────────────────────────────────────────────────────── */
+
+.listWrap {
+    display: flex;
+    flex-direction: column;
+}
+
+.listHead {
+    display: grid;
+    grid-template-columns: 130px 70px 62px 62px 58px 68px 52px 60px;
+    padding: 5px 10px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    opacity: 0.7;
+}
+
+.listRow {
+    display: grid;
+    grid-template-columns: 130px 70px 62px 62px 58px 68px 52px 60px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--text-main);
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    cursor: pointer;
+    transition: background 0.1s;
+    align-items: center;
+}
+.listRow:hover { background: rgba(255,255,255,0.03); }
+
+.listRowOpen {
+    background: rgba(59,130,246,0.06);
+    border-bottom-color: rgba(59,130,246,0.15);
+}
+
+.coinLabel {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.coinClean {
+    font-weight: 700;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.coinSrc {
+    font-size: 8px;
+    color: var(--text-muted);
+    padding: 1px 4px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    white-space: nowrap;
+    opacity: 0.7;
+}
+
+.atrCell { color: var(--text-muted); }
+.volCell { color: var(--text-muted); }
+
+/* ─── Detail card (inline expansion) ──────────────────────────────────────── */
+
+.detailCard {
+    background: rgba(255,255,255,0.02);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+}
+
+.detailGrid {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+}
+@media (max-width: 700px) {
+    .detailGrid { grid-template-columns: 1fr; }
+}
+
+.detailSection {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.detailTitle {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.detailHint {
+    font-size: 9px;
+    opacity: 0.5;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+}
+
+.rsiDetailRow {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.rsiDetailVals {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.rsiValLine {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.rsiTfTag {
+    font-size: 9px;
+    color: var(--text-muted);
+    min-width: 22px;
+    opacity: 0.7;
+}
+
+/* ─── Metrics grid ─────────────────────────────────────────────────────────── */
+
+.metricsGrid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 3px 10px;
+    align-items: baseline;
+}
+
+.metricLabel {
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    opacity: 0.7;
+}
+
+.metricVal {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+/* ─── EMA dist bars ────────────────────────────────────────────────────────── */
+
+.emaBars {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+}
+
+.emaBarsCompact {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+}
+
+.emaBarRow {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.emaBarLabel {
+    font-size: 9px;
+    color: var(--text-muted);
+    min-width: 22px;
+    opacity: 0.7;
+}
+
+.emaBarTrack {
+    flex: 1;
+    height: 6px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+}
+
+.emaBarsCompact .emaBarTrack { height: 4px; }
+
+.emaBarCenter {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(255,255,255,0.2);
+}
+
+.emaBarFill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    max-width: 50%;
+}
+
+.emaBarVal {
+    font-size: 9px;
+    min-width: 40px;
+    text-align: right;
+    font-weight: 600;
+}
+
+.emaBarsCompact .emaBarVal { font-size: 8px; min-width: 32px; }
+
+/* ─── RSI grid view ────────────────────────────────────────────────────────── */
+
+.rsiGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+    gap: 6px;
+    padding: 8px 10px;
+}
+
+.rsiCard {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 7px 5px 5px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s;
+}
+.rsiCard:hover { background: rgba(255,255,255,0.06); }
+
+.rsiCardOpen {
+    border-color: rgba(59,130,246,0.45);
+    background: rgba(59,130,246,0.07);
+}
+
+.rsiCardOS {
+    border-color: rgba(239,68,68,0.35);
+    background: rgba(239,68,68,0.05);
+}
+
+.rsiCardOB {
+    border-color: rgba(34,197,94,0.35);
+    background: rgba(34,197,94,0.05);
+}
+
+.rsiCardHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 3px;
+}
+
+.rsiCardName {
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-main);
+    min-width: 0;
+    flex: 1;
+}
+
+.rsiCardChg {
+    font-size: 9px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.rsiCardFoot {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    gap: 2px;
+    font-size: 8px;
+    font-weight: 600;
+}
+
+/* ─── EMA grid view ────────────────────────────────────────────────────────── */
+
+.emaGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 6px;
+    padding: 8px 10px;
+}
+
+.emaCard {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 7px 8px 6px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s;
+}
+.emaCard:hover { background: rgba(255,255,255,0.06); }
+
+.emaCardOpen {
+    border-color: rgba(59,130,246,0.45);
+    background: rgba(59,130,246,0.07);
+}
+
+.emaCardBull {
+    border-color: rgba(34,197,94,0.3);
+    background: rgba(34,197,94,0.04);
+}
+
+.emaCardBear {
+    border-color: rgba(239,68,68,0.3);
+    background: rgba(239,68,68,0.04);
+}
+
+.emaCardHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+}
+
+.emaCardName {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+}
+
+.emaCardRvol {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-align: right;
+}
