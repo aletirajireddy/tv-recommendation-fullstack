@@ -1,10 +1,13 @@
 import { io } from "socket.io-client";
 
-// Use same-origin proxy URL so all traffic routes through vite preview's HTTP proxy.
-// polling transport is plain HTTP (GET/POST) — works through any HTTP proxy without
-// requiring a WebSocket upgrade. socket.io automatically upgrades to WebSocket once
-// the session is established. This is the only transport strategy that reliably works
-// via Tailscale → vite preview → Express/Socket.IO regardless of firewall rules.
+// Use same-origin URL — Express now serves both the React client AND Socket.IO
+// on port 5173, so there is no proxy layer between the browser and the socket server.
+//
+// Transport order: WebSocket FIRST.
+// Tailscale Serve proxies WebSocket upgrades cleanly (persistent TCP tunnel).
+// Long-poll HTTP (polling) is NOT used as primary because Tailscale's HTTPS
+// reverse-proxy terminates long-lived HTTP connections with 502.
+// Polling is kept as a last-resort fallback only.
 const SOCKET_URL = '/';
 
 class SocketService {
@@ -17,10 +20,12 @@ class SocketService {
 
         console.log(`🔌 [SocketService] Connecting to ${SOCKET_URL}...`);
         this.socket = io(SOCKET_URL, {
-            transports: ['polling', 'websocket'], // polling first (plain HTTP, proxy-safe), upgrades to WS once session is established
+            transports: ['websocket', 'polling'], // WebSocket first — works through Tailscale; polling fallback only
+            upgrade: true,
             reconnection: true,
-            reconnectionAttempts: 10,
-            reconnectionDelay: 1000,
+            reconnectionAttempts: 15,
+            reconnectionDelay: 1500,
+            timeout: 20000,
         });
 
         this.socket.on("connect", () => {
@@ -40,8 +45,8 @@ class SocketService {
 
     /**
      * Subscribe to a specific event
-     * @param {string} eventName 
-     * @param {function} callback 
+     * @param {string} eventName
+     * @param {function} callback
      */
     on(eventName, callback) {
         if (!this.socket) this.connect();

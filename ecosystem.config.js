@@ -4,13 +4,14 @@ module.exports = {
       name: "tv-backend",
       script: "index.js",
       cwd: "server",
-      watch: ["index.js", "services", "utils", "validator"], // Watch mode for BE source
-      ignore_watch: ["node_modules", "dashboard*.db", "dashboard*.db-journal", "*.log"],
+      // Watch DISABLED — watch mode restarts the process on every file save,
+      // causing a brief port-unavailable window that Tailscale's proxy returns
+      // as a 502. Restart manually with `pm2 restart tv-backend` after changes.
+      watch: false,
       env: {
         NODE_ENV: "development",
-        // PORT 5173: backend now also serves the built React client from client/dist.
-        // vite-preview (tv-client) is no longer needed — Socket.IO + API + static files
-        // all run on the same port, eliminating the proxy layer that caused timeouts.
+        // PORT 5173: backend serves the built React client (client/dist) AND
+        // Socket.IO on the same port — no proxy layer, no vite-preview needed.
         PORT: 5173
       }
     },

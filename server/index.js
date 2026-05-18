@@ -26,7 +26,15 @@ const io = new Server(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
-    }
+    },
+    // Tailscale Serve proxies WebSocket upgrades cleanly but terminates
+    // long-lived HTTP connections. Prefer WebSocket; allow polling only as
+    // last resort. Shorter pingTimeout keeps connections from stalling through
+    // the Tailscale HTTPS proxy layer.
+    transports: ['websocket', 'polling'],
+    pingTimeout:  20000,   // 20s — close dead connections promptly
+    pingInterval: 10000,   // 10s heartbeat — keeps WS tunnel alive through proxy
+    allowEIO3: true,       // accept legacy Socket.IO v3 clients (Tampermonkey scripts)
 });
 
 // Middleware
