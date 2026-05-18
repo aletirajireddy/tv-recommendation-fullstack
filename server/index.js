@@ -227,6 +227,20 @@ app.post('/scan-report', (req, res) => {
             );
         }
 
+        // ── Stream A deduplication gate ────────────────────────────────────────────
+        // TradingView screener sends the same coin from many exchanges simultaneously
+        // (BINANCE:XRPUSDT.P, BYBIT:XRPUSDT.P, OKX:XRPUSDT.P …).  If we don't
+        // collapse them here the duplicate full-tickers end up in master_targets,
+        // which the scanner adds back to its watchlist, inflating Stream B next cycle.
+        // We keep only .P perpetuals and pick the highest-priority exchange per coin.
+        if (payload.results && Array.isArray(payload.results)) {
+            const rawCount = payload.results.length;
+            payload.results = _deduplicateStreamA(payload.results);
+            if (payload.results.length !== rawCount) {
+                console.log(`[Stream A] Deduped ${rawCount} → ${payload.results.length} unique .P coins`);
+            }
+        }
+
         // [INSTITUTIONAL GRADE]: Ingress Sanitization
         // We do NOT trust the Scanner's pre-calculated scores.
         // We re-derive everything here so the Database contains the "Genie Truth".
@@ -288,7 +302,12 @@ app.post('/scan-report', (req, res) => {
             setImmediate(() => {
                 payload.results.forEach(item => {
                     const d = item.data || item;
-                    const ticker = item.datakey ? item.datakey.replace('BINANCE:', '') : item.ticker;
+                    // Strip exchange prefix from datakey (e.g. "BINANCE:XRPUSDT.P" → "XRPUSDT.P").
+                    // The old .replace('BINANCE:', '') only handled Binance — any other exchange
+                    // prefix would be stored verbatim ("BYBIT:XRPUSDT.P"), creating ghost keys.
+                    const rawKey   = item.datakey || '';
+                    const colonIdx = rawKey.indexOf(':');
+                    const ticker   = colonIdx >= 0 ? rawKey.slice(colonIdx + 1) : (item.ticker || rawKey);
                     const price = parsePrice(d.close || d.price);
                     MasterStoreService.ingestStreamA(ticker, d, price, {
                         timestampISO: timestamp,           // payload.timestamp from scan
@@ -512,8 +531,11 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
             try {
                 const payload = JSON.parse(lastGoodLog.payload_json);
                 if (payload.watchlist_active_snapshot && Array.isArray(payload.watchlist_active_snapshot)) {
-                    const recoveredTargets = payload.watchlist_active_snapshot.map(w => w.full).filter(Boolean);
-                    console.log(`[WATCHLIST-ENGINE] 💧 Rehydrated ${recoveredTargets.length} coins from history.`);
+                    // Apply the same .P + dedup rules as Stream B so the recovered list
+                    // doesn't re-inflate the scanner watchlist with exchange duplicates.
+                    const deduped = _deduplicateStreamB(payload.watchlist_active_snapshot);
+                    const recoveredTargets = deduped.map(({ exchange, baseSymbol }) => `${exchange}:${baseSymbol}`);
+                    console.log(`[WATCHLIST-ENGINE] 💧 Rehydrated ${recoveredTargets.length} unique .P coins from history (raw snapshot had ${payload.watchlist_active_snapshot.length} entries).`);
                     return {
                         ai_suggestion: "REHYDRATION",
                         active_list: recoveredTargets,
@@ -613,16 +635,31 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
         return scoreB - scoreA;
     });
 
+    // ── Helper: normalise any ticker to "EXCHANGE:BASE.P" canonical form ─────────
+    // Old DB rows may still have datakey = "BYBIT:XRPUSDT.P" (before the dedup fix).
+    // This ensures master_targets never re-introduces exchange duplicates.
+    function _canonicalFullTicker(item) {
+        const rawKey   = item.datakey || '';
+        const colonIdx = rawKey.indexOf(':');
+        if (colonIdx >= 0) {
+            // Already has exchange prefix — return as-is (dedup happens at ingestion now)
+            return rawKey;
+        }
+        // Fallback: no exchange prefix in datakey — use item.ticker, default to BINANCE
+        const base = item.ticker || rawKey;
+        return `BINANCE:${base}`;
+    }
+
     const PERMANENT_MAJORS = ['BINANCE:BTCUSDT.P', 'BINANCE:ETHUSDT.P'];
     const protectedAltcoins = new Set();
-    
+
     // [PHASE 42] The 8-Hour Graduate Grace Period (Includes Orphan Retries)
     const gracePeriodPicks = db.prepare(`
-        SELECT DISTINCT exchange, ticker 
-        FROM area1_scout_logs 
+        SELECT DISTINCT exchange, ticker
+        FROM area1_scout_logs
         WHERE type IN ('STABLE', 'ORPHANED_STABLE_RETRY') AND timestamp > ?
     `).all(eightHoursAgo);
-    
+
     gracePeriodPicks.forEach(p => {
         protectedAltcoins.add(`${p.exchange}:${p.ticker}`);
     });
@@ -630,7 +667,7 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     // Identify Top 5 Altcoins to protect
     let altCount = 0;
     for (const r of scanResults) {
-        const fullTicker = r.datakey || `BINANCE:${r.ticker}`;
+        const fullTicker = _canonicalFullTicker(r);
         if (!PERMANENT_MAJORS.includes(fullTicker)) {
             protectedAltcoins.add(fullTicker);
             altCount++;
@@ -644,7 +681,7 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     scanResults.forEach(item => {
         const d = item.data || item;
         const cleanTicker = item.ticker;
-        const fullTicker = item.datakey || `BINANCE:${cleanTicker}`;
+        const fullTicker = _canonicalFullTicker(item);
 
         activeList.push(fullTicker);
 
@@ -863,7 +900,7 @@ const _B_MAX_COINS = 40; // overload threshold — more than this skips qualific
  * Normalises the raw watchlist_active_snapshot from Stream B:
  *  1. Keep only perpetual contracts (w.full ends with '.P')
  *  2. Deduplicate by base ticker — prefer highest-priority exchange
- *  3. Return array of { baseSymbol, price, raw } objects
+ *  3. Return array of { baseSymbol, exchange, price, raw } objects
  */
 function _deduplicateStreamB(rawSnaps) {
     const best = new Map(); // baseSymbol → { exchangeRank, raw }
@@ -886,6 +923,32 @@ function _deduplicateStreamB(rawSnaps) {
         price: parsePrice(raw.price || raw.close),
         raw,
     }));
+}
+
+/**
+ * Deduplicate Stream A scan results by base ticker.
+ * Rules (mirrors Stream B gatekeeper):
+ *  1. Only keep perpetual contracts — item.datakey or item.ticker must end with '.P'
+ *  2. When multiple exchanges send the same base coin, keep the highest-priority one
+ * Returns a deduplicated array of the original result objects (unmodified).
+ */
+function _deduplicateStreamA(results) {
+    const best = new Map(); // baseSymbol → { rank, item }
+    for (const item of results) {
+        const raw = item.datakey || item.ticker || '';
+        // Only .P perpetuals — spot coins (BINANCE:XRPUSDT) and non-USD pairs are ignored
+        if (!raw.endsWith('.P')) continue;
+        const colonIdx    = raw.indexOf(':');
+        const exchange    = colonIdx >= 0 ? raw.slice(0, colonIdx).toUpperCase() : 'UNKNOWN';
+        const baseSymbol  = colonIdx >= 0 ? raw.slice(colonIdx + 1) : raw; // e.g. "XRPUSDT.P"
+        const rank        = _B_EXCHANGE_PRIORITY.indexOf(exchange);
+        const effectiveRank = rank === -1 ? 9999 : rank;
+        const existing = best.get(baseSymbol);
+        if (!existing || effectiveRank < existing.rank) {
+            best.set(baseSymbol, { rank: effectiveRank, item });
+        }
+    }
+    return [...best.values()].map(({ item }) => item);
 }
 
 // 3B. MARKET CONTEXT TELEMETRY (Stream B)
