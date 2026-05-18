@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const compression = require('compression');
+const path = require('path');
 const db = require('./database'); // V3 Database Module
 
 // --- SERVICES ---
@@ -4381,7 +4382,29 @@ app.get('/api/level-reactions', (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
+// ── Serve built React client (production) ────────────────────────────────────
+// When running in production (via PM2), the backend serves the built client
+// directly from client/dist. This eliminates the vite-preview proxy layer
+// entirely — Socket.IO and all API routes share the same origin and port, so
+// there is no WebSocket upgrade or proxy issue to worry about.
+//
+// IMPORTANT: this block must come AFTER all API/socket routes so that API paths
+// like /api/* and /socket.io/* are matched first.
+const _clientDist = path.join(__dirname, '..', 'client', 'dist');
+app.use(express.static(_clientDist, {
+    maxAge: '1h',                // cache static assets for 1 hour
+    etag: true,
+    index: false,                // we handle the SPA catch-all manually below
+}));
+// SPA catch-all: any unmatched GET request returns index.html so client-side
+// routing works correctly on direct URL loads or refresh.
+// Using regex instead of '*' — Express 5 changed wildcard path handling and
+// rejects bare '*' with a path-to-regexp error.
+app.get(/.*/, (req, res) => {
+    res.sendFile(path.join(_clientDist, 'index.html'));
+});
+
+const PORT = process.env.PORT || 5173;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 V3 Server running on port ${PORT} (All Interfaces)`);
 

@@ -258,6 +258,30 @@
 
 .runBtnLoading { opacity: 0.75; }
 
+/* ─── Reset button ─────────────────────────────────────────────────────────── */
+
+.resetBtn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 4px;
+    color: rgba(239, 68, 68, 0.7);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 3px 7px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+}
+.resetBtn:hover {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #ef4444;
+}
+
 @keyframes spin {
     from { transform: rotate(0deg); }
     to   { transform: rotate(360deg); }

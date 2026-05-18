@@ -434,6 +434,23 @@ export function BYCWidget() {
         setData(null);
     }, []);
 
+    // Full reset: clear clauses, mode, all saved presets, results
+    const resetAll = useCallback(() => {
+        clearTimeout(debounceRef.current);
+        clearInterval(pollRef.current);
+        clausesRef.current = [];
+        modeRef.current    = 'AND';
+        autoRunRef.current = true;
+        setClauses([]);
+        setMode('AND');
+        setAutoRun(true);
+        setData(null);
+        setError(null);
+        setLastRun(null);
+        setExpandedCoin(null);
+        try { localStorage.removeItem(LS_ACTIVE); } catch {}
+    }, []);
+
     // ── Preset actions ──
     const loadPreset = useCallback((preset) => {
         clausesRef.current = [...preset.clauses];
@@ -576,6 +593,18 @@ export function BYCWidget() {
                         {loading ? <RefreshCw size={11} className={styles.spinner} /> : <Play size={11} />}
                         {loading ? 'Scanning' : 'Run'}
                     </button>
+
+                    {/* Reset — clears all clauses and saved state */}
+                    {(clauses.length > 0 || data) && (
+                        <button
+                            className={styles.resetBtn}
+                            onClick={resetAll}
+                            title="Reset screener — clear all clauses and results"
+                        >
+                            <Trash2 size={11} />
+                            Reset
+                        </button>
+                    )}
 
                     {/* Expand / collapse */}
                     <button className={styles.iconBtn} onClick={() => setExpanded(!expanded)}>
