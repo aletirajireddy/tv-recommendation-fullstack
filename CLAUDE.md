@@ -1,7 +1,7 @@
 # TV Recommendation Dashboard — Architecture & Design Reference
 
 > Living document. Update whenever a design decision changes. Claude Code loads this automatically.
-> Last major update: 2026-05-13 (Stream D RSI columns, RSIGridWall widget, MomentumPulse data-source redesign)
+> Last major update: 2026-05-20 (single-port architecture, WebSocket-first Socket.IO, Stream B dedup + clean DB storage)
 
 ---
 
@@ -10,11 +10,49 @@
 | Layer | Tech |
 |---|---|
 | Frontend | React + Vite, Zustand, Recharts, CSS Modules |
-| Backend | Node.js / Express, Socket.IO, SQLite (better-sqlite3) |
-| Process manager | PM2 (`tv-client` id=1, `mcp-server` id=2, `tv-backend` id=3) |
-| Build | `vite build` in `client/`, served via `vite preview` on PM2 |
+| Backend | Node.js / Express 5, Socket.IO, SQLite (better-sqlite3) |
+| Process manager | PM2 — 2 processes: `tv-backend` (id varies) + `mcp-server` |
+| Build | `vite build` in `client/` → `client/dist/` served by Express on port 5173 |
+| Proxy | Tailscale Funnel → `https://desktop-c92c19n.tailbf6529.ts.net` → `127.0.0.1:5173` |
 
-> **PM2 ID note**: tv-backend is id=3 (was id=0 before port 3000 conflict required process deletion and re-registration). Always verify with `pm2 list` before using numeric IDs.
+### Single-Port Architecture (CURRENT)
+
+Express serves **everything on port 5173**:
+- Static files from `client/dist/` (React SPA)
+- All API endpoints (`/api/*`, `/scan-report`, etc.)
+- Socket.IO (`/socket.io/`)
+- SPA catch-all: `app.get(/.*/, ...)` (regex — Express 5 doesn't accept `'*'`)
+
+`vite preview` is **retired**. No proxy layer between Tailscale and the backend.
+
+### Socket.IO Transport — CRITICAL
+
+**Transport order MUST be `['websocket', 'polling']`** (WebSocket first).
+
+Tailscale Funnel tunnels WebSocket as persistent TCP (101 Switching Protocols ✓).  
+Tailscale **terminates long-lived HTTP** connections with 502 → polling-first causes timeouts.
+
+```js
+// SocketService.js — correct config
+this.socket = io('/', {
+    transports: ['websocket', 'polling'],  // WS first — never flip this order
+    upgrade: true,
+    reconnection: true,
+    reconnectionAttempts: 15,
+    reconnectionDelay: 1500,
+    timeout: 20000,
+});
+```
+
+### PM2 Watch — DISABLED
+
+`watch: false` in `ecosystem.config.js`. Watch mode restarts the process on every file save,
+creating a brief port-unavailable window that Tailscale returns as a 502. **Never re-enable.**
+
+After backend code changes: `pm2 restart tv-backend`  
+After frontend changes: `npm run build` in `client/`, then `pm2 restart tv-backend`
+
+> **PM2 ID note**: Always verify IDs with `pm2 list` — they shift after deletions/restarts.
 
 ---
 
@@ -583,24 +621,38 @@ WHERE r1.rn = 1
 ### Restart backend after code change
 
 ```powershell
-pm2 restart tv-backend   # id=3
-```
-
-### Port 3000 conflict (EADDRINUSE)
-
-```powershell
-netstat -ano | findstr ":3000"
-Stop-Process -Id <PID> -Force
 pm2 restart tv-backend
 ```
 
-### Rebuild client
+### Rebuild frontend after client code change
 
 ```powershell
-pm2 stop tv-client       # release dist folder lock on Windows
-cd client
-npm run build
-pm2 start tv-client
+# From project root:
+cd client; npm run build; cd ..
+pm2 restart tv-backend    # backend serves the new client/dist
+```
+
+### Port 5173 conflict (EADDRINUSE)
+
+```powershell
+netstat -ano | findstr ":5173"
+Stop-Process -Id <PID> -Force
+pm2 start ecosystem.config.js --only tv-backend
+```
+
+### Force PM2 to pick up new env vars from ecosystem.config.js
+
+```powershell
+# pm2 restart uses cached env — must delete + re-start to reload config
+pm2 delete tv-backend
+pm2 start ecosystem.config.js --only tv-backend
+```
+
+### Start fresh (both processes)
+
+```powershell
+pm2 start ecosystem.config.js
+pm2 save
 ```
 
 ### Run DB migrations (adding columns safely)
