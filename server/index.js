@@ -993,15 +993,29 @@ app.post('/api/market-context', (req, res) => {
             );
         }
 
-        // Log to DB — always, even when overloaded, so we have an audit trail
+        // Log to DB — store ONLY the clean deduped snapshot, never the raw blob.
+        // The raw payload can contain 100+ duplicate-exchange entries; storing it
+        // verbatim bloats market_context_logs and corrupts the rehydration path
+        // (which reads payload_json to recover the watchlist on zero-count events).
+        const _cleanPayload = {
+            timestamp:            payload.timestamp || now,
+            screener_total_count: payload.screener_total_count || 0,
+            // Only the deduped .P coins — one entry per base symbol, preferred exchange.
+            // Each object retains the original raw fields but with `full` normalised.
+            watchlist_active_snapshot: deduped.map(({ exchange, baseSymbol, raw }) => ({
+                ...raw,
+                full:  `${exchange}:${baseSymbol}`,   // canonical EXCHANGE:TICKER.P
+                short: baseSymbol.replace('USDT.P', '').replace('.P', ''),
+            })),
+        };
         db.prepare(`
             INSERT INTO market_context_logs (timestamp, screener_total_count, watchlist_count, payload_json)
             VALUES (?, ?, ?, ?)
         `).run(
             now,
             payload.screener_total_count || 0,
-            uniqueCount,   // store the DEDUPED count, not the raw noisy count
-            JSON.stringify(payload)
+            uniqueCount,
+            JSON.stringify(_cleanPayload)   // ← clean deduped snapshot only
         );
 
         // ── Step 2: Overload guard ─────────────────────────────────────────────
@@ -1018,6 +1032,7 @@ app.post('/api/market-context', (req, res) => {
                 cleanWatchlist,  // give dashboard the clean list too
             });
             io.emit('market-context-update', { timestamp: now, counts: { screener: payload.screener_total_count, watchlist: uniqueCount }, overloaded: true });
+            io.emit('stream-b-update', { timestamp: now, uniqueCount, cleanWatchlist, overloaded: true });
             // Still respond OK — include the clean list so the scanner can
             // immediately shrink its watchlist without waiting for a manual fix.
             const feedback = generateScannerFeedback(uniqueCount);
@@ -1040,7 +1055,11 @@ app.post('/api/market-context', (req, res) => {
         console.log(`[Stream B] ✅ Accepted ${uniqueCount} unique .P coins (raw ${rawSnaps.length} → perps ${rawPerpCount} → deduped ${uniqueCount})`);
 
         const feedback = generateScannerFeedback(uniqueCount);
+        // market-context-update: existing event (GlobalHeader, health widgets)
         io.emit('market-context-update', { timestamp: now, counts: { screener: payload.screener_total_count, watchlist: uniqueCount } });
+        // stream-b-update: dedicated event so BYOC screener + other widgets
+        // can immediately re-query when fresh Stream B data arrives.
+        io.emit('stream-b-update', { timestamp: now, uniqueCount, cleanWatchlist });
 
         setImmediate(() => {
             deduped.forEach(({ baseSymbol, price, raw }) => {

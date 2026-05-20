@@ -371,20 +371,27 @@ export function BYCWidget() {
         return () => clearInterval(pollRef.current);
     }, [autoRun, runQuery]);
 
-    // ── Socket: re-run on Stream D batch update (fires ~every 2min, NOT per-coin) ──
-    // Uses 'stream-d-update' — the actual event emitted by server/index.js line ~937.
-    // Deliberately NOT listening to 'smart-level-update' (fires per-coin, too noisy).
+    // ── Socket: immediate refresh on Stream B or Stream D updates ────────────
+    // stream-b-update: fires every time Stream B processes a clean watchlist batch.
+    //   Fresh change% / volume / price data → re-run screener immediately.
+    // stream-d-update: fires every ~2 min when technical indicators arrive.
+    //   RSI / RVOL / ATR / EMA dist refreshed → re-run screener immediately.
+    // Both share the same throttled handler so rapid back-to-back pushes don't
+    // stack up concurrent fetches.
     useEffect(() => {
-        const handleStreamD = () => {
+        const handleDataPush = () => {
             if (!autoRunRef.current || clausesRef.current.length === 0) return;
             if (loadingRef.current) return;
-            // Throttle: skip if last run was < THROTTLE_MS ago
             if (Date.now() - lastRunMsRef.current < THROTTLE_MS) return;
             runQuery();
         };
         const sock = socketService.connect();
-        sock.on('stream-d-update', handleStreamD);
-        return () => sock.off('stream-d-update', handleStreamD);
+        sock.on('stream-b-update', handleDataPush);
+        sock.on('stream-d-update', handleDataPush);
+        return () => {
+            sock.off('stream-b-update', handleDataPush);
+            sock.off('stream-d-update', handleDataPush);
+        };
     }, [runQuery]);
 
     // ── Clause / mode setters — update refs inline, no useEffect overhead ──
