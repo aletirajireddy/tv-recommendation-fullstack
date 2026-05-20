@@ -84,7 +84,8 @@ function StatusDot({ color }) {
 
 function SystemHealthGrid() {
     const streamsHealth = useTimeStore(s => s.streamsHealth);
-    const timeline      = useTimeStore(s => s.timeline);
+    // NOTE: timeline is no longer needed here — Stream D health now comes directly
+    // from /api/system/health (coin_metric_history latest ts), not from scans table.
 
     // Status params: <30m green · 30-120m yellow · >120m red
     const getStatusParams = (isoString) => {
@@ -99,8 +100,9 @@ function SystemHealthGrid() {
     const sA = getStatusParams(streamsHealth?.streamA);
     const sB = getStatusParams(streamsHealth?.streamB);
     const sC = getStatusParams(streamsHealth?.streamC);
-    const latestScan = timeline.length > 0 ? timeline[timeline.length - 1] : null;
-    const sD = getStatusParams(latestScan?.timestamp);
+    // D:SYNC — reads from coin_metric_history via /api/system/health (streamD field).
+    // Previously derived from latestScan (Stream A scans) which made D always mirror A.
+    const sD = getStatusParams(streamsHealth?.streamD);
 
     const streams = [
         { key: 'A', title: 'A:MACRO', s: sA },

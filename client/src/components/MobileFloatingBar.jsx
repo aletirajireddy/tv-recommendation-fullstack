@@ -20,7 +20,8 @@ function StatusDot({ color }) {
 
 function useStreams() {
     const streamsHealth = useTimeStore(s => s.streamsHealth);
-    const timeline      = useTimeStore(s => s.timeline);
+    // timeline subscription removed — D:SYNC now reads from streamsHealth.streamD
+    // (coin_metric_history latest ts via /api/system/health), not from scans table.
 
     const getStatus = (iso) => {
         if (!iso) return { label: '--', color: 'var(--text-muted)' };
@@ -31,12 +32,11 @@ function useStreams() {
         return { label, color: '#EF4444' };
     };
 
-    const latest = timeline.length > 0 ? timeline[timeline.length - 1] : null;
     return [
         { key: 'A', name: 'MACRO', s: getStatus(streamsHealth?.streamA) },
         { key: 'B', name: 'SCOUT', s: getStatus(streamsHealth?.streamB) },
         { key: 'C', name: 'ALERT', s: getStatus(streamsHealth?.streamC) },
-        { key: 'D', name: 'SYNC',  s: getStatus(latest?.timestamp) },
+        { key: 'D', name: 'SYNC',  s: getStatus(streamsHealth?.streamD) },
     ];
 }
 

@@ -166,7 +166,7 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', version: 'v3-fresh-start', timestamp: new Date() });
 });
 
-// 1.5 TRI-STREAM HEALTH MONITORING
+// 1.5 QUAD-STREAM HEALTH MONITORING
 // --- HEALTH CACHE (30s TTL) ---
 // Stream timestamps change at scan cadence (1-5 min); caching for 30s is safe and
 // drops repeated calls from ~2.9s on a busy DB to <1ms cache hit.
@@ -176,6 +176,9 @@ const HEALTH_CACHE_TTL = 30_000; // 30s
 const _healthStmtA = db.prepare(`SELECT timestamp FROM scans ORDER BY timestamp DESC LIMIT 1`);
 const _healthStmtB = db.prepare(`SELECT timestamp FROM market_context_logs ORDER BY timestamp DESC LIMIT 1`);
 const _healthStmtC = db.prepare(`SELECT timestamp FROM unified_alerts ORDER BY timestamp DESC LIMIT 1`);
+// Stream D: coin_metric_history stores ts as Unix ms — convert to ISO string for consistency.
+// Uses idx_cmh_ticker_ts (ticker, ts DESC) — ORDER BY ts DESC LIMIT 1 hits leaf of B-tree.
+const _healthStmtD = db.prepare(`SELECT ts FROM coin_metric_history ORDER BY ts DESC LIMIT 1`);
 
 app.get('/api/system/health', (req, res) => {
     try {
@@ -189,12 +192,15 @@ app.get('/api/system/health', (req, res) => {
         const streamA = _healthStmtA.get();
         const streamB = _healthStmtB.get();
         const streamC = _healthStmtC.get();
+        const streamD = _healthStmtD.get();
 
         const data = {
             success: true,
             streamA: streamA ? streamA.timestamp : null,
             streamB: streamB ? streamB.timestamp : null,
-            streamC: streamC ? streamC.timestamp : null
+            streamC: streamC ? streamC.timestamp : null,
+            // D stores Unix ms — expose as ISO string to match A/B/C format
+            streamD: streamD ? new Date(streamD.ts).toISOString() : null,
         };
         _healthCache = { ts: now, data };
         res.set('Cache-Control', 'public, max-age=15');
@@ -3730,7 +3736,9 @@ const _bycScStmt = db.prepare(`
         SELECT ticker, stream_c_state, price, timestamp,
                ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) AS rn
         FROM master_coin_store
-        WHERE stream_c_state IS NOT NULL AND timestamp > ?
+        WHERE trigger_source = 'STREAM_C'
+          AND stream_c_state IS NOT NULL
+          AND timestamp > ?
     )
     SELECT ticker, stream_c_state, price, timestamp FROM ranked WHERE rn = 1
 `);

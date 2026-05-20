@@ -3,11 +3,13 @@ import { io } from "socket.io-client";
 // Use same-origin URL — Express now serves both the React client AND Socket.IO
 // on port 5173, so there is no proxy layer between the browser and the socket server.
 //
-// Transport order: WebSocket FIRST.
-// Tailscale Serve proxies WebSocket upgrades cleanly (persistent TCP tunnel).
-// Long-poll HTTP (polling) is NOT used as primary because Tailscale's HTTPS
-// reverse-proxy terminates long-lived HTTP connections with 502.
-// Polling is kept as a last-resort fallback only.
+// WebSocket ONLY — no polling fallback.
+// Tailscale Serve proxies WebSocket upgrades cleanly (persistent TCP tunnel, 101).
+// Long-poll HTTP (polling) is NOT an option here: Tailscale's HTTPS reverse-proxy
+// terminates long-lived HTTP connections with 502, and every polling retry makes
+// the situation worse (reconnect storms, UI slowdown).
+// If WebSocket fails we want a clean reconnect attempt — NOT a silent fallback to
+// a transport that is guaranteed to also fail.
 const SOCKET_URL = '/';
 
 class SocketService {
@@ -20,8 +22,8 @@ class SocketService {
 
         console.log(`🔌 [SocketService] Connecting to ${SOCKET_URL}...`);
         this.socket = io(SOCKET_URL, {
-            transports: ['websocket', 'polling'], // WebSocket first — works through Tailscale; polling fallback only
-            upgrade: true,
+            transports: ['websocket'], // WebSocket ONLY — polling is 502 through Tailscale
+            upgrade: false,            // nothing to upgrade to; skip the upgrade handshake
             reconnection: true,
             reconnectionAttempts: 15,
             reconnectionDelay: 1500,
