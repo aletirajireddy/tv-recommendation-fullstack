@@ -4471,7 +4471,24 @@ app.get(/.*/, (req, res) => {
 
 const PORT = process.env.PORT || 5173;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 V3 Server running on port ${PORT} (All Interfaces)`);
+    console.log(`🚀 V3 Server running on port ${PORT} (All Interfaces — Tailscale + Browser + Socket.IO)`);
+
+// ── Port 3000 companion listener ──────────────────────────────────────────────
+// Tampermonkey scripts and Pine Script webhooks POST to http://localhost:3000/.
+// They use plain HTTP (no Socket.IO, no WebSocket) so a separate http server
+// sharing the same Express app is all that's needed.
+// Socket.IO remains on the primary server (port 5173) only.
+const _local3000 = http.createServer(app);
+_local3000.listen(3000, '127.0.0.1', () => {
+    console.log(`🔌 Port 3000 open on localhost (Tampermonkey / Pine Script inbound)`);
+});
+_local3000.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+        console.warn(`⚠️  Port 3000 already in use — Tampermonkey scripts may already have a listener. Skipping.`);
+    } else {
+        console.error(`Port 3000 error:`, e.message);
+    }
+});
 
     // Idempotent (UNIQUE INDEX on ticker+ts+source dedupes), so safe on every boot.
     setImmediate(() => {
