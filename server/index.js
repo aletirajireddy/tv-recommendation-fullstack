@@ -1042,17 +1042,24 @@ app.post('/api/market-context', (req, res) => {
             // Still respond OK — include the clean list so the scanner can
             // immediately shrink its watchlist without waiting for a manual fix.
             const feedback = generateScannerFeedback(uniqueCount);
+            // Same force-prune logic as the normal path — dupes go to prune_list,
+            // master_targets is the clean list minus rejected dupes.
+            const _rejectedSet  = new Set(rejectedTickers);
+            const _forcedPrune  = [...new Set([...(feedback.prune_list || []), ...rejectedTickers])];
+            const _forcedTargets = [...new Set([...(feedback.master_targets || []), ...cleanWatchlist])]
+                .filter(t => !_rejectedSet.has(t));
             return res.json({
                 success: true,
                 warning:          'OVERLOADED — qualification skipped',
-                action_required:  'RESET_WATCHLIST',  // ← scanner should apply clean_watchlist immediately
+                action_required:  'RESET_WATCHLIST',
                 raw_count:        rawSnaps.length,
                 unique_count:     uniqueCount,
                 max_allowed:      _B_MAX_COINS,
-                clean_watchlist:  cleanWatchlist,      // ← exact list scanner should keep
-                rejected_tickers: rejectedTickers,     // ← what was dropped + why (spot/dup)
-                master_targets:   feedback.master_targets,
-                prune_list:       feedback.prune_list,
+                clean_watchlist:  cleanWatchlist,
+                rejected_tickers: rejectedTickers,
+                master_targets:   _forcedTargets,   // duplicates physically removed
+                prune_list:       _forcedPrune,     // rejected dupes forced into prune
+                force_prune:      rejectedTickers,  // explicit field
                 new_graduates:    feedback.new_graduates,
             });
         }
@@ -1076,17 +1083,35 @@ app.post('/api/market-context', (req, res) => {
             });
         });
 
+        // ── FORCE-PRUNE EXCHANGE DUPLICATES ──────────────────────────────────
+        // The scanner uses `prune_list` to physically REMOVE coins from its
+        // TradingView watchlist. Without merging rejectedTickers here, the
+        // scanner re-pushes the same duplicates forever (BINANCE:XRPUSDT.P +
+        // BYBIT:XRPUSDT.P + OKX:XRPUSDT.P every batch).
+        //
+        // master_targets is also overridden: take the union of the engine's
+        // master list AND cleanWatchlist, then strip anything we just rejected.
+        // This guarantees the scanner cannot keep a duplicate even if the
+        // engine's master_targets is stale.
+        const _rejectedSet  = new Set(rejectedTickers);
+        const _forcedPrune  = [...new Set([...(feedback.prune_list || []), ...rejectedTickers])];
+        const _forcedTargets = [...new Set([...(feedback.master_targets || []), ...cleanWatchlist])]
+            .filter(t => !_rejectedSet.has(t));
+
         res.json({
             success:          true,
             message:          'Market Context Telemetry Saved',
             raw_count:        rawSnaps.length,
             unique_count:     uniqueCount,
-            dedup_applied:    dedupApplied,           // ← true if any coins were merged/dropped
-            clean_watchlist:  cleanWatchlist,          // ← always returned — exact accepted list
-            rejected_tickers: rejectedTickers,         // ← dropped entries (spot, duplicates)
-            action_required:  dedupApplied ? 'UPDATE_WATCHLIST' : null, // ← scanner hint
-            master_targets:   feedback.master_targets,
-            prune_list:       feedback.prune_list,
+            dedup_applied:    dedupApplied,
+            clean_watchlist:  cleanWatchlist,
+            rejected_tickers: rejectedTickers,
+            // STRONG hint — scanner MUST replace its watchlist with master_targets
+            // any time dedup was applied. UPDATE_WATCHLIST is no longer optional.
+            action_required:  dedupApplied ? 'UPDATE_WATCHLIST' : null,
+            master_targets:   _forcedTargets,   // duplicates physically removed
+            prune_list:       _forcedPrune,     // rejected dupes forced into prune list
+            force_prune:      rejectedTickers,  // explicit field for scanners that key on it
             new_graduates:    feedback.new_graduates,
         });
     } catch (e) {
