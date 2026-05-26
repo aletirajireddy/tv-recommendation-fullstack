@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Institutional Conviction Engine - Bidirectional v20.2 (Strict Watchlist Diff)
+// @name         Institutional Conviction Engine - Bidirectional v20.3 (Force-Prune Dupes)
 // @namespace    http://tampermonkey.net/
-// @version      20.2
-// @description  Cyclic monitor with Precision Audit, deferred sync, Dynamic Orphan Detection, and Strict Watchlist Scoping.
+// @version      20.3
+// @description  v20.3: Honors backend force_prune (exchange dupes bypass VETO_PRUNE) and action_required (bypasses 15-min Automa cooldown for UPDATE_WATCHLIST/RESET_WATCHLIST). v20.2: Cyclic monitor with Precision Audit, deferred sync, Dynamic Orphan Detection, Strict Watchlist Scoping.
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
@@ -143,10 +143,37 @@
     function processSyncPayload(serverInfo, triggerTicker = "HEARTBEAT") {
         auditLog("BACKEND_SYNC", null, `Trigger: ${triggerTicker} | AI Suggestion: ${serverInfo.ai_suggestion || 'None'}`, "SYNC");
 
+        // ── New backend signals (server >= 2026-05-26) ──────────────────────────
+        // force_prune: tickers the backend KNOWS are exchange duplicates (e.g.
+        //   BYBIT:XRPUSDT.P when BINANCE:XRPUSDT.P is preferred). These MUST be
+        //   removed regardless of whether they are still visible on the live
+        //   screener — VETO_PRUNE does not apply here.
+        // action_required: "UPDATE_WATCHLIST" | "RESET_WATCHLIST" | null.
+        //   When set, the Automa cooldown is bypassed so the watchlist gets
+        //   corrected immediately (no 15-min wait for dupes to clear).
+        const forcePrune     = Array.isArray(serverInfo.force_prune) ? serverInfo.force_prune : [];
+        const actionRequired = serverInfo.action_required || null;
+        const isForcedUpdate = actionRequired === 'UPDATE_WATCHLIST' || actionRequired === 'RESET_WATCHLIST';
+
+        // ── 1. Force-prune exchange duplicates (bypasses VETO_PRUNE) ────────────
+        if (forcePrune.length > 0) {
+            forcePrune.forEach(tickerKey => {
+                if (activeMasterSet.has(tickerKey)) {
+                    activeMasterSet.delete(tickerKey);
+                    pipelineRegistry.delete(tickerKey);
+                    auditLog("FORCE_PRUNED", tickerKey, "Removed exchange duplicate (backend dedup).", "PRUNE");
+                }
+                if (serverTargetSet.has(tickerKey)) serverTargetSet.delete(tickerKey);
+            });
+        }
+
+        // ── 2. Normal prune list (VETO still applies — coin must be off-screener) ──
         if (serverInfo.prune_list && Array.isArray(serverInfo.prune_list)) {
             const liveScreenerKeys = new Set(getMarketSnapshot());
+            const forceSet         = new Set(forcePrune);
 
             serverInfo.prune_list.forEach(tickerKey => {
+                if (forceSet.has(tickerKey)) return;   // already handled above
                 if (activeMasterSet.has(tickerKey)) {
                     if (liveScreenerKeys.has(tickerKey)) {
                         auditLog("VETO_PRUNE", tickerKey, "Ignored backend prune. Coin is still actively visible on screener.", "SYSTEM");
@@ -186,10 +213,15 @@
                 const clipboardString = [...serverInfo.master_targets].join(',');
                 const now = Date.now();
                 const COOLDOWN_MS = CONFIG.AUTOMA_COOLDOWN_MINUTES * 60 * 1000;
+                const cooldownExpired = !window.lastAutomaTriggerMs || (now - window.lastAutomaTriggerMs > COOLDOWN_MS);
 
-                if (!window.lastAutomaTriggerMs || (now - window.lastAutomaTriggerMs > COOLDOWN_MS)) {
+                // ── Bypass cooldown when backend says UPDATE/RESET is required ──
+                // Without this, exchange-dupe cleanup waits up to 15 min before
+                // applying — which is exactly the lockin the user has been seeing.
+                if (cooldownExpired || isForcedUpdate) {
                     GM_setClipboard(clipboardString);
-                    auditLog("AUTOMA_TRIGGERED", null, `Copied ${serverInfo.master_targets.length} coins. Firing new tab. Next available in ${CONFIG.AUTOMA_COOLDOWN_MINUTES}m.`, "SYNC");
+                    const bypassNote = (!cooldownExpired && isForcedUpdate) ? ` [COOLDOWN BYPASSED — ${actionRequired}]` : '';
+                    auditLog("AUTOMA_TRIGGERED", null, `Copied ${serverInfo.master_targets.length} coins. Firing new tab.${bypassNote}`, "SYNC");
                     GM_openInTab("https://www.tradingview.com/cex-screener/lEINSjG1/", { active: false, insert: true, setParent: true });
 
                     window.lastAutomaTriggerMs = now;
