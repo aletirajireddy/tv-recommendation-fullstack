@@ -549,7 +549,12 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
                     // Apply the same .P + dedup rules as Stream B so the recovered list
                     // doesn't re-inflate the scanner watchlist with exchange duplicates.
                     const deduped = _deduplicateStreamB(payload.watchlist_active_snapshot);
-                    const recoveredTargets = deduped.map(({ exchange, baseSymbol }) => `${exchange}:${baseSymbol}`);
+                    // Belt-and-suspenders: pass through the universal full-ticker
+                    // deduper too, in case the snapshot itself was malformed or
+                    // contained exchange duplicates that slipped past Stream B's gate.
+                    const recoveredTargets = _dedupeFullTickers(
+                        deduped.map(({ exchange, baseSymbol }) => `${exchange}:${baseSymbol}`)
+                    );
                     console.log(`[WATCHLIST-ENGINE] 💧 Rehydrated ${recoveredTargets.length} unique .P coins from history (raw snapshot had ${payload.watchlist_active_snapshot.length} entries).`);
                     return {
                         ai_suggestion: "REHYDRATION",
@@ -797,13 +802,19 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     PERMANENT_MAJORS.forEach(p => finalSet.add(p));
     protectedAltcoins.forEach(p => finalSet.add(p));
 
+    // ── Final dedup pass — applied to EVERY output array ─────────────────────
+    // gracePeriodPicks and historicalTargetSet come from area1_scout_logs which
+    // may contain old `OKX:XRPUSDT.P` rows from before the upstream dedup was
+    // added. Without this pass, those legacy entries would re-introduce exchange
+    // duplicates into master_targets / active_list / new_graduates / prune_list,
+    // and the scanner would push the same dupes again next cycle.
     return {
         ai_suggestion: "TRACKING_5+2",
-        active_list: activeList,
-        prune_list: [...new Set(pruneList)],
-        ghost_list: ghostList,
-        new_graduates: newGraduates,
-        master_targets: Array.from(finalSet)
+        active_list:    _dedupeFullTickers(activeList),
+        prune_list:     _dedupeFullTickers([...new Set(pruneList)]),
+        ghost_list:     ghostList,
+        new_graduates:  _dedupeFullTickers(newGraduates),
+        master_targets: _dedupeFullTickers(Array.from(finalSet)),
     };
 }
 
@@ -917,6 +928,39 @@ const _B_MAX_COINS = 40; // overload threshold — more than this skips qualific
  *  2. Deduplicate by base ticker — prefer highest-priority exchange
  *  3. Return array of { baseSymbol, exchange, price, raw } objects
  */
+/**
+ * Universal full-ticker deduplicator — input: array of "EXCHANGE:BASE.P" strings.
+ * Collapses any two entries sharing the same BASE.P down to the preferred
+ * exchange (per _B_EXCHANGE_PRIORITY). Also drops non-.P tickers.
+ * Used by generateScannerFeedback to guarantee no exchange duplicates ever
+ * reach the scanner via master_targets / active_list / new_graduates / prune_list,
+ * including from historical fallback paths (gracePeriodPicks, area1_scout_logs,
+ * old scan_results rows ingested before _deduplicateStreamA was added).
+ */
+function _dedupeFullTickers(arr) {
+    if (!Array.isArray(arr)) return [];
+    const best = new Map(); // baseSymbol → { rank, full }
+    const order = [];       // preserve first-seen order for the kept entries
+    for (const full of arr) {
+        if (!full || typeof full !== 'string') continue;
+        if (!full.endsWith('.P')) continue;             // .P gate
+        const colonIdx = full.indexOf(':');
+        if (colonIdx < 0) continue;
+        const exchange   = full.slice(0, colonIdx).toUpperCase();
+        const baseSymbol = full.slice(colonIdx + 1);
+        const rank = _B_EXCHANGE_PRIORITY.indexOf(exchange);
+        const effectiveRank = rank === -1 ? 9999 : rank;
+        const existing = best.get(baseSymbol);
+        if (!existing) {
+            best.set(baseSymbol, { rank: effectiveRank, full: `${exchange}:${baseSymbol}` });
+            order.push(baseSymbol);
+        } else if (effectiveRank < existing.rank) {
+            best.set(baseSymbol, { rank: effectiveRank, full: `${exchange}:${baseSymbol}` });
+        }
+    }
+    return order.map(b => best.get(b).full);
+}
+
 function _deduplicateStreamB(rawSnaps) {
     const best = new Map(); // baseSymbol → { exchangeRank, raw }
     for (const w of rawSnaps) {
