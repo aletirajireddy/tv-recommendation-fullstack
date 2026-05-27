@@ -28,20 +28,40 @@ export function GlobalHeader({ onOpenThemeBuilder }) {
     const mobileMenuOpen = useTimeStore(s => s.mobileMenuOpen);
     const setMobileMenuOpen = useTimeStore(s => s.setMobileMenuOpen);
 
-    // Initialize Data & Socket & Settings
+    // ── Serialised boot sequence ────────────────────────────────────────────────
+    // PROBLEM: firing fetchTimeline + 4 widget fetches + socket all at T=0
+    // hammers the backend with 10+ parallel SQLite queries before Node's event
+    // loop can breathe — this is what causes the "header chart freezing" delay.
+    //
+    // SOLUTION: priority order with micro-delays so the DB processes one heavy
+    // query at a time:
+    //   Phase 1 (T=0):   socket handshake + lightweight health check
+    //   Phase 2 (T=50ms): heavy timeline fetch (sets appReady → unblocks eager widgets)
+    //   Phase 3 (T=400ms): telegram status (least critical, can wait)
+    //
+    // Each phase is separated by enough time for the previous async call to
+    // reach the backend and start its DB query before the next one arrives.
     useEffect(() => {
-        fetchTimeline();
-        fetchTelegramStatus(); // Fetch Toggle State
+        // Phase 1 — connect socket + fast health endpoint (no DB query, cached 30s)
         initializeSocket();
+        fetchStreamsHealth();
 
-        // Tri-Stream health — 30s is fine; status ages are shown in minutes so
+        // Phase 2 — heavy timeline fetch; 50ms yield lets browser paint first frame
+        const t1 = setTimeout(() => fetchTimeline(), 50);
+
+        // Phase 3 — telegram toggle state; non-blocking, low priority
+        const t2 = setTimeout(() => fetchTelegramStatus(), 400);
+
+        // Health poll — 30s is fine; status ages are shown in minutes so
         // 10s precision adds no value and generates 6 extra HTTP calls/min through
         // Tailscale / remote tunnels unnecessarily.
-        fetchStreamsHealth();
-        const healthPoll = setInterval(() => {
-            fetchStreamsHealth();
-        }, 30000);
-        return () => clearInterval(healthPoll);
+        const healthPoll = setInterval(() => fetchStreamsHealth(), 30_000);
+
+        return () => {
+            clearTimeout(t1);
+            clearTimeout(t2);
+            clearInterval(healthPoll);
+        };
     }, []);
 
     // Animation Pulse Trigger for Header

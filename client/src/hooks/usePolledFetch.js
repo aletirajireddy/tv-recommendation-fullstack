@@ -31,6 +31,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
  * @param {boolean}opts.pauseOnHidden    default true
  * @param {boolean}opts.refetchOnVisible default true
  */
+const _sharedFetches = new Map();
+
 export function usePolledFetch(fetcher, {
     intervalMs = 60_000,
     deps = [],
@@ -64,13 +66,23 @@ export function usePolledFetch(fetcher, {
         try {
             const result = fetcherRef.current(ctrl.signal);
             let payload;
+            
+            const fetchShared = (url) => {
+                if (!_sharedFetches.has(url)) {
+                    // Do not attach the component's abort signal to the shared network request,
+                    // otherwise one component unmounting kills the request for all sharing widgets.
+                    const promise = fetch(url).then(r => r.json()).finally(() => {
+                        _sharedFetches.delete(url);
+                    });
+                    _sharedFetches.set(url, promise);
+                }
+                return _sharedFetches.get(url);
+            };
+
             if (typeof result === 'string') {
-                const r = await fetch(result, { signal: ctrl.signal });
-                payload = await r.json();
+                payload = await fetchShared(result);
             } else if (Array.isArray(result)) {
-                payload = await Promise.all(
-                    result.map(u => fetch(u, { signal: ctrl.signal }).then(r => r.json()))
-                );
+                payload = await Promise.all(result.map(u => fetchShared(u)));
             } else {
                 payload = await result;
             }

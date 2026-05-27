@@ -803,18 +803,21 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     protectedAltcoins.forEach(p => finalSet.add(p));
 
     // ── Final dedup pass — applied to EVERY output array ─────────────────────
-    // gracePeriodPicks and historicalTargetSet come from area1_scout_logs which
-    // may contain old `OKX:XRPUSDT.P` rows from before the upstream dedup was
-    // added. Without this pass, those legacy entries would re-introduce exchange
-    // duplicates into master_targets / active_list / new_graduates / prune_list,
-    // and the scanner would push the same dupes again next cycle.
+    // Calculate the exact duplicates that were dropped by dedup to force-prune them.
+    const rawMasterTargets = Array.from(finalSet);
+    const dedupedMasterTargets = _dedupeFullTickers(rawMasterTargets);
+    const dedupedSet = new Set(dedupedMasterTargets);
+    const droppedDuplicates = rawMasterTargets.filter(t => !dedupedSet.has(t));
+
     return {
         ai_suggestion: "TRACKING_5+2",
         active_list:    _dedupeFullTickers(activeList),
         prune_list:     _dedupeFullTickers([...new Set(pruneList)]),
         ghost_list:     ghostList,
         new_graduates:  _dedupeFullTickers(newGraduates),
-        master_targets: _dedupeFullTickers(Array.from(finalSet)),
+        master_targets: dedupedMasterTargets,
+        force_prune:    droppedDuplicates,
+        action_required: droppedDuplicates.length > 0 ? "UPDATE_WATCHLIST" : null
     };
 }
 
@@ -900,7 +903,9 @@ app.post('/qualified-pick', (req, res) => {
             prune_list: feedback.prune_list,
             ghost_list: feedback.ghost_list,
             new_graduates: feedback.new_graduates,
-            master_targets: feedback.master_targets
+            master_targets: feedback.master_targets,
+            force_prune: feedback.force_prune,
+            action_required: feedback.action_required
         });
 
     } catch (e) {
@@ -939,44 +944,59 @@ const _B_MAX_COINS = 40; // overload threshold — more than this skips qualific
  */
 function _dedupeFullTickers(arr) {
     if (!Array.isArray(arr)) return [];
-    const best = new Map(); // baseSymbol → { rank, full }
+    const best = new Map(); // cleanBase → { hasP, rank, full }
     const order = [];       // preserve first-seen order for the kept entries
     for (const full of arr) {
         if (!full || typeof full !== 'string') continue;
-        if (!full.endsWith('.P')) continue;             // .P gate
         const colonIdx = full.indexOf(':');
         if (colonIdx < 0) continue;
         const exchange   = full.slice(0, colonIdx).toUpperCase();
         const baseSymbol = full.slice(colonIdx + 1);
+        
+        const hasP = baseSymbol.endsWith('.P') || baseSymbol.includes('PERP');
+        const cleanBase = baseSymbol.replace(/\.P$/, '').replace(/PERP$/, '');
+
         const rank = _B_EXCHANGE_PRIORITY.indexOf(exchange);
         const effectiveRank = rank === -1 ? 9999 : rank;
-        const existing = best.get(baseSymbol);
+        const existing = best.get(cleanBase);
+
         if (!existing) {
-            best.set(baseSymbol, { rank: effectiveRank, full: `${exchange}:${baseSymbol}` });
-            order.push(baseSymbol);
-        } else if (effectiveRank < existing.rank) {
-            best.set(baseSymbol, { rank: effectiveRank, full: `${exchange}:${baseSymbol}` });
+            best.set(cleanBase, { hasP, rank: effectiveRank, full: `${exchange}:${baseSymbol}` });
+            order.push(cleanBase);
+        } else if (hasP && !existing.hasP) {
+            best.set(cleanBase, { hasP, rank: effectiveRank, full: `${exchange}:${baseSymbol}` });
+        } else if (hasP === existing.hasP && effectiveRank < existing.rank) {
+            best.set(cleanBase, { hasP, rank: effectiveRank, full: `${exchange}:${baseSymbol}` });
         }
     }
     return order.map(b => best.get(b).full);
 }
 
 function _deduplicateStreamB(rawSnaps) {
-    const best = new Map(); // baseSymbol → { exchangeRank, raw }
+    const best = new Map(); // cleanBase → { hasP, rank, exchange, raw, baseSymbol }
     for (const w of rawSnaps) {
-        if (!w.full || !w.full.endsWith('.P')) continue; // ← .P gate
+        if (!w.full) continue;
         const colonIdx = w.full.indexOf(':');
         if (colonIdx < 0) continue;
         const exchange   = w.full.slice(0, colonIdx).toUpperCase();
         const baseSymbol = w.full.slice(colonIdx + 1); // e.g. "XRPUSDT.P"
+        
+        const hasP = baseSymbol.endsWith('.P') || baseSymbol.includes('PERP');
+        const cleanBase = baseSymbol.replace(/\.P$/, '').replace(/PERP$/, '');
+
         const rank = _B_EXCHANGE_PRIORITY.indexOf(exchange);
         const effectiveRank = rank === -1 ? 9999 : rank;
-        const existing = best.get(baseSymbol);
-        if (!existing || effectiveRank < existing.rank) {
-            best.set(baseSymbol, { rank: effectiveRank, exchange, raw: w });
+        const existing = best.get(cleanBase);
+
+        if (!existing) {
+            best.set(cleanBase, { hasP, rank: effectiveRank, exchange, raw: w, baseSymbol });
+        } else if (hasP && !existing.hasP) {
+            best.set(cleanBase, { hasP, rank: effectiveRank, exchange, raw: w, baseSymbol });
+        } else if (hasP === existing.hasP && effectiveRank < existing.rank) {
+            best.set(cleanBase, { hasP, rank: effectiveRank, exchange, raw: w, baseSymbol });
         }
     }
-    return [...best.entries()].map(([baseSymbol, { exchange, raw }]) => ({
+    return [...best.values()].map(({ baseSymbol, exchange, raw }) => ({
         baseSymbol,
         exchange,
         price: parsePrice(raw.price || raw.close),
@@ -985,26 +1005,33 @@ function _deduplicateStreamB(rawSnaps) {
 }
 
 /**
- * Deduplicate Stream A scan results by base ticker.
+ * Deduplicate Stream A & D scan results by base ticker.
  * Rules (mirrors Stream B gatekeeper):
- *  1. Only keep perpetual contracts — item.datakey or item.ticker must end with '.P'
+ *  1. Prefer perpetual contracts (item.datakey or item.ticker ends with '.P' or 'PERP')
  *  2. When multiple exchanges send the same base coin, keep the highest-priority one
  * Returns a deduplicated array of the original result objects (unmodified).
  */
 function _deduplicateStreamA(results) {
-    const best = new Map(); // baseSymbol → { rank, item }
+    const best = new Map(); // cleanBase → { hasP, rank, item }
     for (const item of results) {
         const raw = item.datakey || item.ticker || '';
-        // Only .P perpetuals — spot coins (BINANCE:XRPUSDT) and non-USD pairs are ignored
-        if (!raw.endsWith('.P')) continue;
         const colonIdx    = raw.indexOf(':');
         const exchange    = colonIdx >= 0 ? raw.slice(0, colonIdx).toUpperCase() : 'UNKNOWN';
         const baseSymbol  = colonIdx >= 0 ? raw.slice(colonIdx + 1) : raw; // e.g. "XRPUSDT.P"
+        
+        const hasP = baseSymbol.endsWith('.P') || baseSymbol.includes('PERP');
+        const cleanBase = baseSymbol.replace(/\.P$/, '').replace(/PERP$/, '');
+
         const rank        = _B_EXCHANGE_PRIORITY.indexOf(exchange);
         const effectiveRank = rank === -1 ? 9999 : rank;
-        const existing = best.get(baseSymbol);
-        if (!existing || effectiveRank < existing.rank) {
-            best.set(baseSymbol, { rank: effectiveRank, item });
+        const existing = best.get(cleanBase);
+
+        if (!existing) {
+            best.set(cleanBase, { hasP, rank: effectiveRank, item });
+        } else if (hasP && !existing.hasP) {
+            best.set(cleanBase, { hasP, rank: effectiveRank, item });
+        } else if (hasP === existing.hasP && effectiveRank < existing.rank) {
+            best.set(cleanBase, { hasP, rank: effectiveRank, item });
         }
     }
     return [...best.values()].map(({ item }) => item);
@@ -1089,7 +1116,7 @@ app.post('/api/market-context', (req, res) => {
             // Same force-prune logic as the normal path — dupes go to prune_list,
             // master_targets is the clean list minus rejected dupes.
             const _rejectedSet  = new Set(rejectedTickers);
-            const _forcedPrune  = [...new Set([...(feedback.prune_list || []), ...rejectedTickers])];
+            const combinedForcePrune = [...new Set([...(feedback.prune_list || []), ...(feedback.force_prune || []), ...rejectedTickers])];
             const _forcedTargets = [...new Set([...(feedback.master_targets || []), ...cleanWatchlist])]
                 .filter(t => !_rejectedSet.has(t));
             return res.json({
@@ -1102,8 +1129,8 @@ app.post('/api/market-context', (req, res) => {
                 clean_watchlist:  cleanWatchlist,
                 rejected_tickers: rejectedTickers,
                 master_targets:   _forcedTargets,   // duplicates physically removed
-                prune_list:       _forcedPrune,     // rejected dupes forced into prune
-                force_prune:      rejectedTickers,  // explicit field
+                prune_list:       combinedForcePrune, // rejected dupes forced into prune
+                force_prune:      [...new Set([...rejectedTickers, ...(feedback.force_prune || [])])], // explicit field
                 new_graduates:    feedback.new_graduates,
             });
         }
@@ -1138,7 +1165,7 @@ app.post('/api/market-context', (req, res) => {
         // This guarantees the scanner cannot keep a duplicate even if the
         // engine's master_targets is stale.
         const _rejectedSet  = new Set(rejectedTickers);
-        const _forcedPrune  = [...new Set([...(feedback.prune_list || []), ...rejectedTickers])];
+        const combinedForcePrune = [...new Set([...(feedback.prune_list || []), ...(feedback.force_prune || []), ...rejectedTickers])];
         const _forcedTargets = [...new Set([...(feedback.master_targets || []), ...cleanWatchlist])]
             .filter(t => !_rejectedSet.has(t));
 
@@ -1150,12 +1177,10 @@ app.post('/api/market-context', (req, res) => {
             dedup_applied:    dedupApplied,
             clean_watchlist:  cleanWatchlist,
             rejected_tickers: rejectedTickers,
-            // STRONG hint — scanner MUST replace its watchlist with master_targets
-            // any time dedup was applied. UPDATE_WATCHLIST is no longer optional.
-            action_required:  dedupApplied ? 'UPDATE_WATCHLIST' : null,
+            action_required:  (dedupApplied || feedback.action_required) ? 'UPDATE_WATCHLIST' : null,
             master_targets:   _forcedTargets,   // duplicates physically removed
-            prune_list:       _forcedPrune,     // rejected dupes forced into prune list
-            force_prune:      rejectedTickers,  // explicit field for scanners that key on it
+            prune_list:       combinedForcePrune, // rejected dupes forced into prune list
+            force_prune:      [...new Set([...rejectedTickers, ...(feedback.force_prune || [])])], // explicit field for scanners that key on it
             new_graduates:    feedback.new_graduates,
         });
     } catch (e) {
@@ -1177,6 +1202,9 @@ app.post('/api/stream-d/technicals', (req, res) => {
         if (!payload.results || !Array.isArray(payload.results)) {
             return res.status(400).json({ error: 'results array required' });
         }
+
+        // Apply deduplication to Stream D to prevent duplicates (preferring .P pairs)
+        payload.results = _deduplicateStreamA(payload.results);
 
         // Non-blocking: process after response is sent
         setImmediate(() => {
@@ -2828,8 +2856,93 @@ app.post('/api/settings/telegram', (req, res) => {
 });
 
 // --- ANALYTICS CACHE (Institutional Speed) ---
-let _pulseCache = { ts: 0, data: null };
-const PULSE_CACHE_TTL = 10000; // 10s
+// Keyed by `hours|refTime` string — collapses burst from multiple widgets
+// (RSIDistribution, MarketStructure, ConfluenceGrid, AlertsAnalyzer) all
+// hitting /api/analytics/pulse simultaneously on scan-update.
+const _pulseCache   = new Map(); // key -> { ts, data }
+const PULSE_CACHE_TTL = 15_000;  // 15s — safe since data changes at scan cadence (~1-5 min)
+
+// --- FUSION CACHE ---
+const _fusionCache  = new Map(); // key -> { ts, data }
+const FUSION_CACHE_TTL = 10_000; // 10s
+
+// --- RSI GRID CACHE ---
+const _rsiGridCache = new Map(); // key -> { ts, data }
+const RSI_GRID_CACHE_TTL = 15_000; // 15s — RSI updates at Stream D cadence (~2 min)
+
+// --- MOMENTUM PULSE CACHE ---
+const _momentumCache = new Map(); // key -> { ts, data }
+const MOMENTUM_CACHE_TTL = 15_000; // 15s
+
+// 8.5 CASCADE HISTORY (Real-time and Historical Cascade Trends)
+app.get('/api/analytics/cascade-history', (req, res) => {
+    try {
+        const hours = parseInt(req.query.hours) || 24;
+        const refTime = req.query.refTime ? new Date(req.query.refTime) : new Date();
+        const anchorTime = isNaN(refTime.getTime()) ? new Date() : refTime;
+        const cutoffMs = anchorTime.getTime() - hours * 60 * 60 * 1000;
+        const bucketMs = 5 * 60 * 1000; // 5 minute buckets
+
+        // Query 1: Get raw metric history
+        const rows = db.prepare(`
+            SELECT ticker, ts, dist_m1, dist_m5, dist_m15, dist_h1, dist_h4, atr_m15
+            FROM coin_metric_history
+            WHERE ts > ? AND ts <= ?
+            ORDER BY ts ASC
+        `).all(cutoffMs, anchorTime.getTime());
+
+        // Query 2: Get volume events for overlays
+        const cutoffISO = new Date(cutoffMs).toISOString();
+        const anchorISO = anchorTime.toISOString();
+        const volRows = db.prepare(`
+            SELECT ticker, ts, source, strength
+            FROM volume_events
+            WHERE ts > ? AND ts <= ?
+        `).all(cutoffISO, anchorISO);
+
+        // Group volume events by 5-min bucket and ticker
+        const volSpikes = {};
+        for (const v of volRows) {
+            const vMs = new Date(v.ts).getTime();
+            const bMs = Math.floor(vMs / bucketMs) * bucketMs;
+            if (!volSpikes[bMs]) volSpikes[bMs] = {};
+            volSpikes[bMs][v.ticker] = true;
+        }
+
+        // Group metrics into buckets
+        const buckets = {};
+        for (const r of rows) {
+            // Group by bucket (floor to nearest 5 min)
+            const bMs = Math.floor(r.ts / bucketMs) * bucketMs;
+            if (!buckets[bMs]) buckets[bMs] = {};
+            
+            if (r.dist_h4 != null || r.dist_h1 != null) {
+                buckets[bMs][r.ticker] = {
+                    m1: r.dist_m1,
+                    m5: r.dist_m5,
+                    m15: r.dist_m15,
+                    h1: r.dist_h1,
+                    h4: r.dist_h4,
+                    atr15: r.atr_m15,
+                    v: volSpikes[bMs]?.[r.ticker] ? 1 : 0
+                };
+            }
+        }
+
+        const timeline = Object.keys(buckets).sort().map(tsStr => {
+            const ts = parseInt(tsStr);
+            return {
+                ts,
+                data: buckets[ts]
+            };
+        });
+
+        res.json({ timeline });
+    } catch (err) {
+        console.error('API /analytics/cascade-history Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // 8. ANALYTICS PULSE (Real V3 Aggregation)
 app.get('/api/analytics/pulse', (req, res) => {
@@ -2839,6 +2952,15 @@ app.get('/api/analytics/pulse', (req, res) => {
         const anchorTime = isNaN(refTime.getTime()) ? new Date() : refTime;
         const anchorStr = anchorTime.toISOString();
         const cutoff = new Date(anchorTime.getTime() - hours * 60 * 60 * 1000).toISOString();
+
+        // Cache check — collapses widget burst (4 components hit this at once on scan-update)
+        // Replay queries (with explicit refTime) are also cached briefly to absorb double-mount.
+        const _pulseCacheKey = `${hours}|${req.query.refTime || ''}`;
+        const _pulseCacheHit = _pulseCache.get(_pulseCacheKey);
+        if (_pulseCacheHit && (Date.now() - _pulseCacheHit.ts) < PULSE_CACHE_TTL) {
+            res.set('Cache-Control', 'public, max-age=15');
+            return res.json(_pulseCacheHit.data);
+        }
 
         // A. Multi-Widget Aggregation (One Pass)
         // 1. Fetch all minute-buckets in the window chronologically
@@ -3029,11 +3151,9 @@ app.get('/api/analytics/pulse', (req, res) => {
             insights: total_alerts > 0 ? [`${total_alerts} events in last ${hours}h`] : ["No recent activity"]
         };
 
-        // Cache the result if this was a standard 24h query
-        if (hours === 24 && !req.query.refTime) {
-            _pulseCache = { ts: Date.now(), data: responseData };
-        }
-
+        // Cache the result (all queries — short TTL so stale data is never a concern)
+        _pulseCache.set(_pulseCacheKey, { ts: Date.now(), data: responseData });
+        res.set('Cache-Control', 'public, max-age=15');
         res.json(responseData);
 
     } catch (e) {
@@ -3464,6 +3584,15 @@ app.get('/api/fusion/dashboard', (req, res) => {
         const anchorTime = isNaN(refTime.getTime()) ? new Date() : refTime;
         const anchorStr = anchorTime.toISOString();
 
+        // Cache check — fusion fires on every smart-level-update socket event which
+        // can arrive multiple times per second during active market conditions.
+        const _fusionKey = req.query.refTime || 'live';
+        const _fusionHit = _fusionCache.get(_fusionKey);
+        if (_fusionHit && (Date.now() - _fusionHit.ts) < FUSION_CACHE_TTL) {
+            res.set('Cache-Control', 'public, max-age=10');
+            return res.json(_fusionHit.data);
+        }
+
         // 1. Get the latest Stream C events per ticker
         const streamC_Rows = db.prepare(`
             SELECT ticker, timestamp as alert_time, price, direction, roc_pct, raw_data 
@@ -3656,12 +3785,15 @@ app.get('/api/fusion/dashboard', (req, res) => {
         // 5. RSI Distribution Processing
         const rsi_distribution = RSIEngine.processRSIData(streamC_Rows);
 
-        res.json({
+        const _fusionPayload = {
             success: true,
             count: dashboardData.length,
             records: dashboardData,
             rsi_distribution: rsi_distribution
-        });
+        };
+        _fusionCache.set(_fusionKey, { ts: Date.now(), data: _fusionPayload });
+        res.set('Cache-Control', 'public, max-age=10');
+        res.json(_fusionPayload);
 
     } catch (e) {
         console.error("Fusion Dashboard Error:", e);
@@ -3701,6 +3833,14 @@ app.get('/api/rsi-grid-wall', (req, res) => {
         const oversold      = parseFloat(req.query.oversold      ?? 30);
         const overbought    = parseFloat(req.query.overbought     ?? 70);
         const pullbackZone  = parseFloat(req.query.pullback_zone  ?? 5);
+
+        // Cache check — RSI values update at Stream D cadence (~2 min); 15s cache is safe.
+        const _rsiKey = `${seriesTFsRaw.join(',')}|${tempTF}|${oversold}|${overbought}|${pullbackZone}`;
+        const _rsiHit = _rsiGridCache.get(_rsiKey);
+        if (_rsiHit && (Date.now() - _rsiHit.ts) < RSI_GRID_CACHE_TTL) {
+            res.set('Cache-Control', 'public, max-age=15');
+            return res.json(_rsiHit.data);
+        }
 
         const TF_COL = { m5: 'rsi_m5', m15: 'rsi_m15', m30: 'rsi_m30', h1: 'rsi_h1' };
         const validTFs  = Object.keys(TF_COL);
@@ -3771,7 +3911,10 @@ app.get('/api/rsi-grid-wall', (req, res) => {
             return od !== 0 ? od : (b.pullback ? 1 : 0) - (a.pullback ? 1 : 0);
         });
 
-        res.json({ coins, config: { seriesTFs, tempTF, oversold, overbought, pullbackZone } });
+        const _rsiPayload = { coins, config: { seriesTFs, tempTF, oversold, overbought, pullbackZone } };
+        _rsiGridCache.set(_rsiKey, { ts: Date.now(), data: _rsiPayload });
+        res.set('Cache-Control', 'public, max-age=15');
+        res.json(_rsiPayload);
     } catch (e) {
         console.error('[RSI Grid Wall]', e);
         res.status(500).json({ error: e.message });
@@ -3947,6 +4090,14 @@ app.get('/api/momentum-pulse', (req, res) => {
         const histBuckets = Math.min(120, parseInt(req.query.hist) || 30);
         const cutoffTs    = Date.now() - histBuckets * 2 * 60 * 1000;
 
+        // Cache check — data changes at Stream D cadence (~2 min); 15s TTL is safe.
+        const _momentumKey = `${rvolThresh}|${histBuckets}`;
+        const _momentumHit = _momentumCache.get(_momentumKey);
+        if (_momentumHit && (Date.now() - _momentumHit.ts) < MOMENTUM_CACHE_TTL) {
+            res.set('Cache-Control', 'public, max-age=15');
+            return res.json(_momentumHit.data);
+        }
+
         // ── 1. Primary: latest Stream C state per ticker (master_coin_store) ──
         // Stream C fires per-coin on every scan/alert cycle — fresher than Stream B's
         // batched watchlist snapshot. Provides today_change_pct, today_volume, rsi_matrix,
@@ -4104,7 +4255,10 @@ app.get('/api/momentum-pulse', (req, res) => {
             });
         }
 
-        res.json({ coins, ts: Date.now(), rvolThresh });
+        const _momentumPayload = { coins, ts: Date.now(), rvolThresh };
+        _momentumCache.set(_momentumKey, { ts: Date.now(), data: _momentumPayload });
+        res.set('Cache-Control', 'public, max-age=15');
+        res.json(_momentumPayload);
     } catch (e) {
         console.error('[momentum-pulse]', e);
         res.status(500).json({ error: e.message });

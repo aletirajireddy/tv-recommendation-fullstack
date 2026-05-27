@@ -1,0 +1,153 @@
+.widgetWrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: 1rem;
+    height: 350px;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    background-color: var(--bg-panel);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    touch-action: pan-y;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.viewToggleBtn {
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    border-radius: 4px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    transition: all 0.2s;
+}
+
+.viewToggleBtn.active {
+    background: var(--accent-blue);
+    color: #fff;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+.iconBtn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.iconBtn:hover {
+    color: var(--text-main);
+    background: var(--bg-app);
+}
+
+.settingsPanel {
+    padding: 0.5rem;
+    background: var(--bg-app);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    margin-bottom: 0.5rem;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.coinChip {
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: monospace;
+    border-radius: 4px;
+    cursor: pointer;
+    background: var(--bg-panel);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    transition: all 0.2s;
+}
+
+.coinChip:hover {
+    border-color: var(--text-muted);
+}
+
+.coinChip.selected {
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 6px rgba(59, 130, 246, 0.3);
+}
+
+.tooltipContainer {
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    background-color: var(--bg-panel);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    min-width: 140px;
+}
+
+.tooltipTime {
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.tooltipRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 0;
+    font-size: 0.875rem;
+    font-family: monospace;
+}
+
+.labelTempBull { color: #34D399; font-size: 0.75rem; font-weight: 600; font-family: sans-serif; }
+.labelLongBull { color: #10B981; font-size: 0.75rem; font-weight: 600; font-family: sans-serif; }
+.labelLongBear { color: #EF4444; font-size: 0.75rem; font-weight: 600; font-family: sans-serif; }
+.labelTempBear { color: #F87171; font-size: 0.75rem; font-weight: 600; font-family: sans-serif; }
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── BRUSH STYLING (Targeting SVG elements) ─── */
+:global(.recharts-brush) {
+    cursor: ew-resize;
+}
+
+:global(.recharts-brush-background) {
+    fill: var(--bg-panel);
+    stroke: var(--border);
+}
+
+:global(.recharts-brush-slide) {
+    fill: rgba(59, 130, 246, 0.15);
+    stroke: var(--accent-blue);
+}
+
+:global(.recharts-brush-traveller) {
+    cursor: ew-resize;
+}
+
+:global(.recharts-brush-traveller rect) {
+    fill: var(--text-muted);
+    stroke: var(--bg-panel);
+    rx: 4px;
+}

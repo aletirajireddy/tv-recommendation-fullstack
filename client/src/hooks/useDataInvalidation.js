@@ -80,8 +80,8 @@ export function useDataInvalidation(containerRef, reloadFn, invalidateOn) {
         if (!invalidateOn) return; // 0 / null → ignore initial mount value
 
         if (visibleRef.current) {
-            // Visible: refresh immediately (no spinner, keeps stale data shown)
-            reloadRef.current();
+            // Visible: enqueue to stagger requests and avoid slamming the backend
+            _enqueue(() => reloadRef.current());
         } else {
             // Off-screen: mark as stale — will reload when it scrolls into view
             pendingRef.current = true;

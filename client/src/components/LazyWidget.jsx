@@ -31,8 +31,17 @@ let _rafPending = false;
 const _drain = () => {
     _rafPending = false;
     if (_mountQueue.length === 0) return;
-    const cb = _mountQueue.shift();
-    try { cb(); } catch (_) { /* host component handles render errors */ }
+
+    // Viewport-Priority Sort: Elements closest to the top load first
+    _mountQueue.sort((a, b) => {
+        const aTop = a.node ? a.node.getBoundingClientRect().top : 0;
+        const bTop = b.node ? b.node.getBoundingClientRect().top : 0;
+        return aTop - bTop;
+    });
+
+    const item = _mountQueue.shift();
+    try { item.cb(); } catch (_) { /* host component handles render errors */ }
+
     if (_mountQueue.length > 0) {
         _rafPending = true;
         if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(_drain);
@@ -40,8 +49,8 @@ const _drain = () => {
     }
 };
 
-const _enqueue = (cb) => {
-    _mountQueue.push(cb);
+const _enqueue = (node, cb) => {
+    _mountQueue.push({ node, cb });
     if (_rafPending) return;
     _rafPending = true;
     if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(_drain);
@@ -72,7 +81,7 @@ export function LazyWidget({
             (entries) => {
                 if (entries.some(e => e.isIntersecting)) {
                     io.disconnect();
-                    _enqueue(() => { if (!cancelled) setShouldRender(true); });
+                    _enqueue(node, () => { if (!cancelled) setShouldRender(true); });
                 }
             },
             { rootMargin, threshold }

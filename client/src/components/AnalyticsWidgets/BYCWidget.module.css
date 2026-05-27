@@ -405,15 +405,21 @@
     border: none;
     color: var(--text-muted);
     cursor: pointer;
-    padding: 3px;
+    padding: 4px;
     display: flex;
     align-items: center;
-    border-radius: 3px;
-    opacity: 0.5;
-    transition: opacity 0.1s, color 0.1s;
-    margin-left: auto;
+    justify-content: center;
+    border-radius: 4px;
+    opacity: 0.6;
+    transition: all 0.1s ease;
+    flex-shrink: 0;
+    margin-left: 2px;
 }
-.removeBtn:hover { opacity: 1; color: var(--accent-red); }
+.removeBtn:hover {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--accent-red);
+    opacity: 1;
+}
 
 /* ─── Builder footer ───────────────────────────────────────────────────────── */
 

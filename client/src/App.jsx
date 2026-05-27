@@ -20,11 +20,14 @@ const ThemeBuilder           = lazy(() => import('./components/ThemeBuilder').th
 // CODE-SPLIT WIDGETS — each becomes its own chunk, fetched only when in viewport.
 // Above-the-fold widgets get a smaller rootMargin; deeper sections get more aggressive
 // prefetch so the user never sees a skeleton during normal scroll.
-const ValidatorTimelineWidget   = lazy(() => import('./components/AnalyticsWidgets/ValidatorTimelineWidget').then(m => ({ default: m.ValidatorTimelineWidget })));
+import { ValidatorTimelineWidget } from './components/AnalyticsWidgets/ValidatorTimelineWidget';
+import { LevelReactionWidget } from './components/AnalyticsWidgets/LevelReactionWidget';
+import { DistanceTracker } from './components/AnalyticsWidgets/DistanceTracker';
+import { BYCWidget } from './components/AnalyticsWidgets/BYCWidget';
+
 const DailyCalendarWidget       = lazy(() => import('./components/AnalyticsWidgets/DailyCalendarWidget').then(m => ({ default: m.DailyCalendarWidget })));
-const LevelReactionWidget       = lazy(() => import('./components/AnalyticsWidgets/LevelReactionWidget').then(m => ({ default: m.LevelReactionWidget })));
 const EMACascadeMonitor         = lazy(() => import('./components/AnalyticsWidgets/EMACascadeMonitor').then(m => ({ default: m.EMACascadeMonitor })));
-const DistanceTracker           = lazy(() => import('./components/AnalyticsWidgets/DistanceTracker').then(m => ({ default: m.DistanceTracker })));
+const CascadeTrendWidget        = lazy(() => import('./components/AnalyticsWidgets/CascadeTrendWidget').then(m => ({ default: m.CascadeTrendWidget })));
 const MarketSentimentTimeline   = lazy(() => import('./components/AnalyticsWidgets/MarketSentimentTimeline').then(m => ({ default: m.MarketSentimentTimeline })));
 const AlertFrequencyTimeline    = lazy(() => import('./components/AnalyticsWidgets/AlertFrequencyTimeline').then(m => ({ default: m.AlertFrequencyTimeline })));
 const FusionDashboard           = lazy(() => import('./components/AnalyticsWidgets/FusionDashboard'));
@@ -42,7 +45,25 @@ const ATRRaceWidget             = lazy(() => import('./components/AnalyticsWidge
 const SmartMoodChart            = lazy(() => import('./components/AnalyticsWidgets/SmartMoodChart').then(m => ({ default: m.SmartMoodChart })));
 const MomentumPulse             = lazy(() => import('./components/AnalyticsWidgets/MomentumPulse').then(m => ({ default: m.MomentumPulse })));
 const RSIGridWall               = lazy(() => import('./components/AnalyticsWidgets/RSIGridWall').then(m => ({ default: m.RSIGridWall })));
-const BYCWidget                 = lazy(() => import('./components/AnalyticsWidgets/BYCWidget').then(m => ({ default: m.BYCWidget })));
+
+// Thin placeholder shown while the timeline is loading — same visual weight
+// as a widget skeleton but without mounting the actual widget (and firing its fetch).
+function WidgetGate({ minHeight = 80, children }) {
+  const appReady = useTimeStore(s => s.appReady);
+  if (!appReady) {
+    return (
+      <div style={{
+        width: '100%', minHeight,
+        borderRadius: 8,
+        background: 'linear-gradient(90deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0.02) 100%)',
+        backgroundSize: '200% 100%',
+        animation: 'lazyShimmer 1.6s ease-in-out infinite',
+        border: '1px solid rgba(255,255,255,0.04)',
+      }} aria-busy="true" aria-label="Loading widget" />
+    );
+  }
+  return children;
+}
 
 function App() {
   const isLive = useTimeStore(s => s.timeline.length > 0 ? s.currentIndex === s.timeline.length - 1 : false);
@@ -92,52 +113,63 @@ function App() {
 
         <main className={styles.mainContent}>
 
-          {/* SECTION: BYOC SCREENER (top of page — dynamic coin screener) */}
+          {/* SECTION: BYOC SCREENER
+              Eagerly imported but gated — mounts only after timeline loads.
+              Prevents its /api/byc-screener fetch from racing fetchTimeline at T=0. */}
           <section id="section-byc" className={styles.widgetSection}>
-            <LazyWidget minHeight={80} rootMargin="0px">
+            <WidgetGate minHeight={90}>
               <BYCWidget />
-            </LazyWidget>
+            </WidgetGate>
           </section>
 
-          {/* SECTION: 3rd UMPIRE VALIDATOR (above-the-fold — small margin) */}
+          {/* SECTION: 3rd UMPIRE VALIDATOR
+              Same gate — /api/validator/trials deferred until timeline is ready. */}
           <section id="section-umpire" className={styles.widgetSection}>
-            <LazyWidget minHeight={420} rootMargin="200px 0px">
+            <WidgetGate minHeight={320}>
               <ValidatorTimelineWidget />
-            </LazyWidget>
+            </WidgetGate>
           </section>
-
 
           {/* SECTION: LEVELS & CASCADE MONITOR (SPLIT ROW) */}
           <div className={styles.splitGrid}>
+            {/* LevelReactionWidget: gated — /api/level-reactions deferred until ready */}
             <section id="section-levels" className={styles.widgetSection}>
-              <LazyWidget minHeight={520}>
+              <WidgetGate minHeight={500}>
                 <LevelReactionWidget />
-              </LazyWidget>
+              </WidgetGate>
             </section>
 
-            {/* RIGHT COLUMN: CASCADE + SCOUT + GHOST */}
+            {/* RIGHT COLUMN: CASCADE + SCOUT + GHOST
+                minHeights set to realistic rendered sizes so the IO doesn't see all
+                of them as "in viewport" on first paint (old 280px was too small). */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--widget-gap)' }}>
               <section id="section-cascade" className={styles.widgetSection}>
-                <LazyWidget minHeight={280}>
+                <LazyWidget minHeight={480}>
                   <EMACascadeMonitor />
                 </LazyWidget>
               </section>
 
+              <section id="section-cascade-trend" className={styles.widgetSection}>
+                <LazyWidget minHeight={380}>
+                  <CascadeTrendWidget />
+                </LazyWidget>
+              </section>
+
               <section id="section-scout" className={styles.widgetSection}>
-                <LazyWidget minHeight={280}>
+                <LazyWidget minHeight={380}>
                   <ParticipationPulseWidget />
                 </LazyWidget>
               </section>
 
               {isLive && (
                 <section className={styles.widgetSection}>
-                  <LazyWidget minHeight={240}>
+                  <LazyWidget minHeight={260}>
                     <GhostCoinWidget />
                   </LazyWidget>
                 </section>
               )}
               <section id="section-alpha" className={styles.widgetSection}>
-                <LazyWidget minHeight={320}>
+                <LazyWidget minHeight={420}>
                   <AlphaScatter />
                 </LazyWidget>
               </section>
@@ -146,76 +178,76 @@ function App() {
 
           {/* SECTION: DISTANCE BOARD & TIMELINES (SPLIT ROW) */}
           <div className={styles.splitGrid}>
+            {/* DistanceTracker: gated — /api/ema-distance-board deferred until ready */}
             <section id="section-dist" className={styles.widgetSection}>
-              <LazyWidget minHeight={520}>
+              <WidgetGate minHeight={520}>
                 <DistanceTracker />
-              </LazyWidget>
+              </WidgetGate>
             </section>
 
             {/* RIGHT SIDE: ANALYTICS COLUMN (STACKED) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--widget-gap)' }}>
-              <LazyWidget minHeight={250}>
+              <LazyWidget minHeight={320}>
                 <MarketSentimentTimeline />
               </LazyWidget>
-              <LazyWidget minHeight={250}>
+              <LazyWidget minHeight={320}>
                 <AlertFrequencyTimeline />
               </LazyWidget>
             </div>
           </div>
 
-
-          {/* SECTION: ATR RACE — multi-coin ATR% / RVOL% momentum flow */}
+          {/* SECTION: ATR RACE */}
           <section id="section-race" className={styles.widgetSection}>
-            <LazyWidget minHeight={480}>
+            <LazyWidget minHeight={640}>
               <ATRRaceWidget />
             </LazyWidget>
           </section>
 
-          {/* SECTION: SMART ALERTS — created from DistanceTracker cell-clicks */}
+          {/* SECTION: SMART ALERTS */}
           <section id="section-alerts" className={styles.widgetSection}>
-            <LazyWidget minHeight={420}>
+            <LazyWidget minHeight={520}>
               <SmartAlertsWidget />
             </LazyWidget>
           </section>
 
           {/* SECTION: FUSION COMMAND */}
           <section id="section-fusion" className={styles.widgetSection}>
-            <LazyWidget minHeight={480}>
+            <LazyWidget minHeight={600}>
               <FusionDashboard />
             </LazyWidget>
           </section>
 
           {/* RSI DISTRIBUTION */}
           <section id="section-rsi-dist" className={styles.widgetSection}>
-            <LazyWidget minHeight={320}>
+            <LazyWidget minHeight={400}>
               <RSIDistributionWidget />
             </LazyWidget>
           </section>
 
-          {/* MARKET STRUCTURE (FULL WIDTH) */}
+          {/* MARKET STRUCTURE */}
           <section id="section-market-structure" className={styles.widgetSection}>
-            <LazyWidget minHeight={420}>
+            <LazyWidget minHeight={500}>
               <MarketStructureWidget />
             </LazyWidget>
           </section>
 
-          {/* CONFLUENCE GRID (FULL WIDTH) */}
+          {/* CONFLUENCE GRID */}
           <section id="section-confluence" className={styles.widgetSection}>
-            <LazyWidget minHeight={420}>
+            <LazyWidget minHeight={500}>
               <ConfluenceGrid />
             </LazyWidget>
           </section>
 
-          {/* ALERTS ANALYZER (FULL WIDTH) */}
+          {/* ALERTS ANALYZER */}
           <section id="section-alerts-analyzer" className={styles.widgetSection}>
-            <LazyWidget minHeight={420}>
+            <LazyWidget minHeight={500}>
               <AlertsAnalyzer />
             </LazyWidget>
           </section>
 
-          {/* RECOMMENDATIONS FEED (FULL WIDTH) */}
+          {/* RECOMMENDATIONS FEED */}
           <section id="section-recommendations" className={styles.widgetSection}>
-            <LazyWidget minHeight={420}>
+            <LazyWidget minHeight={500}>
               <RecommendationsFeed />
             </LazyWidget>
           </section>
@@ -223,36 +255,36 @@ function App() {
           {/* INSTITUTIONAL (LIVE ONLY) */}
           {isLive && (
             <section id="section-coin-age" className={styles.widgetSection}>
-              <LazyWidget minHeight={320}>
+              <LazyWidget minHeight={400}>
                 <CoinAgeWidget />
               </LazyWidget>
             </section>
           )}
 
-          {/* SECTION: RSI GRID WALL — per-coin RSI candle wall (cascade series + wick line) */}
+          {/* SECTION: RSI GRID WALL */}
           <section id="section-rsi-grid" className={styles.widgetSection}>
-            <LazyWidget minHeight={360}>
+            <LazyWidget minHeight={460}>
               <RSIGridWall />
             </LazyWidget>
           </section>
 
-          {/* SECTION: MOMENTUM PULSE — RVOL persistence × EMA distance × day change */}
+          {/* SECTION: MOMENTUM PULSE */}
           <section id="section-momentum-pulse" className={styles.widgetSection}>
-            <LazyWidget minHeight={340}>
+            <LazyWidget minHeight={440}>
               <MomentumPulse />
             </LazyWidget>
           </section>
 
-          {/* SECTION: SMART MOOD CHART — breadth/mood timeline with shift detection */}
+          {/* SECTION: SMART MOOD CHART */}
           <section id="section-smart-mood" className={styles.widgetSection}>
-            <LazyWidget minHeight={340}>
+            <LazyWidget minHeight={420}>
               <SmartMoodChart />
             </LazyWidget>
           </section>
 
           {/* SECTION: DAILY CALENDAR (FOOTER) */}
           <section id="section-calendar" className={styles.widgetSection} style={{ marginTop: '24px' }}>
-            <LazyWidget minHeight={300}>
+            <LazyWidget minHeight={380}>
               <DailyCalendarWidget />
             </LazyWidget>
           </section>
