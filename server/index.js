@@ -1139,6 +1139,10 @@ app.post('/api/market-context', (req, res) => {
                 full:  `${exchange}:${baseSymbol}`,   // canonical EXCHANGE:TICKER.P
                 short: baseSymbol.replace('USDT.P', '').replace('.P', ''),
             })),
+            // Screener snap stored as-is (typically 10–30 rows, no bloat risk).
+            // Required by /api/analytics/participation-pulse to compute discovery
+            // bull/bear metrics. Previously omitted — caused DISCOVERY always "offline".
+            screener_visible_snapshot: payload.screener_visible_snapshot || [],
         };
         db.prepare(`
             INSERT INTO market_context_logs (timestamp, screener_total_count, watchlist_count, payload_json)

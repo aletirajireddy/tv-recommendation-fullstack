@@ -2,7 +2,7 @@
 // @name         Institutional Conviction Engine - Bidirectional v20.4 (Full-Format Dedup)
 // @namespace    http://tampermonkey.net/
 // @version      20.4
-// @description  v20.4: Bug fixes — full-format diff (detects exchange swaps), cross-exchange watchlist guard (watchlistBaseSet), always-fresh telemetry snapshot, fix Tech Rating whitespace stripped before server read, always call processSyncPayload. v20.3: force_prune + action_required cooldown bypass. v20.2: Cyclic monitor, Dynamic Orphan Detection, Strict Watchlist Scoping.
+// @description  v20.5: Bug-6 fix — screener snap cached by monitor() and used by sendTelemetry() (opening watchlist tab was removing screener rows from DOM, causing screener_total_count: 0 every cycle → DISCOVERY permanently offline). v20.4: Bug fixes — full-format diff, cross-exchange watchlist guard, always-fresh telemetry, Tech Rating whitespace fix, always call processSyncPayload.
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
@@ -42,6 +42,11 @@
     let area2WatchlistSet = new Set();  // full format: EXCHANGE:TICKER.P
     let watchlistBaseSet  = new Set();  // base only: TICKER.P — for cross-exchange duplicate guard
     let watchlistSnapshot = [];
+    // Screener snap cached by monitor() while the screener panel is visible.
+    // sendTelemetry() opens the watchlist panel (switching away from the screener tab),
+    // which removes screener rows from the DOM before it can read them. Using this
+    // cache ensures the last-known screener state is always included in telemetry.
+    let lastScreenerSnap  = [];
     let colMap = {};
 
     // =========================================================================
@@ -301,58 +306,24 @@
     async function sendTelemetry() {
         auditLog("TELEMETRY", null, "Capturing Market Context Snapshot...", "SYSTEM");
 
-        // Bug-3 fix: always ensure the panel is open BEFORE reading the watchlist.
-        // Previous version only called updateArea2Watchlist() on the force-open branch,
-        // so when the panel was already visible the snapshot was up to 60s stale.
+        // Bug-6 fix: use screener snap cached by monitor() instead of re-reading here.
+        // ensureWatchlistPanelOpen() switches the left panel to the watchlist tab, which
+        // removes screener rows from the DOM — any querySelector('tbody tr[data-rowkey]')
+        // call AFTER that returns 0 rows, producing screener_total_count: 0 every cycle.
+        // monitor() runs while the screener tab is active and populates lastScreenerSnap.
+        const screenerSnap = lastScreenerSnap.slice(); // snapshot copy, safe to send
+
+        // Bug-3 fix: always ensure the watchlist panel is open BEFORE reading it.
         await ensureWatchlistPanelOpen();
         const watchlistPanel = document.querySelector('div[data-name="symbol-list-wrap"]');
-        const screenerTable  = document.querySelector('tbody');
 
-        if (!screenerTable || !watchlistPanel) {
-            auditLog("TELEMETRY_ERROR", null, "Skipping: Required UI containers not found.", "PRUNE");
+        if (!watchlistPanel) {
+            auditLog("TELEMETRY_ERROR", null, "Skipping: Watchlist container not found.", "PRUNE");
             return;
         }
 
         // Always refresh watchlist state immediately before building the payload.
         updateArea2Watchlist();
-
-        if (Object.keys(colMap).length === 0) mapHeaders();
-        const telemetryHeaders = [];
-        document.querySelectorAll('thead th[data-field]').forEach((th) => {
-            const field = th.getAttribute('data-field');
-            if (field) telemetryHeaders.push(field);
-        });
-
-        const screenerSnap = [];
-        document.querySelectorAll('tbody tr[data-rowkey]').forEach(row => {
-            const full = row.getAttribute('data-rowkey');
-            if (full) {
-                const parts = full.split(':');
-                const cells = row.querySelectorAll('td');
-                const rowData = { full, short: parts.length > 1 ? parts[1] : full };
-
-                cells.forEach((cell, idx) => {
-                    if (idx < telemetryHeaders.length) {
-                        const fieldName = telemetryHeaders[idx];
-                        const rawText   = cell.innerText || '';
-                        // Bug-4 fix: previous code stripped ALL whitespace before the
-                        // numeric check, turning "Strong Buy" into "StrongBuy". The
-                        // server's getRatingScore() uses includes('strong buy') with a
-                        // space, so it never matched → Participation Pulse Discovery
-                        // wave stayed permanently flat at zero.
-                        // Fix: only strip whitespace when the value is numeric.
-                        const numCandidate = rawText.replace(/[\n\r,\s]/g, '').replace(/−/g, '-').replace(/USDT$/i, '');
-                        if (numCandidate !== '' && /^-?[\d.]+$/.test(numCandidate)) {
-                            rowData[fieldName] = parseFloat(numCandidate);
-                        } else {
-                            // Preserve internal spaces: "Strong Buy", "Strong Sell", etc.
-                            rowData[fieldName] = rawText.replace(/−/g, '-').trim();
-                        }
-                    }
-                });
-                screenerSnap.push(rowData);
-            }
-        });
 
         const payload = {
             screener_total_count: screenerSnap.length,
@@ -441,6 +412,38 @@
 
         const rows = document.querySelectorAll('tbody tr[data-rowkey]');
         const seenInThisScan = new Set();
+
+        // ── Screener snap cache (Bug-6 fix) ──────────────────────────────────────
+        // monitor() runs while the screener panel is active. sendTelemetry() switches
+        // to the watchlist tab before reading, which removes screener rows from the DOM
+        // and produces screener_total_count: 0. Cache here so telemetry always has it.
+        if (rows.length > 0) {
+            const snapHeaders = [];
+            document.querySelectorAll('thead th[data-field]').forEach(th => {
+                const f = th.getAttribute('data-field');
+                if (f) snapHeaders.push(f);
+            });
+            lastScreenerSnap = [];
+            rows.forEach(snapRow => {
+                const snapFull = snapRow.getAttribute('data-rowkey');
+                if (!snapFull) return;
+                const snapParts = snapFull.split(':');
+                const snapCells = snapRow.querySelectorAll('td');
+                const snapData  = { full: snapFull, short: snapParts.length > 1 ? snapParts[1] : snapFull };
+                snapCells.forEach((cell, idx) => {
+                    if (idx < snapHeaders.length) {
+                        const fieldName = snapHeaders[idx];
+                        const rawText   = cell.innerText || '';
+                        const numCand   = rawText.replace(/[\n\r,\s]/g, '').replace(/−/g, '-').replace(/USDT$/i, '');
+                        snapData[fieldName] = (numCand !== '' && /^-?[\d.]+$/.test(numCand))
+                            ? parseFloat(numCand)
+                            : rawText.replace(/−/g, '-').trim();
+                    }
+                });
+                lastScreenerSnap.push(snapData);
+            });
+        }
+        // ─────────────────────────────────────────────────────────────────────────
 
         rows.forEach(row => {
             const rowKey = row.getAttribute('data-rowkey');
