@@ -2087,15 +2087,30 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
                 else if (coinTotal < 0) bear_score += Math.abs(coinTotal);
             });
 
+            // Watchlist sentiment — derived from change_pct on each watchlist coin.
+            // This is the primary signal when the screener panel is not open (screener_count=0).
+            // Threshold ±0.3% filters out noise around flat coins.
+            let wl_bull = 0, wl_bear = 0;
+            watchlistSnaps.forEach(w => {
+                const chg = parseFloat(w.change_pct);
+                if (!isNaN(chg)) {
+                    if (chg >  0.3) wl_bull++;
+                    else if (chg < -0.3) wl_bear++;
+                }
+            });
+            const wl_net = wl_bull - wl_bear;
+
             return {
                 time: row.timestamp,
-                // Total Screener: The full raw set appearing in discovery
+                // Total Screener: the raw set appearing in the TradingView screener panel
                 screener_count: activeSnaps.length,
-                // Tracked Watchlist: Total minus those currently being highlighted in discovery
+                // Watchlist: coins actively tracked (minus screener overlap)
                 watchlist_count: Math.max(0, rawWatchlistCount - overlapCount),
-                bull_score: bull_score,
-                bear_score: bear_score,
-                net_score: bull_score - bear_score
+                bull_score, bear_score,
+                net_score: bull_score - bear_score,
+                // Watchlist sentiment (always available even when screener is offline)
+                wl_bull, wl_bear, wl_net,
+                wl_total: watchlistSnaps.length,
             };
         });
 
