@@ -4,7 +4,8 @@ import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
-import { Ruler, RefreshCw, AlertTriangle, Bell } from 'lucide-react';
+import { checkCascade } from '../../utils/cascadeUtils';
+import { Ruler, RefreshCw, AlertTriangle, Bell, LayoutGrid, List } from 'lucide-react';
 import styles from './DistanceTracker.module.css';
 
 // Lazy-load the modal so the chunk only ships when a user actually clicks "create alert"
@@ -42,6 +43,50 @@ function distClass(absPct) {
     return styles.distBad;
 }
 
+// Long-series cascade uses same 3-TF default as EMACascadeMonitor
+const LONG_SERIES = ['h4', 'h1', 'm15'];
+
+// Cascade display helpers
+const CASCADE_LABEL = { bull: '↑Bull', bear: '↓Bear', neutral: '—' };
+const CASCADE_COLOR = { bull: '#68d391', bear: '#fc8181', neutral: '#718096' };
+const CASCADE_TITLE = {
+    bull: 'Long Bull cascade: h4 EMA < h1 EMA < 15m EMA (shorter EMAs higher = uptrend stacking)',
+    bear: 'Long Bear cascade: h4 EMA > h1 EMA > 15m EMA (shorter EMAs lower = downtrend stacking)',
+    neutral: 'Neutral: EMA stack not aligned in either direction',
+};
+
+// RVOL formatter + color
+function fmtRvol(v) {
+    if (v == null || isNaN(v)) return '—';
+    return v.toFixed(2) + '×';
+}
+function rvolColor(v) {
+    if (v == null) return 'var(--text-muted)';
+    if (v >= 2.0) return '#68d391';
+    if (v >= 1.5) return '#9ae6b4';
+    if (v >= 1.2) return '#f6ad55';
+    return 'var(--text-muted)';
+}
+
+// Entry quality score: cascade alignment bonus + RVOL bonus.
+// Higher = better long setup; negative = short setup or avoid.
+// Does NOT include distance (that's already the primary sort).
+function computeEntryScore(cascadeState, rvol) {
+    const cascadeScore = cascadeState === 'bull' ? 2 : cascadeState === 'bear' ? -2 : 0;
+    const rvolScore    = (rvol ?? 0) >= 2.0 ? 2 : (rvol ?? 0) >= 1.5 ? 1 : (rvol ?? 0) >= 1.2 ? 0.5 : 0;
+    return +(cascadeScore + rvolScore).toFixed(1);
+}
+
+// Big Board cell color: above EMA = green, near = orange, below = red
+function bigBoardColor(dist) {
+    if (dist == null) return 'rgba(255,255,255,0.04)';
+    if (dist >  2)  return 'rgba(104,211,145,0.25)';
+    if (dist >  0)  return 'rgba(104,211,145,0.12)';
+    if (dist > -0.5) return 'rgba(246,173,85,0.35)';  // near EMA ±0.5%
+    if (dist > -2)  return 'rgba(252,129,129,0.12)';
+    return 'rgba(252,129,129,0.28)';
+}
+
 const MAX_DISTS = [
     { label: '±1%',  value: 1 },
     { label: '±3%',  value: 3 },
@@ -69,8 +114,9 @@ function loadDistPrefs(defaultMaxDist) {
 // accidental parent re-renders).
 const DistRow = React.memo(function DistRow({ r, onCreateAlert }) {
     const setSelectedTicker = useTimeStore(s => s.setSelectedTicker);
+    const scoreColor = r.entryScore >= 3 ? '#68d391' : r.entryScore >= 1 ? '#9ae6b4' : r.entryScore <= -2 ? '#fc8181' : '#718096';
     return (
-        <tr key={r.ticker} className={`${r.anyStale ? styles.staleRow : ''} ${r.isSqueezed ? styles.squeezedRow : ''}`}>
+        <tr className={`${r.anyStale ? styles.staleRow : ''} ${r.isSqueezed ? styles.squeezedRow : ''}`}>
             <td
                 className={styles.tickerCell}
                 onClick={() => setSelectedTicker(r.ticker)}
@@ -124,9 +170,96 @@ const DistRow = React.memo(function DistRow({ r, onCreateAlert }) {
             <td className={styles.atrCell} title="ATR at 1h timeframe (% of price)">
                 {fmtAtr(r.atrs?.h1)}
             </td>
+            {/* Cascade alignment (h4 → h1 → 15m EMA stack) */}
+            <td className={styles.cascadeCell}
+                title={CASCADE_TITLE[r.cascadeState] || ''}>
+                <span style={{ color: CASCADE_COLOR[r.cascadeState] || '#718096', fontWeight: 600, fontSize: 11 }}>
+                    {CASCADE_LABEL[r.cascadeState] || '—'}
+                </span>
+            </td>
+            {/* RVOL — 15m relative volume */}
+            <td className={styles.rvolCell}
+                title="15m relative volume (RVOL ≥1.5 = elevated institutional interest)">
+                <span style={{ color: rvolColor(r.rvolM15), fontWeight: r.rvolM15 >= 1.5 ? 700 : 400 }}>
+                    {fmtRvol(r.rvolM15)}
+                </span>
+            </td>
+            {/* Entry quality score */}
+            <td className={styles.scoreCell}
+                title={`Entry quality score: cascade (${r.cascadeState}) + RVOL. Higher = stronger long setup; negative = avoid / short setup.`}>
+                <span style={{ color: scoreColor, fontWeight: 700 }}>
+                    {r.entryScore != null ? (r.entryScore > 0 ? '+' : '') + r.entryScore : '—'}
+                </span>
+            </td>
         </tr>
     );
 });
+
+// BigBoard: coins × TFs color-coded by EMA distance — spot alignment at a glance
+const BIG_BOARD_TFS = ['m1', 'm5', 'm15', 'h1', 'h4'];
+
+function BigBoard({ rows }) {
+    if (!rows || rows.length === 0) return null;
+    return (
+        <div style={{ overflowX: 'auto', marginBottom: 4 }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 10, width: '100%', tableLayout: 'auto' }}>
+                <thead>
+                    <tr>
+                        <th style={{ padding: '3px 6px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 10 }}>
+                            Coin
+                        </th>
+                        {BIG_BOARD_TFS.map(tf => (
+                            <th key={tf} style={{ padding: '3px 6px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10 }}>
+                                {TF_LABELS[tf]}
+                            </th>
+                        ))}
+                        <th style={{ padding: '3px 6px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10 }}>Cascade</th>
+                        <th style={{ padding: '3px 6px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10 }}>RVOL</th>
+                        <th style={{ padding: '3px 6px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10 }}>Score</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows.map(r => {
+                        const scoreColor = r.entryScore >= 3 ? '#68d391' : r.entryScore >= 1 ? '#9ae6b4' : r.entryScore <= -2 ? '#fc8181' : '#718096';
+                        return (
+                            <tr key={r.ticker}>
+                                <td style={{ padding: '2px 6px', color: 'var(--text-primary)', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 10 }}>
+                                    {r.cleanTicker}
+                                </td>
+                                {BIG_BOARD_TFS.map(tf => {
+                                    const d = r.dists?.[tf];
+                                    const bg = bigBoardColor(d);
+                                    return (
+                                        <td key={tf} style={{
+                                            padding: '2px 5px',
+                                            textAlign: 'center',
+                                            background: bg,
+                                            color: d == null ? 'var(--text-muted)' : d > 0 ? '#9ae6b4' : d < -2 ? '#fc8181' : '#f6ad55',
+                                            fontWeight: 500,
+                                            borderRadius: 2,
+                                            minWidth: 40,
+                                        }}>
+                                            {d == null ? '—' : `${d > 0 ? '+' : ''}${d.toFixed(1)}%`}
+                                        </td>
+                                    );
+                                })}
+                                <td style={{ padding: '2px 5px', textAlign: 'center', color: CASCADE_COLOR[r.cascadeState] || '#718096', fontWeight: 600 }}>
+                                    {CASCADE_LABEL[r.cascadeState] || '—'}
+                                </td>
+                                <td style={{ padding: '2px 5px', textAlign: 'center', color: rvolColor(r.rvolM15), fontWeight: r.rvolM15 >= 1.5 ? 700 : 400 }}>
+                                    {fmtRvol(r.rvolM15)}
+                                </td>
+                                <td style={{ padding: '2px 5px', textAlign: 'center', color: scoreColor, fontWeight: 700 }}>
+                                    {r.entryScore != null ? (r.entryScore > 0 ? '+' : '') + r.entryScore : '—'}
+                                </td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </div>
+    );
+}
 
 export function DistanceTracker({ filterTicker, compact }) {
     const defaultMaxDist = compact ? 10 : 5;
@@ -148,6 +281,9 @@ export function DistanceTracker({ filterTicker, compact }) {
         try { localStorage.removeItem(LS_DIST_KEY); } catch {}
         setDistPrefs({ maxDist: defaultMaxDist, sortKey: 'minAbsDist', sortDir: 'asc' });
     };
+
+    // Big Board toggle
+    const [bigBoardOpen, setBigBoardOpen] = useState(false);
 
     // Smart-alert modal state
     const [alertPrefill, setAlertPrefill] = useState(null);
@@ -194,18 +330,31 @@ export function DistanceTracker({ filterTicker, compact }) {
 
     const rows = useMemo(() => {
         const board = data?.board || [];
-        
+
         const enhancedBoard = board.map(r => {
-            const dists = Object.values(r.dists || {}).map(Math.abs);
+            // Squeeze detection: all available EMA distances within ±0.5%
+            const absDists = Object.values(r.dists || {}).filter(v => v != null).map(Math.abs);
             let isSqueezed = false;
-            if (dists.length >= 2) {
-                const max = Math.max(...dists);
-                const min = Math.min(...dists);
+            if (absDists.length >= 2) {
+                const max = Math.max(...absDists);
+                const min = Math.min(...absDists);
                 if (max - min <= 0.5) isSqueezed = true;
             }
-            return { ...r, isSqueezed };
+            // Cascade: use EMA prices derived from dists (checkCascade needs price values)
+            // checkCascade accepts { tf: emaPrice } — reconstruct from dist%
+            const emasPrices = {};
+            for (const tf of LONG_SERIES) {
+                const d = r.dists?.[tf];
+                if (d != null && r.price) {
+                    emasPrices[tf] = r.price / (1 + d / 100);
+                }
+            }
+            const cascadeState = checkCascade(emasPrices, LONG_SERIES);
+            const rvolM15      = r.rvolM15 ?? null;
+            const entryScore   = computeEntryScore(cascadeState, rvolM15);
+            return { ...r, isSqueezed, cascadeState, rvolM15, entryScore };
         });
-        
+
         return enhancedBoard.sort((a, b) => {
             let av, bv;
             if (sortKey === 'minAbsDist') {
@@ -214,6 +363,11 @@ export function DistanceTracker({ filterTicker, compact }) {
                 av = a.atrs?.m15 ?? Infinity; bv = b.atrs?.m15 ?? Infinity;
             } else if (sortKey === 'atr60') {
                 av = a.atrs?.h1 ?? Infinity; bv = b.atrs?.h1 ?? Infinity;
+            } else if (sortKey === 'entryScore') {
+                // Higher score = better — always desc-first
+                av = a.entryScore ?? -Infinity; bv = b.entryScore ?? -Infinity;
+            } else if (sortKey === 'rvolM15') {
+                av = a.rvolM15 ?? -Infinity; bv = b.rvolM15 ?? -Infinity;
             } else if (TFS.includes(sortKey)) {
                 av = a.dists?.[sortKey] != null ? Math.abs(a.dists[sortKey]) : Infinity;
                 bv = b.dists?.[sortKey] != null ? Math.abs(b.dists[sortKey]) : Infinity;
@@ -238,6 +392,14 @@ export function DistanceTracker({ filterTicker, compact }) {
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <FreshnessChip ts={lastFetchedAt} title="Board data last fetched from server" />
                         <ResetPrefsButton onReset={resetDist} title="Reset distance / sort to defaults" />
+                        <button
+                            className={`${styles.refreshBtn} ${bigBoardOpen ? styles.pillActive : ''}`}
+                            onClick={() => setBigBoardOpen(v => !v)}
+                            title={bigBoardOpen ? 'Hide Big Board heatmap' : 'Show Big Board — all TF distances as color grid'}
+                            style={{ display: 'flex', alignItems: 'center', gap: 3 }}
+                        >
+                            {bigBoardOpen ? <List size={14} /> : <LayoutGrid size={14} />}
+                        </button>
                         <button className={styles.refreshBtn} onClick={() => reload()} title="Refresh">
                             <RefreshCw size={14} />
                         </button>
@@ -262,6 +424,16 @@ export function DistanceTracker({ filterTicker, compact }) {
                     </button>
                 </div>
             </div>
+
+            {bigBoardOpen && rows.length > 0 && (
+                <div className={styles.bigBoardPanel}>
+                    <div className={styles.bigBoardTitle}>
+                        <LayoutGrid size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                        Big Board — EMA distance heatmap (all TFs)
+                    </div>
+                    <BigBoard rows={rows} />
+                </div>
+            )}
 
             <div className={styles.tableWrap}>
                 {loading && !data && (
@@ -307,6 +479,21 @@ export function DistanceTracker({ filterTicker, compact }) {
                                     className={`${styles.atrHeader} ${sortKey === 'atr60' ? styles.sortActive : ''}`}
                                     title="1h ATR as % of price — use to calibrate Smart Alert multiplier">
                                     A60<br /><span className={styles.thSub}>ATR%</span>
+                                </th>
+                                <th onClick={() => handleSort('cascadeState')}
+                                    className={sortKey === 'cascadeState' ? styles.sortActive : ''}
+                                    title="EMA cascade alignment: Bull = h4 EMA < h1 EMA < 15m EMA (uptrend stacking). Bear = opposite. Click to sort.">
+                                    Cascade<br /><span className={styles.thSub}>h4→h1→15m</span>
+                                </th>
+                                <th onClick={() => handleSort('rvolM15')}
+                                    className={sortKey === 'rvolM15' ? styles.sortActive : ''}
+                                    title="15m Relative Volume — ≥1.5× signals elevated institutional interest near the EMA level">
+                                    RVOL<br /><span className={styles.thSub}>15m×</span>
+                                </th>
+                                <th onClick={() => handleSort('entryScore')}
+                                    className={sortKey === 'entryScore' ? styles.sortActive : ''}
+                                    title="Entry Quality Score: Cascade alignment + RVOL. Higher = stronger setup. Negative = avoid or short.">
+                                    Score<br /><span className={styles.thSub}>quality</span>
                                 </th>
                             </tr>
                         </thead>

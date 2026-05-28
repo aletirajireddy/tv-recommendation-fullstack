@@ -7,7 +7,7 @@
 //                     falling back to Stream C rsi_matrix
 //   RVOL / ATR / EMA dist → coin_metric_history rolling buckets
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
 import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
@@ -40,6 +40,10 @@ const DIST_COLOR = {
 
 const RVOL_TREND_ICON  = { rising: '↑', fading: '↓', flat: '—' };
 const RVOL_TREND_COLOR = { rising: '#68d391', fading: '#fc8181', flat: '#718096' };
+
+// Cascade display helpers (same palette as DistanceTracker)
+const CASCADE_LABEL = { bull: '↑Bull', bear: '↓Bear', neutral: '—' };
+const CASCADE_COLOR = { bull: '#68d391', bear: '#fc8181', neutral: '#718096' };
 
 /* ─── Volume formatter ──────────────────────────────────────────────────── */
 function fmtVol(v) {
@@ -120,6 +124,10 @@ export function MomentumPulse() {
     const [sortDir, setSortDir] = useState('desc');
     const [filter,  setFilter]  = useState('all');
 
+    // Signal age tracking: { [ticker]: { signal, buckets } }
+    // Counts consecutive data refreshes where the same signal is active.
+    const signalAgeRef = useRef(new Map());
+
     const resetMomentumPrefs = () => {
         setSortKey('rvolPersist');
         setSortDir('desc');
@@ -142,12 +150,29 @@ export function MomentumPulse() {
 
     const rows = useMemo(() => {
         const all = data?.coins || [];
-        const filtered = filter === 'all'      ? all
-            : filter === 'surging'  ? all.filter(c => c.signal === 'SURGING' || c.signal === 'BUILDING')
-            : filter === 'rsi'      ? all.filter(c => c.signal === 'RSI_OS'  || c.signal === 'RSI_OB')
-            : filter === 'extended' ? all.filter(c => c.signal === 'EXTENDED' || c.signal === 'STRETCHED')
-            : filter === 'fading'   ? all.filter(c => c.signal === 'FADING')
-            : all;
+
+        // Update signal age map for each coin in this refresh
+        const ageMap = signalAgeRef.current;
+        all.forEach(c => {
+            const prev = ageMap.get(c.ticker);
+            if (prev && prev.signal === c.signal) {
+                ageMap.set(c.ticker, { signal: c.signal, buckets: prev.buckets + 1 });
+            } else {
+                ageMap.set(c.ticker, { signal: c.signal, buckets: 0 });
+            }
+        });
+        // Attach signalAge (buckets × ~30s interval) to each coin
+        const allWithAge = all.map(c => ({
+            ...c,
+            signalAge: ageMap.get(c.ticker)?.buckets ?? 0,
+        }));
+
+        const filtered = filter === 'all'      ? allWithAge
+            : filter === 'surging'  ? allWithAge.filter(c => c.signal === 'SURGING' || c.signal === 'BUILDING')
+            : filter === 'rsi'      ? allWithAge.filter(c => c.signal === 'RSI_OS'  || c.signal === 'RSI_OB')
+            : filter === 'extended' ? allWithAge.filter(c => c.signal === 'EXTENDED' || c.signal === 'STRETCHED')
+            : filter === 'fading'   ? allWithAge.filter(c => c.signal === 'FADING')
+            : allWithAge;
         return [...filtered].sort((a, b) => {
             const av = a[sortKey] ?? -Infinity;
             const bv = b[sortKey] ?? -Infinity;
@@ -264,6 +289,8 @@ export function MomentumPulse() {
                                         {SORT_LABELS[k]}{sortArrow(k)}
                                     </th>
                                 ))}
+                                <th title="EMA cascade alignment: Bull = h4→h1→15m stacked upward">Cascade</th>
+                                <th title="Signal age: how many consecutive 30s refreshes this signal has been active">Age</th>
                                 <th>RVOL↕</th>
                                 <th title="RVOL last 15 buckets (30 min)">Spark</th>
                                 <th title="Data source: C=Stream C, B=Stream B">Src</th>
@@ -346,6 +373,30 @@ export function MomentumPulse() {
 
                                         {/* RSI 1h */}
                                         <td className={styles.tdNum}><RsiDot value={c.rsi_h1} /></td>
+
+                                        {/* EMA Cascade alignment */}
+                                        <td className={styles.tdNum}
+                                            title={c.cascadeState === 'bull' ? 'Bull cascade: h4 EMA < h1 EMA < 15m EMA' : c.cascadeState === 'bear' ? 'Bear cascade: h4 EMA > h1 EMA > 15m EMA' : 'Neutral alignment'}
+                                            style={{ color: CASCADE_COLOR[c.cascadeState] || '#718096', fontWeight: 600 }}>
+                                            {CASCADE_LABEL[c.cascadeState] || '—'}
+                                        </td>
+
+                                        {/* Signal age (buckets × ~30s) */}
+                                        <td className={styles.tdNum}>
+                                            {c.signalAge > 0 ? (
+                                                <span
+                                                    title={`Signal held for ~${Math.round(c.signalAge * 0.5)}min`}
+                                                    style={{
+                                                        fontSize: 9,
+                                                        color: c.signalAge >= 10 ? '#68d391' : c.signalAge >= 4 ? '#f6ad55' : '#718096',
+                                                        fontWeight: c.signalAge >= 10 ? 700 : 400,
+                                                    }}>
+                                                    {c.signalAge >= 20 ? `${Math.round(c.signalAge * 0.5)}m` : `${c.signalAge}×`}
+                                                </span>
+                                            ) : (
+                                                <span style={{ color: '#4a5568', fontSize: 9 }}>new</span>
+                                            )}
+                                        </td>
 
                                         {/* RVOL trend */}
                                         <td className={styles.tdNum}

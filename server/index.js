@@ -1827,6 +1827,20 @@ app.get('/api/ema-distance-board', (req, res) => {
         const tickers = latestRows.map(r => r.ticker);
         const placeholders = tickers.map(() => '?').join(',');
 
+        // Q0 — batch RVOL lookup from Stream D history (latest per ticker).
+        // Added for: cascade+RVOL entry score in Distance Tracker.
+        const rvolSince = Date.now() - 10 * 60 * 1000; // last 10 min
+        const rvolRows = db.prepare(`
+            WITH ranked AS (
+                SELECT ticker, rvol_m15,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY ts DESC) AS rn
+                FROM coin_metric_history
+                WHERE ts > ? AND ticker IN (${placeholders})
+            )
+            SELECT ticker, rvol_m15 FROM ranked WHERE rn = 1
+        `).all(rvolSince, ...tickers);
+        const rvolByTicker = new Map(rvolRows.map(r => [r.ticker, r.rvol_m15 ?? null]));
+
         // Q1b — batch price lookup (replaces N correlated subqueries).
         // Gets the latest non-null price for every ticker in one JOIN.
         const priceRows = db.prepare(`
@@ -1966,6 +1980,7 @@ app.get('/api/ema-distance-board', (req, res) => {
                 atrs: tfAtrs,                 // per-TF ATR% (with nearest-TF fallback)
                 emas: { m1: tfPicks.m1?.price ?? null, m5: tfPicks.m5?.price ?? null,
                         m15: tfPicks.m15?.price ?? null, h1: tfPicks.h1?.price ?? null, h4: tfPicks.h4?.price ?? null },
+                rvolM15: rvolByTicker.get(r.ticker) ?? null,  // Stream D RVOL 15m
                 minAbsDist: minAbs, minTf, liveTfCount, anyStale,
             });
         }
@@ -3902,8 +3917,16 @@ app.get('/api/rsi-grid-wall', (req, res) => {
             const pullback = cascadeActive && tempZone === 'middle'
                           && tempRsi != null && Math.abs(tempRsi - 50) <= (pullbackZone + 5);
 
+            // RSI velocity (Δ vs previous 2-min bucket) — enables entry quality signal
+            const rsiDelta = {};
+            const allTFs = [...new Set([...seriesTFs, tempTF])];
+            for (const tf of allTFs) {
+                const curr = rsi[tf]; const prev = prevRsi[tf];
+                rsiDelta[tf] = (curr != null && prev != null) ? +(curr - prev).toFixed(1) : null;
+            }
+
             const clean = row.ticker.replace(/USDT\.P$|USDT$|BUSD$|USD$/, '');
-            return { ticker: row.ticker, clean, ts: row.ts, rsi, cascadeState, tempZone, tempDir, prevTempZone, pullback };
+            return { ticker: row.ticker, clean, ts: row.ts, rsi, rsiDelta, cascadeState, tempZone, tempDir, prevTempZone, pullback };
         }).filter(Boolean);
 
         coins.sort((a, b) => {
@@ -4083,6 +4106,31 @@ app.get('/api/byc-screener', (req, res) => {
 // (RVOL, ATR, EMA-distance) to show which coins are pushing with persistence.
 //
 // RVOL persistence = how many consecutive 2-min buckets had rvol_m15 > threshold
+// Helper: derive cascade state from multi-TF EMA distances + price.
+// Uses same threshold logic as client-side cascadeUtils.checkCascade.
+// series: longest→shortest, e.g. ['h4','h1','m15']
+function _cascadeFromDists(price, dists, series = ['h4','h1','m15'], threshold = 0.2) {
+    if (!price) return 'neutral';
+    const emas = {};
+    for (const tf of series) {
+        const d = dists[tf];
+        if (d == null) return 'neutral'; // missing TF → can't classify
+        emas[tf] = price / (1 + d / 100); // derive EMA200 price from distance %
+    }
+    let isBull = true, isBear = true;
+    for (let i = 0; i < series.length - 1; i++) {
+        const longer  = emas[series[i]];
+        const shorter = emas[series[i + 1]];
+        if (!longer || !shorter) return 'neutral';
+        const pctDiff = ((shorter - longer) / longer) * 100;
+        if (pctDiff < -threshold) isBull = false;
+        if (pctDiff >  threshold) isBear = false;
+    }
+    if (isBull && !isBear) return 'bull';
+    if (isBear && !isBull) return 'bear';
+    return 'neutral';
+}
+
 // EMA distance    = price % above/below 15m EMA200 (overbought/oversold proxy)
 app.get('/api/momentum-pulse', (req, res) => {
     try {
@@ -4160,7 +4208,8 @@ app.get('/api/momentum-pulse', (req, res) => {
         const tickers = [...coinMap.keys()];
         const ph = tickers.map(() => '?').join(',');
         const metricRows = db.prepare(`
-            SELECT ticker, ts, rvol_m15, atr_m15, dist_m15,
+            SELECT ticker, ts, rvol_m15, atr_m15,
+                   dist_m1, dist_m5, dist_m15, dist_h1, dist_h4,
                    rsi_m15, rsi_m30, rsi_h1
             FROM coin_metric_history
             WHERE ticker IN (${ph}) AND ts >= ?
@@ -4182,6 +4231,16 @@ app.get('/api/momentum-pulse', (req, res) => {
             const rvolNow = latest.rvol_m15 ?? null;
             const atrNow  = latest.atr_m15  ?? null;
             const distNow = latest.dist_m15  ?? null;
+            // Multi-TF distances — used for EMA cascade classification
+            const dists = {
+                m1:  latest.dist_m1  ?? null,
+                m5:  latest.dist_m5  ?? null,
+                m15: latest.dist_m15 ?? null,
+                h1:  latest.dist_h1  ?? null,
+                h4:  latest.dist_h4  ?? null,
+            };
+            // EMA cascade state from multi-TF distances (default long series h4→h1→m15)
+            const cascadeState = _cascadeFromDists(coinData.price, dists);
             // RSI exclusively from Stream D (coin_metric_history) — no Stream C fallback
             const rsi_m15 = latest.rsi_m15 ?? null;
             const rsi_m30 = latest.rsi_m30 ?? null;
@@ -4250,6 +4309,7 @@ app.get('/api/momentum-pulse', (req, res) => {
                 rsi_m30:     rsi_m30 != null ? +rsi_m30.toFixed(1) : null,
                 rsi_h1:      rsi_h1  != null ? +rsi_h1.toFixed(1)  : null,
                 rvolPersist, rvolTrend, distState, signal, rvolSpark,
+                cascadeState, dists,
                 src: coinData.src,
                 scTs: coinData.scTs,
             });

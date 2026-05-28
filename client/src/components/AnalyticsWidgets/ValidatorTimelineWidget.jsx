@@ -32,6 +32,53 @@ function MoveTag({ pct }) {
     return <span style={{ color, marginLeft: 4 }}>{pct > 0 ? '+' : ''}{Number(pct).toFixed(2)}%</span>;
 }
 
+/**
+ * LivePnL — shown ONLY when trial.state === 'CONFIRMED'.
+ * Displays ±% vs trigger price with a live pulse indicator.
+ * The latest_move field is refreshed every 10s via the trials poll.
+ */
+function LivePnL({ trial }) {
+    if (trial.state !== 'CONFIRMED') return null;
+    const pct   = trial.latest_move ?? trial.final_move;
+    const isPos = pct != null && pct > 0;
+    const isNeg = pct != null && pct < 0;
+    const color = isPos ? '#68d391' : isNeg ? '#fc8181' : '#718096';
+    const isLong = trial.direction === 'LONG';
+    // For a LONG trade: positive move = profit, negative = loss.
+    // For a SHORT trade: negative move = profit, positive = loss.
+    const profitSide = isLong ? isPos : isNeg;
+
+    return (
+        <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '3px 8px',
+            background: profitSide ? 'rgba(104,211,145,0.08)' : 'rgba(252,129,129,0.08)',
+            border: `1px solid ${color}30`,
+            borderRadius: 4,
+            marginTop: 4,
+        }}>
+            {/* Live pulse dot */}
+            <span style={{
+                display: 'inline-block', width: 6, height: 6,
+                borderRadius: '50%', background: color,
+                boxShadow: `0 0 4px ${color}`,
+                animation: 'pulse 2s infinite',
+                flexShrink: 0,
+            }} title="Live P&L — updates every 10s" />
+
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500 }}>Live P&L</span>
+
+            <span style={{ fontSize: 13, fontWeight: 800, color, fontVariantNumeric: 'tabular-nums' }}>
+                {pct == null ? '—' : `${pct > 0 ? '+' : ''}${Number(pct).toFixed(2)}%`}
+            </span>
+
+            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                vs trg {smartFmt(Number(trial.trigger_price))}
+            </span>
+        </div>
+    );
+}
+
 function StateBadge({ state, verdict }) {
     const display = verdict || state;
     const cls = {
@@ -148,9 +195,12 @@ function TrialCard({ trial, isResolved, onExpand }) {
                                     {isLong ? 'LONG' : 'SHORT'}
                                 </span>
                             </div>
-                            <div className={styles.moveTag}>
-                                <MoveTag pct={trial.final_move ?? trial.latest_move} />
-                            </div>
+                            {/* Show raw move tag for non-CONFIRMED states; CONFIRMED gets the full LivePnL block below */}
+                            {trial.state !== 'CONFIRMED' && (
+                                <div className={styles.moveTag}>
+                                    <MoveTag pct={trial.final_move ?? trial.latest_move} />
+                                </div>
+                            )}
                         </div>
 
                         {/* SECTION 2: META STATS */}
@@ -181,6 +231,9 @@ function TrialCard({ trial, isResolved, onExpand }) {
                             </div>
                         </div>
                     </div>
+
+                    {/* Live P&L — only visible when trial is CONFIRMED */}
+                    <LivePnL trial={trial} />
 
                     <button
                         className={styles.expandBtnHeader}

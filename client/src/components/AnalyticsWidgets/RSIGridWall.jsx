@@ -141,6 +141,25 @@ function RsiVal({ value, oversold, overbought }) {
     );
 }
 
+/* ─── RSI velocity (Δ) badge — shows momentum direction ─────────────────── */
+function RsiDelta({ delta }) {
+    if (delta == null || delta === 0) return null;
+    const color  = delta > 0 ? '#68d391' : '#fc8181';
+    const arrow  = delta > 0 ? '▲' : '▼';
+    const strong = Math.abs(delta) >= 3;
+    return (
+        <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 1,
+            fontSize: 8, fontWeight: strong ? 700 : 500, color,
+            opacity: strong ? 1 : 0.75,
+            marginLeft: 2,
+        }}
+            title={`RSI velocity: ${delta > 0 ? '+' : ''}${delta} vs prev 2-min bucket`}>
+            {arrow}{Math.abs(delta).toFixed(1)}
+        </span>
+    );
+}
+
 /* ─── Settings panel ────────────────────────────────────────────────────── */
 function SettingsPanel({ prefs, onApply, onClose }) {
     const [local, setLocal] = useState({ ...prefs });
@@ -402,12 +421,15 @@ export function RSIGridWall() {
                                     </div>
                                 </div>
 
-                                {/* RSI values row */}
+                                {/* RSI values row — includes Δ velocity chips */}
                                 <div className={styles.rsiRow}>
                                     {seriesTFs.map(tf => (
                                         <div key={tf} className={styles.rsiCell}>
                                             <span className={styles.rsiTfLabel}>{TF_LABEL[tf]}</span>
-                                            <RsiVal value={c.rsi[tf]} oversold={oversold} overbought={overbought} />
+                                            <span style={{ display: 'flex', alignItems: 'center' }}>
+                                                <RsiVal value={c.rsi[tf]} oversold={oversold} overbought={overbought} />
+                                                <RsiDelta delta={c.rsiDelta?.[tf]} />
+                                            </span>
                                         </div>
                                     ))}
                                     {/* Temp TF — separated by a subtle divider */}
@@ -418,7 +440,11 @@ export function RSIGridWall() {
                                                 {c.tempDir === 'up' ? '↑' : c.tempDir === 'down' ? '↓' : '─'}
                                             </span>
                                         </span>
-                                        <RsiVal value={c.rsi[tempTF]} oversold={oversold} overbought={overbought} />
+                                        <span style={{ display: 'flex', alignItems: 'center' }}>
+                                            <RsiVal value={c.rsi[tempTF]} oversold={oversold} overbought={overbought} />
+                                            {/* Δ chip is most useful on the temp (trading signal) TF */}
+                                            <RsiDelta delta={c.rsiDelta?.[tempTF]} />
+                                        </span>
                                     </div>
                                 </div>
                             </div>

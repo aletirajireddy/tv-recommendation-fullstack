@@ -200,3 +200,40 @@
     border-radius: 3px;
     vertical-align: middle;
 }
+
+/* Cascade, RVOL, Score columns */
+.cascadeCell {
+    text-align: center;
+    padding: 5px 6px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+.rvolCell {
+    text-align: right;
+    padding: 5px 8px;
+    font-size: 11px;
+    font-family: 'Roboto Mono', monospace;
+}
+.scoreCell {
+    text-align: center;
+    padding: 5px 6px;
+    font-size: 12px;
+    font-family: 'Roboto Mono', monospace;
+}
+
+/* Big Board expandable panel */
+.bigBoardPanel {
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.15);
+    margin-bottom: 4px;
+}
+.bigBoardTitle {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+}
