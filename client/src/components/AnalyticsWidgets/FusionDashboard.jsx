@@ -8,7 +8,7 @@ import { SmartLevelBreaker } from './SmartLevelBreaker';
 
 const SignalLight = ({ active, color, label }) => (
   <div className="flex flex-col items-center justify-center mx-1" title={label}>
-    <div className={`w-3 h-3 rounded-full ${active ? color : 'bg-[var(--gray-300)] dark:bg-gray-700'}`} style={{ boxShadow: active ? `0 0 8px ${color.replace('bg-', '')}` : 'none' }} />
+    <div className={`w-3 h-3 rounded-full ${active ? color : 'bg-white/20 dark:bg-gray-700'}`} style={{ boxShadow: active ? `0 0 8px ${color.replace('bg-', '')}` : 'none' }} />
     <span className="text-[9px] text-[var(--text-muted)] mt-1 font-mono">{label}</span>
   </div>
 );
@@ -66,7 +66,7 @@ export default function FusionDashboard() {
           <FreshnessChip ts={fusionDataFetchedAt} title="Fusion data last fetched from server" />
           <button
             onClick={fetchFusionData}
-            className="p-1.5 rounded-md hover:bg-[var(--gray-200)] transition-colors cursor-pointer flex items-center justify-center"
+            className="p-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer flex items-center justify-center"
             style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
             title="Refresh Fusion Data"
           >
@@ -122,7 +122,7 @@ export default function FusionDashboard() {
                         </div>
                         
                         {/* Stream Active Dot (Green if active in any stream) */}
-                        <div className={`w-2 h-2 rounded-full ${(row.signals?.A || row.signals?.B || row.signals?.C) ? 'bg-[#059669]' : 'bg-[var(--gray-400)]'}`} style={{ boxShadow: (row.signals?.A || row.signals?.B || row.signals?.C) ? '0 0 6px #059669' : 'none' }} title="Stream Active"></div>
+                        <div className={`w-2 h-2 rounded-full ${(row.signals?.A || row.signals?.B || row.signals?.C) ? 'bg-[#059669]' : 'bg-white/25'}`} style={{ boxShadow: (row.signals?.A || row.signals?.B || row.signals?.C) ? '0 0 6px #059669' : 'none' }} title="Stream Active"></div>
 
                         {/* Dir icon */}
                         {row.momentum?.direction > 0 && (
@@ -185,7 +185,7 @@ export default function FusionDashboard() {
                     <td className="p-3 text-center align-middle">
                       <button 
                         onClick={() => toggleRow(row.ticker)}
-                        className="text-xl px-2 py-1 rounded hover:bg-[var(--gray-100)] dark:hover:bg-gray-800 transition-colors"
+                        className="text-xl px-2 py-1 rounded hover:bg-white/[0.06] dark:hover:bg-gray-800 transition-colors"
                         style={{ color: 'var(--text-muted)' }}
                         title="View Details"
                       >

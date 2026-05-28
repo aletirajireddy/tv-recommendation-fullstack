@@ -109,7 +109,7 @@
     letter-spacing: 0.5px;
     text-align: right;
     padding: 6px 8px;
-    border-bottom: 1px solid var(--border-bright);
+    border-bottom: 1px solid var(--border);
     cursor: pointer;
     user-select: none;
 }

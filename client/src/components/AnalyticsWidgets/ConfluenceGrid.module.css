@@ -1,10 +1,10 @@
 .gridContainer {
-    background: var(--surface-card);
+    background: var(--bg-panel);
     border-radius: 12px;
     padding: 16px;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     margin: 20px 0;
-    border: 1px solid var(--border-light);
+    border: 1px solid var(--border);
 }
 
 .title {
@@ -14,7 +14,7 @@
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    border-bottom: 2px solid var(--primary-accent);
+    border-bottom: 2px solid var(--accent-blue);
     display: inline-block;
     padding-bottom: 4px;
 }
@@ -39,10 +39,10 @@
     padding: 12px 16px;
     color: var(--text-muted);
     font-weight: 600;
-    border-bottom: 2px solid var(--border-light);
+    border-bottom: 2px solid var(--border);
     position: sticky;
     top: 0;
-    background: var(--surface-card);
+    background: var(--bg-panel);
     /* Ensure this is opaque in global CSS */
     z-index: 50;
     /* Increased z-index */
@@ -52,7 +52,7 @@
 
 .macroTable td {
     padding: 10px 16px;
-    border-bottom: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border);
     color: var(--text-main);
 }
 
@@ -61,7 +61,7 @@
 }
 
 .macroTable tr:hover {
-    background-color: var(--hover-state);
+    background-color: var(--bg-active);
 }
 
 .highlightRow {

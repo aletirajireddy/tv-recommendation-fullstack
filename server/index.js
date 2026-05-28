@@ -423,6 +423,19 @@ db.prepare(`
     )
 `).run();
 
+// Coin Whitelist — permanently immune to ghost pruning (user-managed, like PERMANENT_MAJORS)
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS coin_whitelist (
+        ticker   TEXT PRIMARY KEY,
+        exchange TEXT NOT NULL DEFAULT 'BINANCE',
+        added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    )
+`).run();
+// Migration: add exchange column to existing installs that only have ticker + added_at
+try {
+    db.prepare("ALTER TABLE coin_whitelist ADD COLUMN exchange TEXT NOT NULL DEFAULT 'BINANCE'").run();
+} catch (_) { /* column already exists — fine */ }
+
 /**
  * 🦅 PROACTIVE AI STRATEGY ENGINE
  * Detects patterns in the 26-column data and syncs with Telegram
@@ -524,6 +537,18 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const ghostQueueMap = {};
     ghostQueueRows.forEach(row => ghostQueueMap[row.ticker] = row);
 
+    // Coin Whitelist — user-pinned coins that bypass ghost pruning AND are always
+    // included in master_targets so the TV watchlist always contains them.
+    // We also consume the pending-sync flag here so the next response to the
+    // Tampermonkey script includes action_required: 'UPDATE_WATCHLIST' exactly once.
+    const hasWhitelistPending = _pendingWhitelistSync;
+    if (hasWhitelistPending) _pendingWhitelistSync = false;
+
+    const whitelistRows    = db.prepare("SELECT ticker, exchange FROM coin_whitelist").all();
+    const whitelistTickers = new Set(whitelistRows.map(r => r.ticker));
+    // Full EXCHANGE:TICKER.P format — these will be force-added to finalSet below.
+    const whitelistFullSet = new Set(whitelistRows.map(r => `${r.exchange}:${r.ticker}`));
+
     // --- 1. THE 8-HOUR STABILITY GUARD ---
     const stabilityCheck = db.prepare(`
         SELECT COUNT(*) as count, MIN(timestamp) as oldest 
@@ -552,16 +577,21 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
                     // Belt-and-suspenders: pass through the universal full-ticker
                     // deduper too, in case the snapshot itself was malformed or
                     // contained exchange duplicates that slipped past Stream B's gate.
-                    const recoveredTargets = _dedupeFullTickers(
+                    const baseTargets = _dedupeFullTickers(
                         deduped.map(({ exchange, baseSymbol }) => `${exchange}:${baseSymbol}`)
                     );
-                    console.log(`[WATCHLIST-ENGINE] 💧 Rehydrated ${recoveredTargets.length} unique .P coins from history (raw snapshot had ${payload.watchlist_active_snapshot.length} entries).`);
+                    // Always include whitelist pins — user explicitly pinned these,
+                    // they must survive even catastrophic 0-count rehydration.
+                    const whitelistPins = whitelistRows.map(r => `${r.exchange}:${r.ticker}`);
+                    const recoveredTargets = _dedupeFullTickers([...baseTargets, ...whitelistPins]);
+                    console.log(`[WATCHLIST-ENGINE] 💧 Rehydrated ${recoveredTargets.length} unique .P coins from history (raw snapshot had ${payload.watchlist_active_snapshot.length} entries, +${whitelistPins.length} whitelist pins).`);
                     return {
                         ai_suggestion: "REHYDRATION",
                         active_list: recoveredTargets,
                         prune_list: [],
                         new_graduates: [],
-                        master_targets: recoveredTargets
+                        master_targets: recoveredTargets,
+                        action_required: hasWhitelistPending ? "UPDATE_WATCHLIST" : null,
                     };
                 }
             } catch (e) {
@@ -714,7 +744,9 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
                 status = CASE WHEN status = 'DEAD' THEN 'ACTIVE' ELSE status END
         `).run(cleanTicker, new Date().toISOString(), new Date().toISOString());
 
-        const isProtected = PERMANENT_MAJORS.includes(fullTicker) || protectedAltcoins.has(fullTicker);
+        const isProtected = PERMANENT_MAJORS.includes(fullTicker)
+            || protectedAltcoins.has(fullTicker)
+            || whitelistTickers.has(cleanTicker); // user whitelist — never ghost
 
         let shouldPrune = false;
         let pruneReason = "";
@@ -798,9 +830,13 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
 
     // Exclude prunes
     pruneList.forEach(p => finalSet.delete(p));
-    // Super-protect
+    // Super-protect — these are always present regardless of pruning
     PERMANENT_MAJORS.forEach(p => finalSet.add(p));
     protectedAltcoins.forEach(p => finalSet.add(p));
+    // Whitelist pins — user explicitly chose these coins; always in master_targets.
+    // Added AFTER the prune exclusion so they cannot be evicted by pruneList,
+    // mirroring the same guarantee as PERMANENT_MAJORS (BTC/ETH).
+    whitelistFullSet.forEach(full => finalSet.add(full));
 
     // ── Final dedup pass — applied to EVERY output array ─────────────────────
     // Calculate the exact duplicates that were dropped by dedup to force-prune them.
@@ -808,6 +844,19 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const dedupedMasterTargets = _dedupeFullTickers(rawMasterTargets);
     const dedupedSet = new Set(dedupedMasterTargets);
     const droppedDuplicates = rawMasterTargets.filter(t => !dedupedSet.has(t));
+
+    // action_required is set when:
+    //  a) the dedup pass found exchange duplicates to force-prune, OR
+    //  b) a coin was just added to the whitelist (one-shot — clears after this call).
+    //     This bypasses the Tampermonkey 15-min Automa cooldown so the new coin
+    //     reaches the TV watchlist on the very next processSyncPayload, not 15 min later.
+    const actionRequired = (droppedDuplicates.length > 0 || hasWhitelistPending)
+        ? "UPDATE_WATCHLIST"
+        : null;
+
+    if (hasWhitelistPending) {
+        console.log(`[WHITELIST-ENGINE] 🔔 Whitelist sync flag consumed — next response carries action_required: UPDATE_WATCHLIST`);
+    }
 
     return {
         ai_suggestion: "TRACKING_5+2",
@@ -817,7 +866,7 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
         new_graduates:  _dedupeFullTickers(newGraduates),
         master_targets: dedupedMasterTargets,
         force_prune:    droppedDuplicates,
-        action_required: droppedDuplicates.length > 0 ? "UPDATE_WATCHLIST" : null
+        action_required: actionRequired,
     };
 }
 
@@ -918,6 +967,12 @@ app.post('/qualified-pick', (req, res) => {
 // Exchange preference order for deduplication: higher index = lower priority.
 // When two entries share the same base ticker, we keep the one from the
 // highest-priority exchange so the stored ticker has no exchange prefix.
+// One-shot flag: set when a coin is added to the whitelist via POST /api/whitelist.
+// Consumed (and cleared) inside the next generateScannerFeedback() call so the
+// Tampermonkey script receives action_required: 'UPDATE_WATCHLIST' exactly once,
+// bypassing the 15-min Automa cooldown to push the new coin to TV immediately.
+let _pendingWhitelistSync = false;
+
 const _B_EXCHANGE_PRIORITY = [
     'BINANCE', 'OKX', 'BYBIT', 'BITGET', 'BINGX', 'GATE', 'KUCOIN',
     'COINBASE', 'WEEX', 'BLOFIN', 'LBANK', 'BITUNIX', 'PHEMEX',
@@ -2054,63 +2109,64 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
 
         const timeline = rows.map(row => {
             const payload = JSON.parse(row.payload_json);
-            const activeSnaps = payload.screener_visible_snapshot || [];
+            const activeSnaps    = payload.screener_visible_snapshot || [];
             const watchlistSnaps = payload.watchlist_active_snapshot || [];
-            
-            // Build a normalized set of current watchlist coins
+
+            // Build normalized watchlist set for overlap detection (Option D: both pools kept pure)
             const normalizedWatchlist = new Set();
             watchlistSnaps.forEach(w => {
                 if (w.full) normalizedWatchlist.add(normalizeTicker(w.full));
             });
 
-            const rawWatchlistCount = payload.watchlist_count || watchlistSnaps.length || 0;
-
-            let bull_score = 0;
-            let bear_score = 0;
-            let overlapCount = 0;
-
+            // ── Discovery pool (screener) ─────────────────────────────────────────
+            // Per-coin: aggregate all TechRating columns → classify bull or bear.
+            // Normalization: (bull_count / total) × 100 → -100 to +100 per pool.
+            let disc_bull_count = 0, disc_bear_count = 0, overlapCount = 0;
             activeSnaps.forEach(item => {
-                // Use normalization to catch matches even if suffixes differ (.P)
                 const normScreener = item.full ? normalizeTicker(item.full) : '';
-                if (normScreener && normalizedWatchlist.has(normScreener)) {
-                    overlapCount++;
-                }
+                if (normScreener && normalizedWatchlist.has(normScreener)) overlapCount++;
 
-                // Calculate ratings for 100% of the discovery set
                 let coinTotal = 0;
-                Object.values(item).forEach(val => {
-                    const score = getRatingScore(val);
-                    coinTotal += score;
-                });
-
-                if (coinTotal > 0) bull_score += coinTotal;
-                else if (coinTotal < 0) bear_score += Math.abs(coinTotal);
+                Object.values(item).forEach(val => { coinTotal += getRatingScore(val); });
+                if (coinTotal > 0) disc_bull_count++;
+                else if (coinTotal < 0) disc_bear_count++;
             });
 
-            // Watchlist sentiment — derived from change_pct on each watchlist coin.
-            // This is the primary signal when the screener panel is not open (screener_count=0).
-            // Threshold ±0.3% filters out noise around flat coins.
-            let wl_bull = 0, wl_bear = 0;
+            const disc_count    = activeSnaps.length;
+            const screener_active = disc_count > 0;
+            // Normalized percentages: bull is positive, bear is negative
+            const disc_bull = disc_count > 0 ? Math.round((disc_bull_count / disc_count) * 100) : 0;
+            const disc_bear = disc_count > 0 ? Math.round((disc_bear_count / disc_count) * -100) : 0;
+            const disc_net  = disc_bull + disc_bear; // 0 when screener offline
+
+            // ── Watchlist pool ────────────────────────────────────────────────────
+            // Per-coin: change_pct threshold ±0.3% filters noise around flat coins.
+            // Both pools are pure — overlap coins counted in both (Option D).
+            let wl_bull_count = 0, wl_bear_count = 0;
             watchlistSnaps.forEach(w => {
                 const chg = parseFloat(w.change_pct);
                 if (!isNaN(chg)) {
-                    if (chg >  0.3) wl_bull++;
-                    else if (chg < -0.3) wl_bear++;
+                    if (chg >  0.3) wl_bull_count++;
+                    else if (chg < -0.3) wl_bear_count++;
                 }
             });
-            const wl_net = wl_bull - wl_bear;
+
+            const wl_count = watchlistSnaps.length;
+            const wl_bull  = wl_count > 0 ? Math.round((wl_bull_count / wl_count) * 100) : 0;
+            const wl_bear  = wl_count > 0 ? Math.round((wl_bear_count / wl_count) * -100) : 0;
+            const wl_net   = wl_bull + wl_bear;
 
             return {
                 time: row.timestamp,
-                // Total Screener: the raw set appearing in the TradingView screener panel
-                screener_count: activeSnaps.length,
-                // Watchlist: coins actively tracked (minus screener overlap)
-                watchlist_count: Math.max(0, rawWatchlistCount - overlapCount),
-                bull_score, bear_score,
-                net_score: bull_score - bear_score,
-                // Watchlist sentiment (always available even when screener is offline)
+                // Discovery (screener) pool — normalized -100 to +100
+                discovery_count: disc_count,
+                disc_bull, disc_bear, disc_net,
+                screener_active,
+                // Watchlist pool — normalized -100 to +100
+                watchlist_count: wl_count,
                 wl_bull, wl_bear, wl_net,
-                wl_total: watchlistSnaps.length,
+                // Coins appearing in both pools (Option D: exposed, not removed)
+                overlap_count: overlapCount,
             };
         });
 
@@ -2330,6 +2386,105 @@ app.post('/api/ghosts/toggle-auto', (req, res) => {
         db.prepare("INSERT INTO system_settings (key, value) VALUES ('ghost_auto_approve', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(val);
         io.emit('ghost-update', { action: 'toggle-auto', enabled }); // push to all clients
         res.json({ success: true, auto_approve: enabled });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ============================================================================
+// 5.6 COIN WHITELIST API
+// ============================================================================
+
+// Helper: normalise any ticker format → cleanTicker as stored in coin_lifecycles.
+// coin_lifecycles stores item.ticker which includes the .P suffix (e.g. "XRPUSDT.P").
+// We only strip the exchange prefix — everything else (including .P) is kept so
+// whitelistTickers.has(cleanTicker) works correctly at protection-check time.
+// Accepts: "XRPUSDT.P", "BINANCE:XRPUSDT.P", "xrpusdt.p"
+function normaliseWhitelistTicker(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    let s = raw.trim().toUpperCase();
+    // Strip exchange prefix (e.g. "BINANCE:")
+    const colonIdx = s.indexOf(':');
+    if (colonIdx !== -1) s = s.slice(colonIdx + 1);
+    return s || null;
+}
+
+app.get('/api/whitelist', (req, res) => {
+    try {
+        const rows = db.prepare(
+            "SELECT ticker, exchange, added_at FROM coin_whitelist ORDER BY added_at DESC"
+        ).all();
+        res.json({ whitelist: rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/whitelist', (req, res) => {
+    try {
+        const raw      = req.body?.ticker;
+        const ticker   = normaliseWhitelistTicker(raw);
+        if (!ticker) return res.status(400).json({ error: 'Ticker required' });
+
+        // Resolve exchange: use client-supplied value, fall back to most-recent
+        // record in area1_scout_logs (Stream A), then default to BINANCE.
+        let exchange = (req.body?.exchange || '').trim().toUpperCase() || null;
+        if (!exchange) {
+            const found = db.prepare(
+                "SELECT exchange FROM area1_scout_logs WHERE ticker = ? ORDER BY timestamp DESC LIMIT 1"
+            ).get(ticker.replace(/\.P$/i, '')); // strip .P for scout log lookup
+            exchange = found?.exchange || 'BINANCE';
+        }
+
+        db.prepare(`
+            INSERT INTO coin_whitelist (ticker, exchange, added_at)
+            VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            ON CONFLICT(ticker) DO UPDATE SET exchange = excluded.exchange
+        `).run(ticker, exchange);
+
+        // Signal the next generateScannerFeedback() call to include
+        // action_required: 'UPDATE_WATCHLIST' so Tampermonkey bypasses its
+        // 15-min Automa cooldown and pushes the new coin to TV immediately.
+        _pendingWhitelistSync = true;
+
+        io.emit('whitelist-update', { action: 'add', ticker, exchange });
+        res.json({ success: true, ticker, exchange });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/whitelist/:ticker', (req, res) => {
+    try {
+        const ticker = normaliseWhitelistTicker(req.params.ticker);
+        if (!ticker) return res.status(400).json({ error: 'Ticker required' });
+
+        db.prepare("DELETE FROM coin_whitelist WHERE ticker = ?").run(ticker);
+        io.emit('whitelist-update', { action: 'remove', ticker });
+        res.json({ success: true, ticker });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Known-coin suggestions for the whitelist picker.
+// Joins coin_lifecycles with the most-recent area1_scout_logs entry per ticker
+// so we can show the correct exchange alongside each suggestion.
+app.get('/api/coins/known', (req, res) => {
+    try {
+        const rows = db.prepare(`
+            SELECT cl.ticker, cl.status, cl.last_seen_at,
+                   COALESCE(al.exchange, 'BINANCE') AS exchange
+            FROM coin_lifecycles cl
+            LEFT JOIN (
+                SELECT ticker, exchange, MAX(timestamp) AS ts
+                FROM area1_scout_logs
+                GROUP BY ticker
+            ) al ON al.ticker = REPLACE(REPLACE(cl.ticker, '.P', ''), '.PERP', '')
+            ORDER BY cl.last_seen_at DESC
+            LIMIT 200
+        `).all();
+        res.json({ coins: rows });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -4745,48 +4900,9 @@ app.get('/api/level-reactions', (req, res) => {
     }
 });
 
-// ── Serve built React client (production) ────────────────────────────────────
-// When running in production (via PM2), the backend serves the built client
-// directly from client/dist. This eliminates the vite-preview proxy layer
-// entirely — Socket.IO and all API routes share the same origin and port, so
-// there is no WebSocket upgrade or proxy issue to worry about.
-//
-// IMPORTANT: this block must come AFTER all API/socket routes so that API paths
-// like /api/* and /socket.io/* are matched first.
-const _clientDist = path.join(__dirname, '..', 'client', 'dist');
-app.use(express.static(_clientDist, {
-    maxAge: '1h',                // cache static assets for 1 hour
-    etag: true,
-    index: false,                // we handle the SPA catch-all manually below
-}));
-// SPA catch-all: any unmatched GET request returns index.html so client-side
-// routing works correctly on direct URL loads or refresh.
-// Using regex instead of '*' — Express 5 changed wildcard path handling and
-// rejects bare '*' with a path-to-regexp error.
-app.get(/.*/, (req, res) => {
-    res.sendFile(path.join(_clientDist, 'index.html'));
-});
-
-const PORT = process.env.PORT || 5173;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 V3 Server running on port ${PORT} (All Interfaces — Tailscale + Browser + Socket.IO)`);
-
-// ── Port 3000 companion listener ──────────────────────────────────────────────
-// Tampermonkey scripts and Pine Script webhooks POST to http://localhost:3000/.
-// They use plain HTTP (no Socket.IO, no WebSocket) so a separate http server
-// sharing the same Express app is all that's needed.
-// Socket.IO remains on the primary server (port 5173) only.
-const _local3000 = http.createServer(app);
-_local3000.listen(3000, '127.0.0.1', () => {
-    console.log(`🔌 Port 3000 open on localhost (Tampermonkey / Pine Script inbound)`);
-});
-_local3000.on('error', (e) => {
-    if (e.code === 'EADDRINUSE') {
-        console.warn(`⚠️  Port 3000 already in use — Tampermonkey scripts may already have a listener. Skipping.`);
-    } else {
-        console.error(`Port 3000 error:`, e.message);
-    }
-});
+    console.log(`🚀 V3 Server running on port ${PORT}`);
 
     // Idempotent (UNIQUE INDEX on ticker+ts+source dedupes), so safe on every boot.
     setImmediate(() => {

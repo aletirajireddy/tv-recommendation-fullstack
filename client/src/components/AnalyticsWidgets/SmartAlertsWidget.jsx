@@ -101,7 +101,7 @@ export function SmartAlertsWidget() {
         for (const a of data.alerts || []) {
             // Best-effort: find the latest event_type from triggers (we don't have events here yet)
             // so just bucket by the FIRST trigger; events tab will show more detail
-            const t = (a.triggers && a.triggers[0]) || 'other';
+            const t = a.triggers?.[0] ?? 'other';
             (out[t] || out.other).push(a);
         }
         return out;

@@ -285,7 +285,7 @@ export function TrialExpandedModal({ trialId, onClose }) {
                                                 type="monotone" dataKey="price"
                                                 stroke={lineColor} strokeWidth={2.5}
                                                 fill={areaFill}
-                                                dot={{ r: 2.5, fill: lineColor, strokeWidth: 0 }}
+                                                dot={false}
                                                 activeDot={{ r: 4, stroke: 'var(--bg-panel)', strokeWidth: 1 }}
                                                 isAnimationActive={false}
                                             />

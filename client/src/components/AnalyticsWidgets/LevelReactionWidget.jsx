@@ -753,17 +753,18 @@ export function LevelReactionWidget({ filterTicker, compact }) {
 
     const volEventsByTicker = data?.volEventsByTicker || {};
 
-    // Filtered coins
-    const coins = (data?.coins || []).filter(c => {
+    // Filtered coins — memoized so sortedCoins dep doesn't re-fire on every render
+    // when data is null (|| [] would produce a new array reference each time)
+    const coins = useMemo(() => (data?.coins ?? []).filter(c => {
         if (filterSide !== 'ALL' && c.side !== filterSide) return false;
         if (filterReact !== 'ALL') {
             if (filterReact === 'BREAK' && !c.reaction.startsWith('BREAK')) return false;
             if (filterReact !== 'BREAK' && c.reaction !== filterReact) return false;
         }
         return true;
-    });
+    }), [data?.coins, filterSide, filterReact]);
 
-    const reactionCounts = (data?.coins || []).reduce((acc, c) => {
+    const reactionCounts = (data?.coins ?? []).reduce((acc, c) => {
         const key = c.reaction.startsWith('BREAK') ? 'BREAK' : c.reaction;
         acc[key] = (acc[key] || 0) + 1;
         return acc;

@@ -17,7 +17,7 @@
 }
 
 .cell {
-    background: var(--white);
+    background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 8px;
@@ -40,11 +40,11 @@
 .cellFooter { font-size: 9px; color: #4a5568; margin-top: 4px; text-align: center; }
 
 /* Mood backgrounds (subtle) */
-.moodEuphoric { background: linear-gradient(180deg, rgba(104,211,145,0.15), var(--white)); border-color: rgba(104,211,145,0.3); }
-.moodBullish  { background: linear-gradient(180deg, rgba(104,211,145,0.08), var(--white)); border-color: rgba(104,211,145,0.2); }
-.moodNeutral  { background: linear-gradient(180deg, rgba(160,174,192,0.08), var(--white)); }
-.moodBearish  { background: linear-gradient(180deg, rgba(252,129,129,0.08), var(--white)); border-color: rgba(252,129,129,0.2); }
-.moodPanic    { background: linear-gradient(180deg, rgba(252,129,129,0.15), var(--white)); border-color: rgba(252,129,129,0.3); }
+.moodEuphoric { background: linear-gradient(180deg, rgba(104,211,145,0.15), var(--bg-panel)); border-color: rgba(104,211,145,0.3); }
+.moodBullish  { background: linear-gradient(180deg, rgba(104,211,145,0.08), var(--bg-panel)); border-color: rgba(104,211,145,0.2); }
+.moodNeutral  { background: linear-gradient(180deg, rgba(160,174,192,0.08), var(--bg-panel)); }
+.moodBearish  { background: linear-gradient(180deg, rgba(252,129,129,0.08), var(--bg-panel)); border-color: rgba(252,129,129,0.2); }
+.moodPanic    { background: linear-gradient(180deg, rgba(252,129,129,0.15), var(--bg-panel)); border-color: rgba(252,129,129,0.3); }
 .moodUnknown  { background: var(--border); }
 
 .gain { color: #68d391; }

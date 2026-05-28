@@ -1,7 +1,48 @@
 # TV Recommendation Dashboard — Architecture & Design Reference
 
 > Living document. Update whenever a design decision changes. Claude Code loads this automatically.
-> Last major update: 2026-05-20 (single-port architecture, WebSocket-first Socket.IO, Stream B dedup + clean DB storage)
+> Last major update: 2026-05-28 (two-process architecture: backend port 3000, frontend vite preview port 5173 with proxy; Tailscale confirmed working; dev instance documented)
+
+---
+
+## ⚠️ CRITICAL WORKFLOW RULE — Tampermonkey Scripts
+
+> **THIS RULE IS MANDATORY. READ BEFORE TOUCHING ANY FILE IN `scripts/`.**
+
+### Files under `scripts/` are NOT live until the user manually pastes them into the browser.
+
+Editing `scripts/coin_scanner.js`, `scripts/technical_watchlist_coin_scanner.js`, or any other Tampermonkey script file in this repo **does nothing** to the actual running script in the browser. Tampermonkey extensions store their own copy of the script. The file in `scripts/` is only a source-of-truth reference.
+
+### Mandatory steps after every `scripts/` change
+
+1. Claude makes the code change to `scripts/<file>.js`
+2. **Claude MUST explicitly tell the user:** "I've updated `scripts/<filename>.js`. Please copy the full contents into Tampermonkey (browser extension → edit script → paste → Save). Confirm when done."
+3. **Claude must NOT proceed as if the fix is live** until the user replies with confirmation.
+4. If the user has not confirmed and a follow-up question implies the old script is still running, Claude must re-ask before debugging.
+
+### Why this matters
+
+- Backend restarts → live immediately (`pm2 restart tv-backend`)
+- Frontend rebuilds → live after `npm run build` + `pm2 restart tv-client`
+- `scripts/` changes → **NEVER live automatically**. Requires the user to open Tampermonkey, find the script, paste the new code, and Save. No automation exists for this.
+
+### Current Tampermonkey scripts
+
+| File | Browser script name | Current version |
+|---|---|---|
+| `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional | **v20.4** |
+| `scripts/technical_watchlist_coin_scanner.js` | (Stream D / technical watchlist scanner) | — |
+| `scripts/indicators/tamper_streamA.txt` | Stream A macro scanner | — |
+| `scripts/indicators/tamper_streamB.txt` | Stream B reference | — |
+| `scripts/indicators/tamper_streamD.txt` | Stream D reference | — |
+
+### How the force-update mechanism works (whitelist + watchlist sync)
+
+When a coin is whitelisted via the dashboard:
+1. Server sets in-memory `_pendingWhitelistSync = true`
+2. Next `processSyncPayload` response (from either `/qualified-pick` or `/api/market-context`) includes `action_required: 'UPDATE_WATCHLIST'` + the new coin in `master_targets`
+3. Tampermonkey `processSyncPayload()` sees `isForcedUpdate = true` → bypasses the 15-min Automa cooldown → calls `GM_setClipboard(masterTargetsList)` + `GM_openInTab('https://www.tradingview.com/cex-screener/lEINSjG1/')` → Automa reads clipboard → TV watchlist updated
+4. Flag is consumed (one-shot) — subsequent responses return `action_required: null`
 
 ---
 
@@ -11,26 +52,59 @@
 |---|---|
 | Frontend | React + Vite, Zustand, Recharts, CSS Modules |
 | Backend | Node.js / Express 5, Socket.IO, SQLite (better-sqlite3) |
-| Process manager | PM2 — 2 processes: `tv-backend` (id varies) + `mcp-server` |
-| Build | `vite build` in `client/` → `client/dist/` served by Express on port 5173 |
-| Proxy | Tailscale Funnel → `https://desktop-c92c19n.tailbf6529.ts.net` → `127.0.0.1:5173` |
+| Process manager | PM2 — 3 processes: `tv-backend`, `tv-client`, `mcp-server` |
+| Build | `vite build` in `client/` → `client/dist/` served by `vite preview` (`tv-client`) |
+| Proxy | Tailscale Funnel → `https://desktop-c92c19n.tailbf6529.ts.net` → `127.0.0.1:5173` (tv-client) |
 
-### Single-Port Architecture (CURRENT)
+### Two-Process Architecture (CURRENT)
 
-Express serves **everything on port 5173**:
-- Static files from `client/dist/` (React SPA)
-- All API endpoints (`/api/*`, `/scan-report`, etc.)
-- Socket.IO (`/socket.io/`)
-- SPA catch-all: `app.get(/.*/, ...)` (regex — Express 5 doesn't accept `'*'`)
+| Process | Port | Responsibility |
+|---|---|---|
+| `tv-backend` | **3000** | API + Socket.IO only. No static file serving. Tampermonkey POSTs here directly. |
+| `tv-client` | **5173** | `vite preview` serving `client/dist`. Proxies all `/api`, `/socket.io`, `/health`, `/scan-report`, `/mcp` to backend. |
+| `mcp-server` | **3001** | MCP server. Accessible via proxy at `/mcp`. |
 
-`vite preview` is **retired**. No proxy layer between Tailscale and the backend.
+**How requests flow through Tailscale:**
+```
+https://desktop-c92c19n.tailbf6529.ts.net  →  port 5173 (tv-client / vite preview)
+  /                →  serves React SPA (client/dist/index.html)
+  /api/*           →  proxied → localhost:3000 (tv-backend)
+  /socket.io       →  proxied → localhost:3000 (tv-backend, ws:true)
+  /health          →  proxied → localhost:3000 (tv-backend)
+  /scan-report     →  proxied → localhost:3000 (tv-backend)
+  /mcp             →  proxied → localhost:3001 (mcp-server)
+```
+
+**External access (Oracle VM, other machines on Tailscale network):**
+- Dashboard: `https://desktop-c92c19n.tailbf6529.ts.net/`
+- Webhooks (Stream C): `POST https://desktop-c92c19n.tailbf6529.ts.net/api/webhook/smart-levels` ✅
+- All `/api/*` endpoints accessible via Tailscale URL — proxied to backend port 3000, client app unaffected ✅
+- MCP: `https://desktop-c92c19n.tailbf6529.ts.net/mcp` ✅
+
+**Local Tampermonkey scripts** POST directly to `http://localhost:3000/api/*` — bypasses the proxy entirely.
+
+### Vite Proxy Config (`client/vite.config.js`)
+
+Both `server` (dev) and `preview` (production) blocks share the same proxy rules:
+
+```js
+const API_PORT = process.env.VITE_API_PORT || 3000;
+const MCP_PORT = process.env.VITE_MCP_PORT || 3001;
+
+proxyRules = {
+  '/api':       { target: `http://localhost:${API_PORT}`, changeOrigin: true },
+  '/socket.io': { target: `http://localhost:${API_PORT}`, ws: true, changeOrigin: true },
+  '/health':    { target: `http://localhost:${API_PORT}`, changeOrigin: true },
+  '/scan-report': { target: `http://localhost:${API_PORT}`, changeOrigin: true },
+  '/mcp':       { target: `http://localhost:${MCP_PORT}`, changeOrigin: true, ... }
+}
+```
+
+`allowedHosts` includes `desktop-c92c19n.tailbf6529.ts.net` and `.ts.net` wildcard — Tailscale access works without extra config.
 
 ### Socket.IO Transport — CRITICAL
 
 **Transport order MUST be `['websocket', 'polling']`** (WebSocket first).
-
-Tailscale Funnel tunnels WebSocket as persistent TCP (101 Switching Protocols ✓).  
-Tailscale **terminates long-lived HTTP** connections with 502 → polling-first causes timeouts.
 
 ```js
 // SocketService.js — correct config
@@ -44,15 +118,32 @@ this.socket = io('/', {
 });
 ```
 
-### PM2 Watch — DISABLED
+The vite preview proxy handles WebSocket upgrades for `/socket.io` correctly (`ws: true`). Tailscale Funnel tunnels the WebSocket as persistent TCP — confirmed working end-to-end.
 
-`watch: false` in `ecosystem.config.js`. Watch mode restarts the process on every file save,
-creating a brief port-unavailable window that Tailscale returns as a 502. **Never re-enable.**
+### PM2 Watch — DISABLED (production)
+
+`watch: false` in `ecosystem.config.js`. Watch mode restarts on every file save, causing brief port-unavailable windows. **Never re-enable for production.**
 
 After backend code changes: `pm2 restart tv-backend`  
-After frontend changes: `npm run build` in `client/`, then `pm2 restart tv-backend`
+After frontend changes: `npm run build` in `client/`, then `pm2 restart tv-client`
 
 > **PM2 ID note**: Always verify IDs with `pm2 list` — they shift after deletions/restarts.
+
+### Development Instance (`ecosystem.dev.config.js`)
+
+A parallel dev stack runs alongside production without port conflicts:
+
+| Process | Port | Notes |
+|---|---|---|
+| `tv-backend-dev` | **3010** | Watch mode enabled on `index.js`, `services`, `utils`, `validator` |
+| `tv-client-dev` | **5174** | `VITE_API_PORT=3010`, `VITE_MCP_PORT=3011` |
+| `mcp-server-dev` | **3011** | Watch mode enabled |
+
+```powershell
+pm2 start ecosystem.dev.config.js   # start dev instance
+pm2 stop  ecosystem.dev.config.js   # stop dev instance
+pm2 logs  tv-backend-dev            # dev logs
+```
 
 ---
 
@@ -598,6 +689,108 @@ Cap `ReferenceLine`/`ReferenceDot` arrays to 40 max before passing to Recharts:
 const volEvents = useMemo(() => (data?.volEvents || []).slice(-40), [data]);
 ```
 
+---
+
+## Widget Performance Anti-Patterns (Learned from Sprint 1 Audit)
+
+These were caught and fixed during widget enhancement work. Apply these rules to every widget.
+
+### 1. React.memo bypass — inline arrow function props
+
+`React.memo` is useless when a parent passes an **inline arrow function** as a prop — a new function reference is created on every render, so memo always sees "changed props" and re-renders.
+
+```js
+// ❌ Breaks React.memo — new reference every render
+<DistRow onAlert={() => handleAlert(r)} />
+
+// ✅ Stable reference — wrap in useCallback
+const handleAlert = useCallback((ticker) => { ... }, []);
+<DistRow onAlert={handleAlert} />
+```
+
+**Rule:** Any function passed as a prop to a memoised child component MUST be wrapped in `useCallback`.
+
+### 2. Ref mutation inside useMemo — React 18 StrictMode double-invoke
+
+React 18 StrictMode **double-invokes** the useMemo factory in development. Mutating a ref inside useMemo therefore runs twice, corrupting the ref on the second pass.
+
+```js
+// ❌ Mutates ref inside useMemo — double-invoked in StrictMode
+const rows = useMemo(() => {
+    signalAgeRef.current = computeAges(data);   // runs twice!
+    return data.map(...);
+}, [data]);
+
+// ✅ Guard with a previous-data ref — only mutate when data actually changed
+const prevDataRef = useRef(null);
+const rows = useMemo(() => {
+    if (data !== prevDataRef.current) {
+        signalAgeRef.current = computeAges(data);
+        prevDataRef.current = data;
+    }
+    return data.map(...);
+}, [data]);
+```
+
+### 3. Collapse redundant useMemo + array passes
+
+Multiple chained `useMemo` blocks each scanning the full coin array waste CPU every render cycle.
+
+```js
+// ❌ 3 separate useMemos, 8 array passes total
+const filtered = useMemo(() => data.filter(...), [data, filter]);
+const sorted   = useMemo(() => [...filtered].sort(...), [filtered, sortKey]);
+const counts   = useMemo(() => filtered.reduce(...), [filtered]);
+
+// ✅ Single useMemo, 2 passes — filter+count in one pass, sort in second
+const { rows, counts } = useMemo(() => {
+    let bullN = 0, bearN = 0;
+    const all = (data?.coins || []).map(c => {
+        if (c.signal === 'SURGING') bullN++;
+        // ...
+        return { ...c };
+    });
+    const filtered = all.filter(matchesFilter);
+    const sorted   = filtered.sort(compareFn);
+    return { rows: sorted, counts: { bull: bullN, bear: bearN } };
+}, [data, filter, sortKey, sortDir]);
+```
+
+### 4. Sort fallthrough — missing explicit branch for every sort key
+
+When a sort comparison returns `0` (equal), the fallthrough must go to a **stable tiebreaker**, not to a generic `else` that does string comparison. Missing a branch silently falls through to alphabetical sort.
+
+```js
+// ❌ cascadeState branch missing — falls through to alphabet sort
+if (sortKey === 'dist')    return b.dist - a.dist;
+else if (sortKey === 'rvol') return b.rvol - a.rvol;
+else return a.ticker.localeCompare(b.ticker);  // ← cascadeState hits this!
+
+// ✅ explicit branch for every sort key + stable tiebreaker
+const CASC_ORDER = { bull: 2, neutral: 0, bear: -2 };
+if (sortKey === 'dist')         return b.dist - a.dist;
+if (sortKey === 'rvol')         return b.rvol - a.rvol;
+if (sortKey === 'cascadeState') return (CASC_ORDER[b.cascadeState] ?? 0) - (CASC_ORDER[a.cascadeState] ?? 0);
+return a.ticker.localeCompare(b.ticker);  // stable tiebreaker
+```
+
+### 5. CSS Module keyframes not accessible from inline styles
+
+`@keyframes` defined inside a `.module.css` file get **scoped/hashed** by the CSS Modules compiler. The hashed name is inaccessible from inline `style={{ animation: 'pulse 2s infinite' }}` strings — the animation silently doesn't play.
+
+```css
+/* ❌ In Widget.module.css — hashed to something like 'pulse_abc123' */
+@keyframes pulse { ... }
+
+/* ✅ In global src/index.css — preserved as-is */
+@keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.45; transform: scale(0.85); }
+}
+```
+
+**Rule:** Any `@keyframes` referenced from an **inline `style` string** (e.g. on a live dot, badge, or pulsing indicator) MUST be declared in `client/src/index.css`, not in a CSS Module file.
+
 ### SQLite window function for latest-N-per-ticker
 
 ```sql
@@ -629,16 +822,23 @@ pm2 restart tv-backend
 ```powershell
 # From project root:
 cd client; npm run build; cd ..
-pm2 restart tv-backend    # backend serves the new client/dist
+pm2 restart tv-client    # tv-client (vite preview) serves the new client/dist
 ```
 
-### Port 5173 conflict (EADDRINUSE)
+### Port conflict (EADDRINUSE)
 
 ```powershell
-netstat -ano | findstr ":5173"
-Stop-Process -Id <PID> -Force
+# Find and kill the process holding the port, then restart cleanly
+$ports = netstat -ano | Select-String "LISTENING" | Where-Object { $_ -match ":5173 |:3000 " }
+foreach ($line in $ports) {
+    if ($line -match "\s(\d+)$") { Stop-Process -Id ([int]$matches[1]) -Force -ErrorAction SilentlyContinue }
+}
 pm2 start ecosystem.config.js --only tv-backend
+pm2 start ecosystem.config.js --only tv-client
 ```
+
+> **PM2 orphan warning**: On Windows, rapid `pm2 restart` can leave orphan Node processes holding ports.
+> If EADDRINUSE persists after restart, kill all PIDs on ports 3000 and 5173 first (see above), then do a fresh start.
 
 ### Force PM2 to pick up new env vars from ecosystem.config.js
 
@@ -648,7 +848,7 @@ pm2 delete tv-backend
 pm2 start ecosystem.config.js --only tv-backend
 ```
 
-### Start fresh (both processes)
+### Start fresh (all processes)
 
 ```powershell
 pm2 start ecosystem.config.js
@@ -708,4 +908,4 @@ Use `rgba(255,255,255,0.04)` overlays for subtle panel backgrounds instead.
 | `restore/perf-stable-v3` | After LevelReaction decimation |
 | `restore/perf-stable-v4` | After granular Zustand selectors |
 
-Branch: `feat/smart-alerts-stable`
+Branch: `feat/widget-enhancements-v2` (from `feat/smart-alerts-stable`)

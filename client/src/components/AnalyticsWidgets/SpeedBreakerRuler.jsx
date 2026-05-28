@@ -16,7 +16,7 @@ export const SpeedBreakerRuler = ({ currentPrice, levels }) => {
       const leftPos = clamp(50 + (distPct * zoomFactor), 0, 100);
       
       // Determine color based on explicit level name
-      let bgStyle = { backgroundColor: 'var(--gray-300)' };
+      let bgStyle = { backgroundColor: 'rgba(160,160,160,0.35)' };
       if (l.name.includes("Mega Spot")) bgStyle = { backgroundColor: '#F87171', boxShadow: '0 0 4px #F87171' }; // Reddish
       else if (l.name.includes("200_EMA")) bgStyle = { backgroundColor: '#D946EF' }; // Fuchsia
       else if (l.name.includes("Base")) bgStyle = { backgroundColor: '#3B82F6' }; // Blue

@@ -281,7 +281,8 @@ export function TrialMiniChart({ trial }) {
     const cooldownStart = phases.detected_ms;
     const cooldownEnd   = phases.cooldown_until_ms;
     const watchStart    = phases.cooldown_until_ms || phases.detected_ms;
-    const watchEnd      = phases.resolved_ms || (candles.at(-1)?.ts + ohlc.interval_min * 60000);
+    const lastCandle    = candles.length > 0 ? candles[candles.length - 1] : null;
+    const watchEnd      = phases.resolved_ms || (lastCandle ? lastCandle.ts + ohlc.interval_min * 60000 : null);
 
     // Price domain with padding
     const allPrices = [
@@ -406,7 +407,7 @@ export function TrialMiniChart({ trial }) {
                         stroke={lineColor}
                         strokeWidth={2}
                         fill={fillColor}
-                        dot={{ r: 1.5, fill: lineColor, stroke: 'none' }}
+                        dot={false}
                         isAnimationActive={false}
                     />
                 </ComposedChart>

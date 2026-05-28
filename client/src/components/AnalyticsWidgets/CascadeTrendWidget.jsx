@@ -464,28 +464,28 @@ export function CascadeTrendWidget() {
                         {visible.longBull && (
                             <Line type="monotone" dataKey="longBull"
                                 stroke={COLORS.longBull} strokeWidth={2.2}
-                                dot={{ r: 2, fill: COLORS.longBull, strokeWidth: 0 }}
+                                dot={false}
                                 activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
                                 isAnimationActive={false} />
                         )}
                         {visible.longBear && (
                             <Line type="monotone" dataKey="longBear"
                                 stroke={COLORS.longBear} strokeWidth={2.2}
-                                dot={{ r: 2, fill: COLORS.longBear, strokeWidth: 0 }}
+                                dot={false}
                                 activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
                                 isAnimationActive={false} />
                         )}
                         {visible.shortBull && (
                             <Line type="monotone" dataKey="shortBull"
                                 stroke={COLORS.shortBull} strokeWidth={1.8} strokeDasharray="4 3"
-                                dot={{ r: 2, fill: COLORS.shortBull, strokeWidth: 0 }}
+                                dot={false}
                                 activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
                                 isAnimationActive={false} />
                         )}
                         {visible.shortBear && (
                             <Line type="monotone" dataKey="shortBear"
                                 stroke={COLORS.shortBear} strokeWidth={1.8} strokeDasharray="4 3"
-                                dot={{ r: 2, fill: COLORS.shortBear, strokeWidth: 0 }}
+                                dot={false}
                                 activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
                                 isAnimationActive={false} />
                         )}

@@ -1,22 +1,161 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
-import { Activity, RefreshCw, Zap, TrendingUp, TrendingDown, WifiOff } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, WifiOff, Zap, Layers } from 'lucide-react';
 import { FreshnessChip } from '../FreshnessChip';
 import {
-    ComposedChart, Line, Area, ReferenceLine,
+    ComposedChart, Area, ReferenceLine,
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush
 } from 'recharts';
 import { format } from 'date-fns';
 import { useChartBrush } from '../../hooks/useChartBrush';
 
+// ── Palette ───────────────────────────────────────────────────────────────────
+const DISC_COLOR = '#2DD4BF'; // teal  — Discovery / Screener wave
+const WL_COLOR   = '#F59E0B'; // amber — Watchlist wave
+const CONF_COLOR = '#A78BFA'; // violet — Confirmed overlap
+// Stable activeDot objects — hoisted to avoid new object reference on every render
+const WL_ACTIVE_DOT   = { r: 4, fill: WL_COLOR,   stroke: 'var(--bg-panel)', strokeWidth: 2 };
+const DISC_ACTIVE_DOT = { r: 4, fill: DISC_COLOR,  stroke: 'var(--bg-panel)', strokeWidth: 2 };
+
+// ── Tooltip (stable ref via useCallback) ─────────────────────────────────────
+function PulseTooltip({ active, payload }) {
+    if (!active || !payload?.length) return null;
+    const p = payload[0].payload;
+    const discCount = p.discovery_count ?? 0;
+    const wlCount   = p.watchlist_count ?? 0;
+    const overlap   = p.overlap_count   ?? 0;
+    const sign      = v => v > 0 ? `+${v}` : `${v}`;
+    const netColor  = (v) => v > 0 ? '#10B981' : v < 0 ? '#EF4444' : '#718096';
+
+    return (
+        <div style={{
+            backgroundColor: 'var(--bg-panel)', border: '1px solid var(--border)',
+            color: 'var(--text-main)', borderRadius: 6, padding: '10px 14px',
+            minWidth: 210, fontSize: 11,
+        }}>
+            <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: 8 }}>
+                {p.timeLabel}
+            </div>
+
+            {/* Discovery pool */}
+            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 6, marginBottom: 6 }}>
+                <div style={{ color: DISC_COLOR, fontWeight: 700, marginBottom: 4, fontSize: 10, letterSpacing: '0.05em' }}>
+                    DISCOVERY · {discCount} coins {!p.screener_active && '(offline)'}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Bull %</span>
+                    <strong style={{ color: DISC_COLOR }}>+{p.disc_bull ?? 0}%</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Bear %</span>
+                    <strong style={{ color: '#EF4444' }}>{p.disc_bear ?? 0}%</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Net</span>
+                    <strong style={{ color: netColor(p.disc_net ?? 0) }}>{sign(p.disc_net ?? 0)}%</strong>
+                </div>
+            </div>
+
+            {/* Watchlist pool */}
+            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 6, marginBottom: 6 }}>
+                <div style={{ color: WL_COLOR, fontWeight: 700, marginBottom: 4, fontSize: 10, letterSpacing: '0.05em' }}>
+                    WATCHLIST · {wlCount} coins
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Bull %</span>
+                    <strong style={{ color: WL_COLOR }}>+{p.wl_bull ?? 0}%</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Bear %</span>
+                    <strong style={{ color: '#EF4444' }}>{p.wl_bear ?? 0}%</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Net</span>
+                    <strong style={{ color: netColor(p.wl_net ?? 0) }}>{sign(p.wl_net ?? 0)}%</strong>
+                </div>
+            </div>
+
+            {/* Confirmed overlap */}
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Confirmed (both pools)</span>
+                <strong style={{ color: CONF_COLOR }}>{overlap} coins</strong>
+            </div>
+        </div>
+    );
+}
+
+// ── Institutional status banner logic ─────────────────────────────────────────
+function getBannerProps(screenerEverActive, discNet, wlNet, overlap, discCount, wlCount) {
+    if (!screenerEverActive) {
+        return {
+            icon: <WifiOff size={13} style={{ color: '#F6AD55', flexShrink: 0 }} />,
+            color: '#F6AD55',
+            label: 'Screener Offline',
+            detail: `Discovery wave inactive — open TradingView Screener to enable. Showing watchlist momentum only (${wlCount} coins, Δ% ±0.3% threshold).`,
+        };
+    }
+    const bothBull  = discNet > 25 && wlNet > 25;
+    const bothBear  = discNet < -25 && wlNet < -25;
+    const diverging = (discNet > 20 && wlNet < -20) || (discNet < -20 && wlNet > 20);
+    const discLead  = discNet > 20 && wlNet >= -10 && wlNet <= 10;
+    const wlLead    = wlNet > 25 && Math.abs(discNet) < 15;
+    const highConf  = overlap > 0 && discCount > 0 && (overlap / Math.min(discCount, wlCount || 1)) > 0.35;
+
+    if (bothBull) return {
+        icon:   <TrendingUp size={13} style={{ color: '#10B981', flexShrink: 0 }} />,
+        color:  '#10B981',
+        label:  'Strong Conviction',
+        detail: `Both pools rising — discovery +${discNet}% / watchlist +${wlNet}%. Broad participation confirms institutional buy pressure.`,
+    };
+    if (bothBear) return {
+        icon:   <TrendingDown size={13} style={{ color: '#EF4444', flexShrink: 0 }} />,
+        color:  '#EF4444',
+        label:  'Broad Distribution',
+        detail: `Both pools declining — discovery ${discNet}% / watchlist ${wlNet}%. Risk-off signal across screener and tracked positions.`,
+    };
+    if (diverging) return {
+        icon:   <Zap size={13} style={{ color: CONF_COLOR, flexShrink: 0 }} />,
+        color:  CONF_COLOR,
+        label:  'Rotation Signal',
+        detail: discNet > wlNet
+            ? `Discovery +${discNet}% while watchlist ${wlNet}% — new inflows not yet reflected in held positions.`
+            : `Watchlist +${wlNet}% while discovery ${discNet}% — screener finding new bearish setups, exits possible.`,
+    };
+    if (discLead) return {
+        icon:   <TrendingUp size={13} style={{ color: DISC_COLOR, flexShrink: 0 }} />,
+        color:  DISC_COLOR,
+        label:  'Early Inflow Signal',
+        detail: `Discovery leading +${discNet}% with watchlist neutral — screener finding new setups before watchlist confirms.`,
+    };
+    if (wlLead) return {
+        icon:   <TrendingUp size={13} style={{ color: WL_COLOR, flexShrink: 0 }} />,
+        color:  WL_COLOR,
+        label:  'Momentum Carry',
+        detail: `Watchlist holding +${wlNet}% with weak discovery signal — existing positions running, watch for exhaustion.`,
+    };
+    if (highConf) return {
+        icon:   <Layers size={13} style={{ color: CONF_COLOR, flexShrink: 0 }} />,
+        color:  CONF_COLOR,
+        label:  'High Confirmation',
+        detail: `${overlap} coins confirmed in both pools (${Math.round((overlap / Math.min(discCount, wlCount || 1)) * 100)}% overlap) — institutional convergence signal.`,
+    };
+    return {
+        icon:   <Zap size={13} style={{ color: '#FACC15', flexShrink: 0 }} />,
+        color:  '#FACC15',
+        label:  'Consolidation',
+        detail: `Low conviction across both pools. Discovery ${discNet > 0 ? '+' : ''}${discNet}% / Watchlist ${wlNet > 0 ? '+' : ''}${wlNet}%.`,
+    };
+}
+
+// ── Main widget ───────────────────────────────────────────────────────────────
 export function ParticipationPulseWidget() {
-    const containerRef              = useRef(null);
-    const participationPulse        = useTimeStore(s => s.participationPulse);
-    const fetchParticipationPulse   = useTimeStore(s => s.fetchParticipationPulse);
+    const containerRef                = useRef(null);
+    const participationPulse          = useTimeStore(s => s.participationPulse);
+    const fetchParticipationPulse     = useTimeStore(s => s.fetchParticipationPulse);
     const participationPulseFetchedAt = useTimeStore(s => s.participationPulseFetchedAt);
-    const lastDataPush              = useTimeStore(s => s.lastDataPush);
-    const [isMobile, setIsMobile]   = useState(false);
+    const lastDataPush                = useTimeStore(s => s.lastDataPush);
+    const [isMobile, setIsMobile]     = useState(false);
 
     useEffect(() => {
         const mql = window.matchMedia('(pointer: coarse)');
@@ -39,44 +178,29 @@ export function ParticipationPulseWidget() {
         }
     }, [participationPulse]);
 
+    // ── Chart data ────────────────────────────────────────────────────────────
     const chartData = useMemo(() => {
         if (!participationPulse || participationPulse.length === 0) return [];
 
         let src = participationPulse;
         if (src.length === 1) {
-            // Recharts needs ≥2 points for area rendering
+            // Recharts needs ≥2 points to render areas
             const clone = { ...src[0], time: new Date(new Date(src[0].time).getTime() + 1000).toISOString() };
             src = [src[0], clone];
         }
 
         return src.map(p => {
-            const screenerCount  = p.screener_count || 0;
-            const watchlistCount = p.wl_total || p.watchlist_count || 0;
-            const wlNet          = p.wl_net  ?? 0;
-            const wlBull         = p.wl_bull ?? 0;
-            const wlBear         = p.wl_bear ?? 0;
-
-            // Screener-based sentiment (only when screener panel is open)
-            const scaler = 10;
-            const scaledBull = Math.min((p.bull_score || 0) / scaler, 40);
-            const scaledBear = Math.min((p.bear_score || 0) / scaler, 40);
-
-            // Primary signal: wl_net (watchlist bulls minus bears, always available).
-            // Secondary: screener band when screener is active.
+            const discNet = p.disc_net ?? 0;
+            const wlNet   = p.wl_net  ?? 0;
             return {
                 ...p,
-                timeLabel:      format(new Date(p.time), 'HH:mm'),
-                screener_count: screenerCount,
-                watchlist_count: watchlistCount,
-                wl_bull: wlBull,
-                wl_bear: wlBear,
-                wl_net:  wlNet,
-                // Absolute 0-based areas — visible regardless of screener_count
-                wl_pos:  Math.max(0, wlNet),   // green area above 0
-                wl_neg:  Math.min(0, wlNet),   // red area below 0
-                // Screener overlay bands (only relevant when screener_count > 0)
-                scr_bull: screenerCount > 0 ? scaledBull  : null,
-                scr_bear: screenerCount > 0 ? -scaledBear : null,
+                timeLabel: format(new Date(p.time), 'HH:mm'),
+                // Discovery wave (teal) — split at zero for gradient fill per side
+                d_pos: Math.max(0, discNet),
+                d_neg: Math.min(0, discNet),
+                // Watchlist wave (amber) — always active
+                w_pos: Math.max(0, wlNet),
+                w_neg: Math.min(0, wlNet),
             };
         });
     }, [participationPulse]);
@@ -85,208 +209,157 @@ export function ParticipationPulseWidget() {
 
     if (chartData.length === 0) return null;
 
-    const latest = chartData[chartData.length - 1] || {};
+    const latest            = chartData[chartData.length - 1] || {};
+    const screenerEverActive = chartData.some(p => p.screener_active);
 
-    // Screener offline = never produced data in this window
-    const screenerEverActive = chartData.some(p => (p.screener_count || 0) > 0);
-    const screenerOffline    = !screenerEverActive;
+    const discNet   = latest.disc_net        ?? 0;
+    const wlNet     = latest.wl_net          ?? 0;
+    const discCount = latest.discovery_count ?? 0;
+    const wlCount   = latest.watchlist_count ?? 0;
+    const overlap   = latest.overlap_count   ?? 0;
 
-    // Sentiment interpretation — prefer watchlist sentiment when screener is offline
-    const netSignal = screenerOffline ? latest.wl_net : (latest.net_score ?? 0);
-    const isBullDominant = screenerOffline
-        ? (latest.wl_bull > (latest.wl_bear || 0) * 1.4 && latest.wl_bull > 3)
-        : (latest.bull_score > (latest.bear_score || 0) * 1.5 && latest.bull_score > 5);
-    const isBearDominant = screenerOffline
-        ? (latest.wl_bear > (latest.wl_bull || 0) * 1.4 && latest.wl_bear > 3)
-        : (latest.bear_score > (latest.bull_score || 0) * 1.5 && latest.bear_score > 5);
-    const isNeutral = !isBullDominant && !isBearDominant;
-
-    // Y-axis: centre on 0, scale to max wl_net in window (+buffer)
-    const maxAbsWl = Math.max(...chartData.map(p => Math.abs(p.wl_net || 0)), 5);
-    const yDomain  = [-(maxAbsWl + 3), maxAbsWl + 3];
-
-    const CustomTooltip = ({ active, payload, label }) => {
-        if (!active || !payload?.length) return null;
-        const p = payload[0].payload;
-        return (
-            <div style={{
-                backgroundColor: 'var(--bg-panel)', border: '1px solid var(--border)',
-                color: 'var(--text-main)', borderRadius: 6, padding: '10px 14px', minWidth: 200, fontSize: 11,
-            }}>
-                <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: 8 }}>{label}</div>
-
-                <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 6, marginBottom: 6 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                        <span style={{ color: '#10B981' }}>Watchlist Up</span>
-                        <strong style={{ color: '#10B981' }}>{p.wl_bull ?? 0} coins</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                        <span style={{ color: '#EF4444' }}>Watchlist Down</span>
-                        <strong style={{ color: '#EF4444' }}>{p.wl_bear ?? 0} coins</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Net Bias</span>
-                        <strong style={{ color: (p.wl_net || 0) > 0 ? '#10B981' : (p.wl_net || 0) < 0 ? '#EF4444' : '#718096' }}>
-                            {(p.wl_net || 0) > 0 ? '+' : ''}{p.wl_net ?? 0}
-                        </strong>
-                    </div>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                    <span style={{ color: 'var(--accent-purple)' }}>Watchlist Total</span>
-                    <strong>{p.watchlist_count ?? 0}</strong>
-                </div>
-                {(p.screener_count > 0) && (
-                    <>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                            <span style={{ color: 'var(--accent-blue)' }}>Screener Active</span>
-                            <strong>{p.screener_count}</strong>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                            <span style={{ color: '#10B981' }}>Screener Buy Score</span>
-                            <strong>+{p.bull_score}</strong>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ color: '#EF4444' }}>Screener Sell Score</span>
-                            <strong>-{p.bear_score}</strong>
-                        </div>
-                    </>
-                )}
-            </div>
-        );
-    };
+    const banner = getBannerProps(screenerEverActive, discNet, wlNet, overlap, discCount, wlCount);
 
     return (
         <div
             ref={containerRef}
-            className={`flex flex-col w-full p-4 h-[380px] rounded-lg shadow-sm ${isPulsing ? 'animate-widget-glow' : ''}`}
+            className={`flex flex-col w-full p-4 h-[400px] rounded-lg shadow-sm ${isPulsing ? 'animate-widget-glow' : ''}`}
             style={{ backgroundColor: 'var(--bg-panel)', color: 'var(--text-main)', border: '1px solid var(--border)', touchAction: 'pan-y' }}
         >
-            {/* ── Header ── */}
+            {/* ── Header ─────────────────────────────────────────────────────── */}
             <div className="flex items-center justify-between mb-2 pb-2" style={{ borderBottom: '1px solid var(--border)' }}>
                 <div className="flex items-center gap-2">
-                    <Activity size={18} className="text-[var(--accent-blue)]" />
-                    <h3 className="text-sm font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Scout Screener Engine</h3>
+                    <Activity size={18} style={{ color: DISC_COLOR }} />
+                    <h3 className="text-sm font-bold uppercase" style={{ color: 'var(--text-muted)' }}>
+                        Market Participation
+                    </h3>
                     <FreshnessChip ts={participationPulseFetchedAt} title="Participation data last fetched from server" />
                 </div>
 
-                <div className="flex gap-4 items-center">
-                    {/* Watchlist sentiment */}
+                <div className="flex gap-3 items-center">
+                    {/* Discovery pill */}
                     <div className="flex flex-col items-end">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Watchlist</span>
-                        <span className="text-sm font-bold font-mono" style={{ color: 'var(--accent-purple)' }}>
-                            {latest.watchlist_count ?? 0} tracked
+                        <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: DISC_COLOR, opacity: 0.8 }}>
+                            Discovery
+                        </span>
+                        <span className="text-sm font-bold font-mono" style={{ color: DISC_COLOR }}>
+                            {discCount}
+                            <span style={{ fontSize: 9, opacity: 0.65, marginLeft: 2 }}>coins</span>
                         </span>
                     </div>
-                    <div className="flex flex-col items-end border-l border-[var(--border)] pl-4">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Up / Down</span>
-                        <span className="text-sm font-bold font-mono">
-                            <span style={{ color: '#10B981' }}>{latest.wl_bull ?? 0}↑</span>
-                            {' / '}
-                            <span style={{ color: '#EF4444' }}>{latest.wl_bear ?? 0}↓</span>
+
+                    {/* Watchlist pill */}
+                    <div className="flex flex-col items-end border-l border-[var(--border)] pl-3">
+                        <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: WL_COLOR, opacity: 0.8 }}>
+                            Watchlist
+                        </span>
+                        <span className="text-sm font-bold font-mono" style={{ color: WL_COLOR }}>
+                            {wlCount}
+                            <span style={{ fontSize: 9, opacity: 0.65, marginLeft: 2 }}>coins</span>
                         </span>
                     </div>
-                    <div className="flex flex-col items-end border-l border-[var(--border)] pl-4">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                            {screenerOffline ? 'WL Net' : 'Net Rating'}
+
+                    {/* Confirmed (overlap) pill */}
+                    <div className="flex flex-col items-end border-l border-[var(--border)] pl-3">
+                        <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: CONF_COLOR, opacity: 0.8 }}>
+                            Confirmed
                         </span>
-                        <span className={`text-lg font-bold font-mono ${netSignal > 0 ? 'text-[#10B981]' : netSignal < 0 ? 'text-[#EF4444]' : 'text-gray-400'}`}>
-                            {netSignal > 0 ? '+' : ''}{netSignal}
+                        <span className="text-sm font-bold font-mono" style={{ color: CONF_COLOR }}>
+                            {overlap}
+                            <span style={{ fontSize: 9, opacity: 0.65, marginLeft: 2 }}>both</span>
                         </span>
                     </div>
-                    {/* Screener status pill */}
-                    <div className="flex flex-col items-end border-l border-[var(--border)] pl-4">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Screener</span>
-                        {screenerOffline ? (
-                            <span style={{ fontSize: 10, color: '#f6ad55', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}>
-                                <WifiOff size={10} /> Offline
+
+                    {/* Screener status */}
+                    <div className="flex flex-col items-end border-l border-[var(--border)] pl-3">
+                        <span className="text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Screener</span>
+                        {screenerEverActive ? (
+                            <span style={{ fontSize: 10, color: '#68D391', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 2 }}>
+                                ● Live ({discCount})
                             </span>
                         ) : (
-                            <span style={{ fontSize: 10, color: '#68d391', fontWeight: 700 }}>
-                                ● Live ({latest.screener_count})
+                            <span style={{ fontSize: 10, color: '#F6AD55', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 2 }}>
+                                <WifiOff size={9} /> Offline
                             </span>
                         )}
                     </div>
                 </div>
             </div>
 
-            {/* ── Status banner ── */}
-            <div className="flex items-center gap-2 mb-3 p-2 rounded text-xs" style={{ backgroundColor: 'var(--bg-app)' }}>
-                {screenerOffline && (
-                    <>
-                        <WifiOff size={13} style={{ color: '#f6ad55', flexShrink: 0 }} />
-                        <span style={{ color: '#f6ad55', fontWeight: 600 }}>Screener Offline</span>
-                        <span style={{ color: 'var(--text-muted)' }}>— Open the TradingView Screener panel to enable rating signals.
-                            Chart shows watchlist price bias ({latest.watchlist_count ?? 0} coins, Δ% threshold ±0.3%).</span>
-                    </>
-                )}
-                {!screenerOffline && isBullDominant && (
-                    <><TrendingUp size={13} style={{ color: '#10B981' }} />
-                    <span style={{ color: '#10B981', fontWeight: 600 }}>Rating Upgrade:</span>
-                    <span>Screener aggregated ratings are heavily Buy / Strong Buy.</span></>
-                )}
-                {!screenerOffline && isBearDominant && (
-                    <><TrendingDown size={13} style={{ color: '#EF4444' }} />
-                    <span style={{ color: '#EF4444', fontWeight: 600 }}>Rating Downgrade:</span>
-                    <span>Screener aggregated ratings are heavily Sell / Strong Sell.</span></>
-                )}
-                {!screenerOffline && isNeutral && (
-                    <><Zap size={13} style={{ color: '#FACC15' }} />
-                    <span style={{ color: '#FACC15', fontWeight: 600 }}>Mixed Ratings:</span>
-                    <span>Screener distribution is balanced or neutral.</span></>
-                )}
+            {/* ── Status banner ──────────────────────────────────────────────── */}
+            <div className="flex items-start gap-2 mb-3 p-2 rounded text-xs" style={{ backgroundColor: 'var(--bg-app)' }}>
+                {banner.icon}
+                <span style={{ color: banner.color, fontWeight: 700, flexShrink: 0 }}>{banner.label}:</span>
+                <span style={{ color: 'var(--text-muted)' }}>{banner.detail}</span>
             </div>
 
-            {/* ── Chart ── */}
-            <div className="flex-1 min-h-[160px] w-full">
+            {/* ── Chart ──────────────────────────────────────────────────────── */}
+            <div className="flex-1 min-h-[150px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartData} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
+                    <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                         <defs>
-                            <linearGradient id="ppBull" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%"   stopColor="#10B981" stopOpacity={0.55} />
-                                <stop offset="100%" stopColor="#10B981" stopOpacity={0.05} />
+                            {/* Discovery (teal) — bull above 0, bear below 0 */}
+                            <linearGradient id="ppDiscBull" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%"   stopColor={DISC_COLOR} stopOpacity={0.5} />
+                                <stop offset="100%" stopColor={DISC_COLOR} stopOpacity={0.04} />
                             </linearGradient>
-                            <linearGradient id="ppBear" x1="0" y1="1" x2="0" y2="0">
-                                <stop offset="0%"   stopColor="#EF4444" stopOpacity={0.55} />
-                                <stop offset="100%" stopColor="#EF4444" stopOpacity={0.05} />
+                            <linearGradient id="ppDiscBear" x1="0" y1="1" x2="0" y2="0">
+                                <stop offset="0%"   stopColor={DISC_COLOR} stopOpacity={0.4} />
+                                <stop offset="100%" stopColor={DISC_COLOR} stopOpacity={0.04} />
+                            </linearGradient>
+                            {/* Watchlist (amber) — bull above 0, bear below 0 */}
+                            <linearGradient id="ppWlBull" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%"   stopColor={WL_COLOR} stopOpacity={0.45} />
+                                <stop offset="100%" stopColor={WL_COLOR} stopOpacity={0.04} />
+                            </linearGradient>
+                            <linearGradient id="ppWlBear" x1="0" y1="1" x2="0" y2="0">
+                                <stop offset="0%"   stopColor={WL_COLOR} stopOpacity={0.35} />
+                                <stop offset="100%" stopColor={WL_COLOR} stopOpacity={0.04} />
                             </linearGradient>
                         </defs>
 
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" opacity={0.4} />
+
                         <XAxis dataKey="timeLabel" axisLine={false} tickLine={false}
                             tick={{ fontSize: 9, fill: 'var(--text-muted)' }} minTickGap={30} />
-                        <YAxis domain={yDomain} axisLine={false} tickLine={false}
+
+                        {/* Fixed -100 → +100 Y-axis — same scale for both pools */}
+                        <YAxis domain={[-100, 100]} axisLine={false} tickLine={false}
+                            ticks={[-100, -50, 0, 50, 100]}
                             tick={{ fontSize: 8, fill: 'var(--text-muted)' }}
-                            tickFormatter={v => v > 0 ? `+${v}` : v} />
+                            tickFormatter={v => v > 0 ? `+${v}` : `${v}`} />
 
-                        <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3', stroke: 'rgba(255,255,255,0.15)' }}
-                            isAnimationActive={false} trigger={isMobile ? 'click' : 'hover'} />
+                        <Tooltip content={<PulseTooltip />}
+                            cursor={{ strokeDasharray: '3 3', stroke: 'rgba(255,255,255,0.15)' }}
+                            isAnimationActive={false}
+                            trigger={isMobile ? 'click' : 'hover'} />
 
-                        {/* Zero reference line */}
-                        <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" strokeDasharray="4 3" />
+                        {/* Reference lines: zero (solid), ±50 (light), ±80 (faint) */}
+                        <ReferenceLine y={0}   stroke="rgba(255,255,255,0.22)" strokeWidth={1} />
+                        <ReferenceLine y={50}  stroke="rgba(255,255,255,0.07)" strokeDasharray="4 4" />
+                        <ReferenceLine y={-50} stroke="rgba(255,255,255,0.07)" strokeDasharray="4 4" />
+                        <ReferenceLine y={80}  stroke="rgba(255,255,255,0.04)" strokeDasharray="2 6" />
+                        <ReferenceLine y={-80} stroke="rgba(255,255,255,0.04)" strokeDasharray="2 6" />
 
-                        {/* Watchlist bias — green area above 0, red area below 0 */}
-                        <Area type="monotone" dataKey="wl_pos" stroke="none"
-                            fill="url(#ppBull)" baseValue={0} isAnimationActive={false} />
-                        <Area type="monotone" dataKey="wl_neg" stroke="none"
-                            fill="url(#ppBear)" baseValue={0} isAnimationActive={false} />
+                        {/* Watchlist wave (amber) — rendered first so discovery overlays it */}
+                        <Area type="monotone" dataKey="w_pos"
+                            stroke={WL_COLOR} strokeWidth={1.5}
+                            fill="url(#ppWlBull)" baseValue={0} isAnimationActive={false}
+                            activeDot={WL_ACTIVE_DOT} />
+                        <Area type="monotone" dataKey="w_neg"
+                            stroke={WL_COLOR} strokeWidth={1.5}
+                            fill="url(#ppWlBear)" baseValue={0} isAnimationActive={false}
+                            activeDot={WL_ACTIVE_DOT} />
 
-                        {/* Watchlist net bias line (primary signal) */}
-                        <Line type="monotone" dataKey="wl_net" stroke="#10B981" strokeWidth={2}
-                            dot={false} isAnimationActive={false}
-                            activeDot={{ r: 5, fill: '#10B981', stroke: 'var(--bg-panel)', strokeWidth: 2 }} />
-
-                        {/* Watchlist total count line (purple) */}
-                        <Line type="monotone" dataKey="watchlist_count" stroke="var(--accent-purple)"
-                            strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false}
-                            activeDot={{ r: 4, fill: 'var(--accent-purple)' }} />
-
-                        {/* Screener count (blue) — only visible when screener is active */}
-                        {screenerEverActive && (
-                            <Line type="monotone" dataKey="screener_count" stroke="var(--accent-blue)"
-                                strokeWidth={2} dot={false} isAnimationActive={false}
-                                activeDot={{ r: 5, fill: 'var(--accent-blue)', stroke: 'var(--bg-panel)', strokeWidth: 2 }} />
-                        )}
+                        {/* Discovery wave (teal) — on top; flat at 0 when screener offline */}
+                        <Area type="monotone" dataKey="d_pos"
+                            stroke={DISC_COLOR} strokeWidth={1.5}
+                            fill="url(#ppDiscBull)" baseValue={0} isAnimationActive={false}
+                            activeDot={DISC_ACTIVE_DOT} />
+                        <Area type="monotone" dataKey="d_neg"
+                            stroke={DISC_COLOR} strokeWidth={1.5}
+                            fill="url(#ppDiscBear)" baseValue={0} isAnimationActive={false}
+                            activeDot={DISC_ACTIVE_DOT} />
 
                         <Brush dataKey="timeLabel" height={20} travellerWidth={16}
                             stroke="var(--text-muted)" fill="var(--bg-app)"
@@ -297,30 +370,24 @@ export function ParticipationPulseWidget() {
                 </ResponsiveContainer>
             </div>
 
-            {/* ── Legend ── */}
+            {/* ── Legend ─────────────────────────────────────────────────────── */}
             <div className="flex justify-between items-center mt-2 px-1">
                 <div className="text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-                    Watchlist Price Bias · {screenerOffline ? 'Screener offline' : 'Screener + Watchlist'}
+                    Market Breadth · Discovery vs Watchlist · −100 → +100
                 </div>
                 <div className="flex flex-wrap gap-3 text-[9px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>
                     <span className="flex items-center gap-1">
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10B981', display: 'inline-block' }} />
-                        WL Up
+                        <span style={{ width: 16, height: 2, background: DISC_COLOR, display: 'inline-block', borderRadius: 1 }} />
+                        Discovery
                     </span>
                     <span className="flex items-center gap-1">
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#EF4444', display: 'inline-block' }} />
-                        WL Down
+                        <span style={{ width: 16, height: 2, background: WL_COLOR, display: 'inline-block', borderRadius: 1 }} />
+                        Watchlist
                     </span>
                     <span className="flex items-center gap-1">
-                        <span style={{ width: 16, height: 2, background: 'var(--accent-purple)', display: 'inline-block', opacity: 0.7 }} />
-                        WL Total
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: CONF_COLOR, display: 'inline-block' }} />
+                        Confirmed
                     </span>
-                    {screenerEverActive && (
-                        <span className="flex items-center gap-1">
-                            <span style={{ width: 16, height: 2, background: 'var(--accent-blue)', display: 'inline-block' }} />
-                            Screener Count
-                        </span>
-                    )}
                 </div>
             </div>
         </div>

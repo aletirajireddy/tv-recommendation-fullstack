@@ -10,13 +10,18 @@ module.exports = {
       watch: false,
       env: {
         NODE_ENV: "development",
-        // PORT 5173: backend serves the built React client (client/dist) AND
-        // Socket.IO on the same port — no proxy layer, no vite-preview needed.
+        PORT: 3000
+      }
+    },
+    {
+      name: "tv-client",
+      script: "start_client.js",
+      cwd: "client",
+      env: {
+        NODE_ENV: "development",
         PORT: 5173
       }
     },
-    // tv-client (vite preview) retired — backend now serves client/dist directly.
-    // Run `npm run build` in client/ after any frontend change, then restart tv-backend.
     {
       name: "mcp-server",
       script: "index.js",

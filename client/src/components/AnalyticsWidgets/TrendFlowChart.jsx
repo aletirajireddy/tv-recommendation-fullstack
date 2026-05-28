@@ -106,7 +106,7 @@ export function TrendFlowChart() {
                             name="Mood Score"
                             stroke="var(--accent-blue)"
                             strokeWidth={2}
-                            dot={{ fill: 'var(--accent-blue)', r: 3 }}
+                            dot={false}
                         />
                     </ComposedChart>
                 </ResponsiveContainer>

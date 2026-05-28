@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Institutional Conviction Engine - Bidirectional v20.3 (Force-Prune Dupes)
+// @name         Institutional Conviction Engine - Bidirectional v20.4 (Full-Format Dedup)
 // @namespace    http://tampermonkey.net/
-// @version      20.3
-// @description  v20.3: Honors backend force_prune (exchange dupes bypass VETO_PRUNE) and action_required (bypasses 15-min Automa cooldown for UPDATE_WATCHLIST/RESET_WATCHLIST). v20.2: Cyclic monitor with Precision Audit, deferred sync, Dynamic Orphan Detection, Strict Watchlist Scoping.
+// @version      20.4
+// @description  v20.4: Bug fixes — full-format diff (detects exchange swaps), cross-exchange watchlist guard (watchlistBaseSet), always-fresh telemetry snapshot, fix Tech Rating whitespace stripped before server read, always call processSyncPayload. v20.3: force_prune + action_required cooldown bypass. v20.2: Cyclic monitor, Dynamic Orphan Detection, Strict Watchlist Scoping.
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
@@ -39,7 +39,8 @@
     const serverTargetSet = new Set();
     const pipelineRegistry = new Map();
     const graduatedSet = new Map();
-    let area2WatchlistSet = new Set();
+    let area2WatchlistSet = new Set();  // full format: EXCHANGE:TICKER.P
+    let watchlistBaseSet  = new Set();  // base only: TICKER.P — for cross-exchange duplicate guard
     let watchlistSnapshot = [];
     let colMap = {};
 
@@ -164,6 +165,12 @@
                     auditLog("FORCE_PRUNED", tickerKey, "Removed exchange duplicate (backend dedup).", "PRUNE");
                 }
                 if (serverTargetSet.has(tickerKey)) serverTargetSet.delete(tickerKey);
+                // Also clear from graduatedSet so the orphan-detection loop
+                // doesn't try to re-send a STABLE pick for an already-pruned dupe.
+                if (graduatedSet.has(tickerKey)) {
+                    graduatedSet.delete(tickerKey);
+                    auditLog("FORCE_PRUNED", tickerKey, "Cleared graduation lock for exchange duplicate.", "PRUNE");
+                }
             });
         }
 
@@ -191,19 +198,20 @@
             serverInfo.master_targets.forEach(key => serverTargetSet.add(key));
 
             // =========================================================================
-            // ✅ STRICT DIFF CALCULATION WITH TICKER NORMALIZATION
+            // ✅ FULL-FORMAT DIFF — detects exchange swaps (Bug-1 fix)
             // =========================================================================
-            // Strip out exchange prefixes (e.g. "BINANCE:") to prevent format-mismatch bugs
-            const extractTicker = (fullString) => fullString.includes(':') ? fullString.split(':')[1] : fullString;
+            // Previous version stripped exchange prefixes before comparing, so
+            // BINANCE:XRPUSDT.P (target) vs BYBIT:XRPUSDT.P (watchlist) both became
+            // XRPUSDT.P → diff = 0 → Automa never fired → exchange duplicate stayed
+            // in the TV watchlist forever even after force_prune cleared internal sets.
+            //
+            // Full-format comparison: BINANCE:XRPUSDT.P ≠ BYBIT:XRPUSDT.P → diff = 2
+            // → Automa fires with the correct BINANCE: version in clipboard.
+            const targetSetCheck  = new Set(serverInfo.master_targets);
+            const currentSetCheck = new Set(area2WatchlistSet);  // full EXCHANGE:TICKER.P
 
-            const normalizedTargets = serverInfo.master_targets.map(extractTicker);
-            const normalizedCurrent = Array.from(area2WatchlistSet).map(extractTicker);
-
-            const targetSetCheck = new Set(normalizedTargets);
-            const currentSetCheck = new Set(normalizedCurrent);
-
-            const additions = normalizedTargets.filter(x => !currentSetCheck.has(x));
-            const removals = normalizedCurrent.filter(x => !targetSetCheck.has(x));
+            const additions = serverInfo.master_targets.filter(x => !currentSetCheck.has(x));
+            const removals  = Array.from(area2WatchlistSet).filter(x => !targetSetCheck.has(x));
             const diffCount = additions.length + removals.length;
 
             if (diffCount > 0) {
@@ -249,6 +257,7 @@
 
     function updateArea2Watchlist() {
         area2WatchlistSet.clear();
+        watchlistBaseSet.clear();   // Bug-2 fix: reset cross-exchange base set too
         watchlistSnapshot = [];
 
         // =========================================================================
@@ -268,6 +277,11 @@
 
             if (full) {
                 area2WatchlistSet.add(full);
+                // Strip exchange prefix so BYBIT:XRPUSDT.P and BINANCE:XRPUSDT.P
+                // both register base = 'XRPUSDT.P' — prevents the script from scouting
+                // the same coin under a different exchange as a new BIRTH.
+                const base = full.includes(':') ? full.split(':')[1] : full;
+                watchlistBaseSet.add(base);
 
                 let price = "", change_pct = "", vol_raw = "";
                 const spans = Array.from(row.children).filter(el => el.tagName === 'SPAN');
@@ -287,22 +301,20 @@
     async function sendTelemetry() {
         auditLog("TELEMETRY", null, "Capturing Market Context Snapshot...", "SYSTEM");
 
-        const screenerTable = document.querySelector('tbody');
-        let watchlistPanel = document.querySelector('div[data-name="symbol-list-wrap"]');
-
-        if (!watchlistPanel) {
-            auditLog("TELEMETRY", null, "Watchlist panel missing. Attempting force-open...", "SYSTEM");
-            const success = await ensureWatchlistPanelOpen();
-            if (success) {
-                watchlistPanel = document.querySelector('div[data-name="symbol-list-wrap"]');
-                updateArea2Watchlist();
-            }
-        }
+        // Bug-3 fix: always ensure the panel is open BEFORE reading the watchlist.
+        // Previous version only called updateArea2Watchlist() on the force-open branch,
+        // so when the panel was already visible the snapshot was up to 60s stale.
+        await ensureWatchlistPanelOpen();
+        const watchlistPanel = document.querySelector('div[data-name="symbol-list-wrap"]');
+        const screenerTable  = document.querySelector('tbody');
 
         if (!screenerTable || !watchlistPanel) {
             auditLog("TELEMETRY_ERROR", null, "Skipping: Required UI containers not found.", "PRUNE");
             return;
         }
+
+        // Always refresh watchlist state immediately before building the payload.
+        updateArea2Watchlist();
 
         if (Object.keys(colMap).length === 0) mapHeaders();
         const telemetryHeaders = [];
@@ -322,13 +334,19 @@
                 cells.forEach((cell, idx) => {
                     if (idx < telemetryHeaders.length) {
                         const fieldName = telemetryHeaders[idx];
-                        const text = cell.innerText.trim();
-                        const cleanText = text.replace(/\s|\n|USDT/g, '').replace(/−/g, '-');
-
-                        if (/^-?[\d.]+$/.test(cleanText) && cleanText !== "") {
-                            rowData[fieldName] = parseFloat(cleanText);
+                        const rawText   = cell.innerText || '';
+                        // Bug-4 fix: previous code stripped ALL whitespace before the
+                        // numeric check, turning "Strong Buy" into "StrongBuy". The
+                        // server's getRatingScore() uses includes('strong buy') with a
+                        // space, so it never matched → Participation Pulse Discovery
+                        // wave stayed permanently flat at zero.
+                        // Fix: only strip whitespace when the value is numeric.
+                        const numCandidate = rawText.replace(/[\n\r,\s]/g, '').replace(/−/g, '-').replace(/USDT$/i, '');
+                        if (numCandidate !== '' && /^-?[\d.]+$/.test(numCandidate)) {
+                            rowData[fieldName] = parseFloat(numCandidate);
                         } else {
-                            rowData[fieldName] = text;
+                            // Preserve internal spaces: "Strong Buy", "Strong Sell", etc.
+                            rowData[fieldName] = rawText.replace(/−/g, '-').trim();
                         }
                     }
                 });
@@ -352,7 +370,10 @@
                 if (response.status === 200) {
                     const serverInfo = JSON.parse(response.responseText);
                     auditLog("TELEMETRY_SUCCESS", null, "Snapshot Synced to Backend.", "SYNC");
-                    if (serverInfo.master_targets) processSyncPayload(serverInfo, "HEARTBEAT");
+                    // Bug-5 fix: always call processSyncPayload — not just when master_targets
+                    // is present. force_prune and action_required must be handled even if the
+                    // engine returns no master_targets (e.g. early-boot or overload path).
+                    processSyncPayload(serverInfo, "HEARTBEAT");
                 } else {
                     auditLog("TELEMETRY_ERROR", null, `HTTP ${response.status}: ${response.responseText}`, "PRUNE");
                 }
@@ -438,11 +459,16 @@
                 }
             }
 
-            if (area2WatchlistSet.has(rowKey)) {
+            // Bug-2 fix: guard against cross-exchange duplicates.
+            // If BYBIT:XRPUSDT.P is in the watchlist and BINANCE:XRPUSDT.P appears on
+            // the screener, area2WatchlistSet.has(rowKey) would miss it. watchlistBaseSet
+            // covers the base ticker regardless of which exchange prefix is stored.
+            const rowBase = rowKey.includes(':') ? rowKey.split(':')[1] : rowKey;
+            if (area2WatchlistSet.has(rowKey) || watchlistBaseSet.has(rowBase)) {
                 if (activeMasterSet.has(rowKey) || pipelineRegistry.has(rowKey)) {
                     activeMasterSet.delete(rowKey);
                     pipelineRegistry.delete(rowKey);
-                    auditLog("SUPPRESSED", ticker, "Halted scouting. Coin already exists in UI Watchlist.", "SYSTEM");
+                    auditLog("SUPPRESSED", ticker, "Coin already in watchlist (possibly under different exchange). Halting.", "SYSTEM");
                 }
                 return;
             }

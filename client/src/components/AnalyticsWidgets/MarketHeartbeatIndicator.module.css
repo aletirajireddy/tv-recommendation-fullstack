@@ -7,7 +7,7 @@
     padding: 8px 12px;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
     min-width: 160px;
-    color: var(--white);
+    color: rgba(255,255,255,0.9);
     font-family: 'JetBrains Mono', monospace;
     animation: tooltipFade 0.2s ease-out;
 }

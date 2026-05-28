@@ -138,7 +138,7 @@
     cursor: pointer;
     transition: all 0.2s;
 }
-.iconBtn:hover { background: var(--bg-active); color: var(--white); }
+.iconBtn:hover { background: var(--bg-active); color: var(--text-main); }
 .iconBtnActive { background: var(--bg-active); border-color: var(--accent-blue); color: var(--accent-blue); }
 
 /* ─── GRID LAYOUT ─── */
@@ -321,7 +321,7 @@
 .ticker {
     font-weight: 900;
     font-size: 12px;
-    color: var(--white);
+    color: var(--text-main);
     font-family: 'Outfit', sans-serif;
     letter-spacing: -0.2px;
 }
@@ -353,7 +353,7 @@
 .metaVal {
     font-size: 10px;
     font-weight: 700;
-    color: var(--white);
+    color: var(--text-main);
     font-family: 'JetBrains Mono', monospace;
     white-space: nowrap;
 }
@@ -453,12 +453,12 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--gray-400);
+    background: rgba(160,160,160,0.4);
 }
 
 .ruleDot_pass { background: var(--accent-green); box-shadow: 0 0 4px var(--accent-green); }
 .ruleDot_fail { background: var(--accent-red); }
-.ruleDot_none { background: var(--gray-400); opacity: 0.3; }
+.ruleDot_none { background: rgba(160,160,160,0.4); opacity: 0.3; }
 
 .cooldownTime {
     font-size: 10px;

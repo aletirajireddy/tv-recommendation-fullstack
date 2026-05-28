@@ -260,11 +260,19 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     const coinsWithCascade = useMemo(() => {
         if (!boardData?.board?.length)
             return FALLBACK_TICKERS.map(t => ({ ticker: t, cascade: 'neutral', shortCascade: 'neutral' }));
-        return boardData.board.map(b => ({
-            ticker:       b.cleanTicker,
-            cascade:      checkCascade(b.emas, longSeries,  equalThreshold),
-            shortCascade: checkCascade(b.emas, shortSeries, equalThreshold),
-        }));
+        // Deduplicate by cleanTicker — keep first occurrence (most-recently-updated)
+        const seen = new Set();
+        const result = [];
+        for (const b of boardData.board) {
+            if (!b.cleanTicker || seen.has(b.cleanTicker)) continue;
+            seen.add(b.cleanTicker);
+            result.push({
+                ticker:       b.cleanTicker,
+                cascade:      checkCascade(b.emas, longSeries,  equalThreshold),
+                shortCascade: checkCascade(b.emas, shortSeries, equalThreshold),
+            });
+        }
+        return result;
     }, [boardData, longSeries, shortSeries, equalThreshold]);
 
     // Counter chips — ALL coins with a clear short-series direction (ATR-gated).
@@ -273,15 +281,17 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     // The S▲/S▼ badge in the dropdown already shows whether long and short agree.
     const reversalCoins = useMemo(() => {
         if (!boardData?.board?.length) return { tempBull: [], tempBear: [] };
-        const tempBull = [], tempBear = [];
+        // Use Sets to deduplicate — boardData.board can have multiple raw variants
+        // (ETHUSDT.P, ETHUSDT, ETHPERP…) that collapse to the same cleanTicker.
+        const bullSet = new Set(), bearSet = new Set();
         for (const b of boardData.board) {
-            if (!b.emas) continue;
+            if (!b.emas || !b.cleanTicker) continue;
             const shortDir = checkCascade(b.emas, shortSeries, equalThreshold);
             const atrOk    = passesAtrGate(b.emas, shortSeries, b.atrs, b.price);
-            if (shortDir === 'bull' && atrOk) tempBull.push(b.cleanTicker);
-            if (shortDir === 'bear' && atrOk) tempBear.push(b.cleanTicker);
+            if (shortDir === 'bull' && atrOk) bullSet.add(b.cleanTicker);
+            if (shortDir === 'bear' && atrOk) bearSet.add(b.cleanTicker);
         }
-        return { tempBull, tempBear };
+        return { tempBull: [...bullSet], tempBear: [...bearSet] };
     }, [boardData, shortSeries, equalThreshold]);
 
     // Dropdown state
