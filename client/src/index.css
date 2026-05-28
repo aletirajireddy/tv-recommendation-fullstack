@@ -120,6 +120,14 @@ h1, h2, h3, h4, h5, h6 {
     to { opacity: 1; }
 }
 
+/* Global pulse — used by inline-style animation references (e.g. LivePnL dot).
+   CSS-Module-scoped @keyframes are inaccessible from inline style strings,
+   so this must live in the global stylesheet. */
+@keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.45; transform: scale(0.85); }
+}
+
 .animate-slide-left {
     animation: slideInLeft 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }

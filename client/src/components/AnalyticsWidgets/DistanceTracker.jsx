@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, lazy, Suspense } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
 import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
@@ -287,8 +287,9 @@ export function DistanceTracker({ filterTicker, compact }) {
 
     // Smart-alert modal state
     const [alertPrefill, setAlertPrefill] = useState(null);
-    const handleCreateAlert = (prefill) => setAlertPrefill(prefill);
-    const closeModal = () => setAlertPrefill(null);
+    // useCallback: stable reference so React.memo on DistRow isn't defeated every render
+    const handleCreateAlert = useCallback((prefill) => setAlertPrefill(prefill), []);
+    const closeModal        = useCallback(() => setAlertPrefill(null), []);
 
     // Audit fix #4/#5/#6: ref-pattern poll
     const { data, loading, error, reload, reloadSilent, lastFetchedAt } = usePolledFetch(
@@ -368,6 +369,10 @@ export function DistanceTracker({ filterTicker, compact }) {
                 av = a.entryScore ?? -Infinity; bv = b.entryScore ?? -Infinity;
             } else if (sortKey === 'rvolM15') {
                 av = a.rvolM15 ?? -Infinity; bv = b.rvolM15 ?? -Infinity;
+            } else if (sortKey === 'cascadeState') {
+                // Order: bull(2) → neutral(0) → bear(-2) when asc; invert when desc
+                const CASC_ORDER = { bull: 2, neutral: 0, bear: -2 };
+                av = CASC_ORDER[a.cascadeState] ?? 0; bv = CASC_ORDER[b.cascadeState] ?? 0;
             } else if (TFS.includes(sortKey)) {
                 av = a.dists?.[sortKey] != null ? Math.abs(a.dists[sortKey]) : Infinity;
                 bv = b.dists?.[sortKey] != null ? Math.abs(b.dists[sortKey]) : Infinity;

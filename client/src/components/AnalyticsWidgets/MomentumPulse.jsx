@@ -126,7 +126,10 @@ export function MomentumPulse() {
 
     // Signal age tracking: { [ticker]: { signal, buckets } }
     // Counts consecutive data refreshes where the same signal is active.
-    const signalAgeRef = useRef(new Map());
+    const signalAgeRef  = useRef(new Map());
+    // Guard ref: prevents double-mutation when React StrictMode / concurrent
+    // renderer calls the useMemo factory more than once with the same data ref.
+    const prevDataRef   = useRef(null);
 
     const resetMomentumPrefs = () => {
         setSortKey('rvolPersist');
@@ -148,36 +151,67 @@ export function MomentumPulse() {
         return () => { clearTimeout(t); socket.off('stream-d-update', handler); socket.off('scan-update', handler); };
     }, [reloadSilent]);
 
-    const rows = useMemo(() => {
+    // Single-pass derived state: rows + filter counts + src stats.
+    // All three previously iterated data?.coins separately (7-8 total array
+    // passes on every fetch). Collapsed here into one map + one sort.
+    //
+    // Signal-age guard: React 18 StrictMode / concurrent renderer may call a
+    // useMemo factory more than once with the same dependency values. Mutating
+    // a ref inside useMemo without a guard causes double-increments in dev mode.
+    // The prevDataRef check ensures the ageMap mutates exactly once per new
+    // data object reference, regardless of how many times React invokes the factory.
+    const { rows, counts, srcStats } = useMemo(() => {
         const all = data?.coins || [];
 
-        // Update signal age map for each coin in this refresh
-        const ageMap = signalAgeRef.current;
-        all.forEach(c => {
-            const prev = ageMap.get(c.ticker);
-            if (prev && prev.signal === c.signal) {
-                ageMap.set(c.ticker, { signal: c.signal, buckets: prev.buckets + 1 });
-            } else {
-                ageMap.set(c.ticker, { signal: c.signal, buckets: 0 });
+        // --- Signal age: update only when data reference is new ---
+        if (data !== prevDataRef.current) {
+            const ageMap = signalAgeRef.current;
+            for (const c of all) {
+                const prev = ageMap.get(c.ticker);
+                ageMap.set(c.ticker, {
+                    signal:  c.signal,
+                    buckets: (prev && prev.signal === c.signal) ? prev.buckets + 1 : 0,
+                });
             }
-        });
-        // Attach signalAge (buckets × ~30s interval) to each coin
-        const allWithAge = all.map(c => ({
-            ...c,
-            signalAge: ageMap.get(c.ticker)?.buckets ?? 0,
-        }));
+            prevDataRef.current = data;
+        }
 
-        const filtered = filter === 'all'      ? allWithAge
-            : filter === 'surging'  ? allWithAge.filter(c => c.signal === 'SURGING' || c.signal === 'BUILDING')
-            : filter === 'rsi'      ? allWithAge.filter(c => c.signal === 'RSI_OS'  || c.signal === 'RSI_OB')
-            : filter === 'extended' ? allWithAge.filter(c => c.signal === 'EXTENDED' || c.signal === 'STRETCHED')
-            : filter === 'fading'   ? allWithAge.filter(c => c.signal === 'FADING')
-            : allWithAge;
-        return [...filtered].sort((a, b) => {
+        // --- Single pass: enrich + accumulate counts + src stats ---
+        const ageMap = signalAgeRef.current;
+        let surgingN = 0, rsiN = 0, extendedN = 0, fadingN = 0, scN = 0, sbN = 0;
+
+        const allWithAge = all.map(c => {
+            // Counts (replaces the 6 separate .filter() passes)
+            const sig = c.signal;
+            if (sig === 'SURGING'  || sig === 'BUILDING')              surgingN++;
+            if (sig === 'RSI_OS'   || sig === 'RSI_OB')                rsiN++;
+            if (sig === 'EXTENDED' || sig === 'STRETCHED')             extendedN++;
+            if (sig === 'FADING')                                      fadingN++;
+            if (c.src === 'STREAM_C') scN++; else if (c.src === 'STREAM_B') sbN++;
+
+            return { ...c, signalAge: ageMap.get(c.ticker)?.buckets ?? 0 };
+        });
+
+        // --- Filter ---
+        const filtered =
+            filter === 'surging'  ? allWithAge.filter(c => c.signal === 'SURGING'   || c.signal === 'BUILDING')
+          : filter === 'rsi'      ? allWithAge.filter(c => c.signal === 'RSI_OS'    || c.signal === 'RSI_OB')
+          : filter === 'extended' ? allWithAge.filter(c => c.signal === 'EXTENDED'  || c.signal === 'STRETCHED')
+          : filter === 'fading'   ? allWithAge.filter(c => c.signal === 'FADING')
+          : allWithAge;
+
+        // --- Sort ---
+        const sorted = filtered.slice().sort((a, b) => {
             const av = a[sortKey] ?? -Infinity;
             const bv = b[sortKey] ?? -Infinity;
             return sortDir === 'desc' ? bv - av : av - bv;
         });
+
+        return {
+            rows:     sorted,
+            counts:   { surging: surgingN, rsi: rsiN, extended: extendedN, fading: fadingN },
+            srcStats: { sc: scN, sb: sbN },
+        };
     }, [data, sortKey, sortDir, filter]);
 
     const handleSort = (key) => {
@@ -185,25 +219,6 @@ export function MomentumPulse() {
         else { setSortKey(key); setSortDir('desc'); }
     };
     const sortArrow = (key) => key === sortKey ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
-
-    const counts = useMemo(() => {
-        const all = data?.coins || [];
-        return {
-            surging:  all.filter(c => c.signal === 'SURGING' || c.signal === 'BUILDING').length,
-            rsi:      all.filter(c => c.signal === 'RSI_OS'  || c.signal === 'RSI_OB').length,
-            extended: all.filter(c => c.signal === 'EXTENDED' || c.signal === 'STRETCHED').length,
-            fading:   all.filter(c => c.signal === 'FADING').length,
-        };
-    }, [data]);
-
-    // How many coins have fresh Stream C data vs Stream B fallback
-    const srcStats = useMemo(() => {
-        const all = data?.coins || [];
-        return {
-            sc: all.filter(c => c.src === 'STREAM_C').length,
-            sb: all.filter(c => c.src === 'STREAM_B').length,
-        };
-    }, [data]);
 
     return (
         <div className={styles.widget}>
