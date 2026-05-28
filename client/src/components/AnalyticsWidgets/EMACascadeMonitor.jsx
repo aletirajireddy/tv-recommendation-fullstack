@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
+import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import {
     ComposedChart, Line, Bar, XAxis, YAxis, ReferenceLine, ReferenceDot,
     Tooltip, ResponsiveContainer, Legend,
@@ -566,6 +567,7 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <FreshnessChip ts={boardFetchedAt} title="Board data last fetched from server" />
+                        <ResetPrefsButton onReset={resetCascade} title="Reset ticker, window and interval to defaults" />
                         <button className={styles.refreshBtn} onClick={openSettings} title="Cascade settings">
                             <Settings size={14} />
                             {settingsValidation && settingsOpen === false && (() => {

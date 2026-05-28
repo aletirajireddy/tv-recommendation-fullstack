@@ -7,6 +7,7 @@ import { TrialExpandedModal } from './TrialExpandedModal';
 import { TrialMiniChart } from './TrialMiniChart';
 import { Target, Settings, Maximize2 } from 'lucide-react';
 import styles from './ValidatorTimelineWidget.module.css';
+import { FreshnessChip } from '../FreshnessChip';
 
 function smartFmt(price) {
     if (price == null || isNaN(price) || price === 0) return '0';
@@ -320,6 +321,7 @@ export function ValidatorTimelineWidget() {
     const [resolved, setResolved] = useState([]);
     const [showSettings, setShowSettings] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [lastFetchedAt, setLastFetchedAt] = useState(null);
     const [expandedTrialId, setExpandedTrialId] = useState(null);
     // Persist collapsed state to localStorage so it survives page reloads.
     const [isCollapsed, setIsCollapsed] = useState(() => {
@@ -358,6 +360,7 @@ export function ValidatorTimelineWidget() {
                 const data = await r.json();
                 setActive(data.active || []);
                 setResolved(data.resolved || []);
+                setLastFetchedAt(Date.now());
             }
         } catch (err) {
             // Swallow AbortError (intentional cancel); log other errors for diagnosis
@@ -412,6 +415,7 @@ export function ValidatorTimelineWidget() {
                 </h4>
 
                 <div className={styles.headerActions}>
+                    <FreshnessChip ts={lastFetchedAt} title="Trials data last fetched from server" />
                     <button className={styles.iconBtn} onClick={() => setShowSettings(true)}
                         aria-label="Validator settings">
                         <Settings size={14} />

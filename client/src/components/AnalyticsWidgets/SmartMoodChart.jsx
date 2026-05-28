@@ -4,6 +4,7 @@ import {
     Tooltip, ResponsiveContainer, Brush, Cell,
 } from 'recharts';
 import { FreshnessChip } from '../FreshnessChip';
+import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useChartBrush } from '../../hooks/useChartBrush';
 import socketService from '../../services/SocketService';
@@ -179,6 +180,11 @@ export function SmartMoodChart() {
     const [prefs, setPrefs] = useState(loadPrefs);
     const { hours, intervalMin } = prefs;
 
+    const resetMoodPrefs = () => {
+        try { localStorage.removeItem(LS_KEY); } catch {}
+        setPrefs({ ...DEFAULTS });
+    };
+
     const updatePref = (key, val) => setPrefs(prev => {
         const next = { ...prev, [key]: val };
         try { localStorage.setItem(LS_KEY, JSON.stringify(next)); } catch {}
@@ -239,6 +245,7 @@ export function SmartMoodChart() {
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <FreshnessChip ts={lastFetchedAt} title="Last fetched from server" />
+                        <ResetPrefsButton onReset={resetMoodPrefs} title="Reset window and interval to defaults (8h / 5m)" />
                         <button className={styles.refreshBtn} onClick={() => reload()} title="Refresh">
                             <RefreshCw size={14} />
                         </button>

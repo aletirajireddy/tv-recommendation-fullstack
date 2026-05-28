@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Ghost } from 'lucide-react';
 import styles from './GhostCoinWidget.module.css';
+import { FreshnessChip } from '../FreshnessChip';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
 
@@ -10,6 +11,7 @@ export function GhostCoinWidget() {
     const [queue, setQueue] = useState([]);
     const [autoApprove, setAutoApprove] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [lastFetchedAt, setLastFetchedAt] = useState(null);
 
     const fetchQueue = useCallback(async () => {
         try {
@@ -18,6 +20,7 @@ export function GhostCoinWidget() {
                 const data = await res.json();
                 setQueue(data.queue || []);
                 setAutoApprove(data.auto_approve || false);
+                setLastFetchedAt(Date.now());
             }
         } catch (e) {
             console.error("Failed to fetch ghost queue", e);
@@ -103,6 +106,7 @@ export function GhostCoinWidget() {
                     <Ghost size={16} strokeWidth={2.5} className="text-accent-orange" /> Ghost Approvals ({queue.length})
                 </h4>
                 <div className={styles.headerActions}>
+                    <FreshnessChip ts={lastFetchedAt} title="Ghost queue last fetched from server" />
                     <div className={styles.toggleRow}>
                         <span className={styles.toggleLabel}>Auto-Prune</span>
                         <label className={styles.switch}>

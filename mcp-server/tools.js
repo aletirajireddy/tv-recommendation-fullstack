@@ -1108,6 +1108,453 @@ async function getCoinMetrics({ ticker, hours = 0.5, latest_only = true } = {}) 
     } catch(e) { return { error: e.message }; }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// v4 ADDITIONS — built on top of new server endpoints (May 2026)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── Shared cascade utils (ported from client/src/utils/cascadeUtils.js) ─────
+const TF_ORDER = ['h4', 'h1', 'm15', 'm5', 'm1'];
+
+function _checkCascade(emas, seriesTFs, threshold = 0.2) {
+    if (!emas || !seriesTFs || seriesTFs.length < 2) return 'neutral';
+    let isBull = true, isBear = true, validPairs = 0;
+    for (let i = 0; i < seriesTFs.length - 1; i++) {
+        const emaLonger  = emas[seriesTFs[i]];
+        const emaShorter = emas[seriesTFs[i + 1]];
+        if (!emaLonger || !emaShorter || emaLonger === 0) continue;
+        validPairs++;
+        const pctDiff = ((emaShorter - emaLonger) / emaLonger) * 100;
+        if (pctDiff < -threshold) isBull = false;
+        if (pctDiff >  threshold) isBear = false;
+    }
+    if (validPairs === 0) return 'neutral';
+    if (isBull && !isBear) return 'bull';
+    if (isBear && !isBull) return 'bear';
+    return 'neutral';
+}
+
+function _passesAtrGate(emas, shortSeries, atrs, price) {
+    if (!shortSeries || shortSeries.length === 0) return false;
+    const emaFirst = emas?.[shortSeries[0]];
+    const emaLast  = emas?.[shortSeries[shortSeries.length - 1]];
+    if (!emaFirst || !emaLast) return true;
+    const atr15Pct = atrs?.m15 || 0;
+    if (!atr15Pct) return true;
+    const atrPrice = (price || 1) * (atr15Pct / 100);
+    return Math.abs(emaFirst - emaLast) > atrPrice;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW TOOL 24 — get_momentum_pulse
+// Pre-computed composite momentum signals — the most useful actionable tool
+// for an agent answering "what coins are surging / building / fading right now?"
+// Combines Stream C (today_change_pct, today_volume, momentum.roc_pct) with
+// Stream D rolling history (rvol_m15, atr_m15, dist_m15, RSI) into a single
+// SURGING / BUILDING / RSI_OS / RSI_OB / FADING / EXTENDED / STRETCHED / AT EMA
+// classification per coin.
+// ─────────────────────────────────────────────────────────────────────────────
+async function getMomentumPulse({ signal, min_change_pct, rvol_thresh = 1.2, limit = 50 } = {}) {
+    try {
+        // 1. Latest Stream C state per ticker
+        const scSince = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const scRows = db.prepare(`
+            WITH ranked AS (
+                SELECT ticker, stream_c_state, timestamp, price,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) AS rn
+                FROM master_coin_store
+                WHERE stream_c_state IS NOT NULL AND timestamp > ?
+            )
+            SELECT ticker, stream_c_state, timestamp, price FROM ranked WHERE rn = 1
+        `).all(scSince);
+
+        // 2. Stream B fallback for coins not in C
+        const bRow = db.prepare(
+            `SELECT payload_json FROM market_context_logs ORDER BY id DESC LIMIT 1`
+        ).get();
+        const bWatchlist = bRow
+            ? (parseJson(bRow.payload_json)?.watchlist_active_snapshot || [])
+            : [];
+
+        const coinMap = new Map();
+        for (const row of scRows) {
+            const sc = parseJson(row.stream_c_state) || {};
+            coinMap.set(row.ticker, {
+                price:     parseFloat(sc.price || row.price) || null,
+                changePct: parseFloat(sc.today_change_pct) || 0,
+                volume:    parseFloat(sc.today_volume) || 0,
+                rocPct:    parseFloat(sc.momentum?.roc_pct) || 0,
+                src: 'STREAM_C',
+            });
+        }
+        for (const w of bWatchlist) {
+            if (!coinMap.has(w.short) && w.short) {
+                coinMap.set(w.short, {
+                    price: w.price ?? null,
+                    changePct: parseFloat(w.change_pct) || 0,
+                    volume: parseFloat(w.vol_raw) || 0,
+                    rocPct: 0, src: 'STREAM_B',
+                });
+            }
+        }
+
+        // 3. Stream D rolling history — last 30 buckets per coin for persistence + trend
+        const histCutoff = Date.now() - 30 * 2 * 60 * 1000; // 60 min
+        const dRows = db.prepare(`
+            SELECT ticker, ts, rsi_m15, rsi_m30, rsi_h1, rvol_m15, atr_m15, dist_m15
+            FROM coin_metric_history WHERE ts > ?
+            ORDER BY ticker, ts ASC
+        `).all(histCutoff);
+
+        const histMap = new Map();
+        for (const r of dRows) {
+            if (!histMap.has(r.ticker)) histMap.set(r.ticker, []);
+            histMap.get(r.ticker).push(r);
+        }
+
+        // 4. Classify each coin
+        const results = [];
+        for (const [ticker, c] of coinMap.entries()) {
+            const hist = histMap.get(ticker) || [];
+            const latest = hist[hist.length - 1];
+            if (!latest) continue; // skip coins with no Stream D yet
+
+            const rvolNow = latest.rvol_m15;
+            const atrNow  = latest.atr_m15;
+            const distNow = latest.dist_m15;
+
+            // rvolPersist: consecutive recent buckets above threshold
+            let rvolPersist = 0;
+            for (let i = hist.length - 1; i >= 0; i--) {
+                if (hist[i].rvol_m15 >= rvol_thresh) rvolPersist++; else break;
+            }
+
+            // rvolTrend: rising / fading / flat
+            let rvolTrend = 'flat';
+            if (hist.length >= 6) {
+                const recent = hist.slice(-3).reduce((a, b) => a + (b.rvol_m15 || 0), 0) / 3;
+                const earlier = hist.slice(-6, -3).reduce((a, b) => a + (b.rvol_m15 || 0), 0) / 3;
+                if (recent > earlier * 1.15) rvolTrend = 'rising';
+                else if (recent < earlier * 0.85) rvolTrend = 'fading';
+            }
+
+            // Signal classification (matches /api/momentum-pulse rules)
+            let sig = 'WATCH';
+            if (rvolPersist >= 5 && c.changePct > 2 && distNow > 1)            sig = 'SURGING';
+            else if (rvolPersist >= 3 && c.changePct > 0)                       sig = 'BUILDING';
+            else if (latest.rsi_m15 < 30 && latest.rsi_h1 < 40)                 sig = 'RSI_OS';
+            else if (latest.rsi_m15 > 70 && latest.rsi_h1 > 60)                 sig = 'RSI_OB';
+            else if (rvolTrend === 'fading' && distNow > 2)                     sig = 'FADING';
+            else if (distNow > 4 && rvolNow < 1)                                sig = 'EXTENDED';
+            else if (distNow < -4 && rvolNow < 1)                               sig = 'STRETCHED';
+            else if (Math.abs(distNow) < 0.5)                                   sig = 'AT_EMA';
+
+            const out = {
+                ticker, signal: sig, src: c.src,
+                price: c.price, change_pct: c.changePct, volume: c.volume,
+                roc_pct: c.rocPct,
+                rsi_m15: latest.rsi_m15, rsi_m30: latest.rsi_m30, rsi_h1: latest.rsi_h1,
+                rvol_m15: rvolNow, rvol_persist: rvolPersist, rvol_trend: rvolTrend,
+                atr_m15: atrNow, dist_m15_pct: distNow,
+            };
+
+            if (signal && sig !== signal) continue;
+            if (min_change_pct != null && Math.abs(c.changePct) < min_change_pct) continue;
+            results.push(out);
+        }
+
+        // Sort: SURGING > BUILDING > RSI_OS > RSI_OB > others, then by |change%|
+        const sigRank = { SURGING: 0, BUILDING: 1, RSI_OS: 2, RSI_OB: 3, FADING: 4, EXTENDED: 5, STRETCHED: 6, AT_EMA: 7, WATCH: 8 };
+        results.sort((a, b) => (sigRank[a.signal] - sigRank[b.signal]) || (Math.abs(b.change_pct) - Math.abs(a.change_pct)));
+
+        return {
+            description: "Composite momentum signals (SURGING/BUILDING/RSI_OS/RSI_OB/FADING/EXTENDED/STRETCHED/AT_EMA/WATCH) — combines Stream C session metrics with Stream D rolling RSI/RVOL/ATR/EMA-distance.",
+            signals_explained: {
+                SURGING:   'rvolPersist≥5 AND change%>2 AND dist>1 — strongest setups',
+                BUILDING:  'rvolPersist≥3 AND change%>0 — accumulating volume',
+                RSI_OS:    'rsi_m15<30 AND rsi_h1<40 — multi-TF oversold (bounce candidates)',
+                RSI_OB:    'rsi_m15>70 AND rsi_h1>60 — multi-TF overbought (fade candidates)',
+                FADING:    'rvolTrend=fading AND dist>2 — losing momentum',
+                EXTENDED:  'dist>4 AND rvol<1 — stretched without volume (mean reversion risk)',
+                STRETCHED: 'dist<-4 AND rvol<1 — capitulation low (oversold bounce risk)',
+                AT_EMA:    '|dist|<0.5% — at EMA200, decision zone',
+                WATCH:     'no strong signal yet',
+            },
+            filters: { signal, min_change_pct, rvol_thresh },
+            count: Math.min(results.length, limit),
+            coins: results.slice(0, limit),
+        };
+    } catch (e) { return { error: e.message }; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW TOOL 25 — get_rsi_cascade_grid
+// Per-coin RSI cascade state across multiple TFs.
+// BEAR_CASCADE  = ALL series TFs oversold
+// BULL_CASCADE  = ALL series TFs overbought
+// PARTIAL_BEAR  = SOME oversold
+// PARTIAL_BULL  = SOME overbought
+// NEUTRAL       = none
+// + pullback flag = cascade active AND tempTF RSI near 50 ± pullback_zone
+// ─────────────────────────────────────────────────────────────────────────────
+async function getRsiCascadeGrid({ series_tfs = 'h1,m30', temp_tf = 'm15', oversold = 30, overbought = 70, pullback_zone = 5, filter } = {}) {
+    try {
+        const TF_COL = { m5: 'rsi_m5', m15: 'rsi_m15', m30: 'rsi_m30', h1: 'rsi_h1' };
+        const validTFs = Object.keys(TF_COL);
+        const seriesTFs = (typeof series_tfs === 'string' ? series_tfs.split(',') : series_tfs)
+            .map(s => s.trim()).filter(tf => validTFs.includes(tf));
+        if (!seriesTFs.length) return { error: 'series_tfs must contain at least one of: m5, m15, m30, h1' };
+        if (!validTFs.includes(temp_tf)) return { error: `temp_tf must be one of: ${validTFs.join(', ')}` };
+
+        const since = Date.now() - 30 * 60 * 1000;
+        const rows = db.prepare(`
+            WITH ranked AS (
+                SELECT ticker, ts, rsi_m5, rsi_m15, rsi_m30, rsi_h1,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY ts DESC) AS rn
+                FROM coin_metric_history WHERE ts > ?
+            )
+            SELECT * FROM ranked WHERE rn = 1
+        `).all(since);
+
+        const getZone = (v) => v == null ? 'unknown' : v < oversold ? 'oversold' : v > overbought ? 'overbought' : 'middle';
+
+        const coins = rows.map(r => {
+            const seriesRSI = seriesTFs.map(tf => r[TF_COL[tf]]);
+            const tempRSI   = r[TF_COL[temp_tf]];
+            const allOS = seriesRSI.every(v => v != null && v < oversold);
+            const allOB = seriesRSI.every(v => v != null && v > overbought);
+            const someOS = seriesRSI.some(v => v != null && v < oversold);
+            const someOB = seriesRSI.some(v => v != null && v > overbought);
+            let cascadeState = 'NEUTRAL';
+            if (allOS)      cascadeState = 'BEAR_CASCADE';
+            else if (allOB) cascadeState = 'BULL_CASCADE';
+            else if (someOS) cascadeState = 'PARTIAL_BEAR';
+            else if (someOB) cascadeState = 'PARTIAL_BULL';
+            const cascadeActive = cascadeState === 'BEAR_CASCADE' || cascadeState === 'BULL_CASCADE';
+            const pullback = cascadeActive && tempRSI != null && Math.abs(tempRSI - 50) <= pullback_zone + 5;
+
+            return {
+                ticker: r.ticker,
+                ts_ms:  r.ts,
+                rsi:    { m5: r.rsi_m5, m15: r.rsi_m15, m30: r.rsi_m30, h1: r.rsi_h1 },
+                series_tfs: seriesTFs,
+                temp_tf,
+                temp_zone: getZone(tempRSI),
+                cascade_state: cascadeState,
+                pullback,
+            };
+        });
+
+        let filtered = coins;
+        if (filter) {
+            const f = filter.toLowerCase();
+            if (f === 'bear')     filtered = coins.filter(c => c.cascade_state === 'BEAR_CASCADE');
+            if (f === 'bull')     filtered = coins.filter(c => c.cascade_state === 'BULL_CASCADE');
+            if (f === 'pullback') filtered = coins.filter(c => c.pullback);
+        }
+
+        // Sort BEAR > BULL > PARTIAL > NEUTRAL, pullbacks first within group
+        const stateRank = { BEAR_CASCADE: 0, BULL_CASCADE: 1, PARTIAL_BEAR: 2, PARTIAL_BULL: 3, NEUTRAL: 4 };
+        filtered.sort((a, b) => (stateRank[a.cascade_state] - stateRank[b.cascade_state]) || (b.pullback - a.pullback));
+
+        return {
+            description: "Per-coin RSI cascade state across multiple TFs. Pullback flag = cascade active AND tempTF RSI near 50 (potential trend continuation entry).",
+            config: { series_tfs: seriesTFs, temp_tf, oversold, overbought, pullback_zone, filter: filter || 'all' },
+            count: filtered.length,
+            coins: filtered,
+        };
+    } catch (e) { return { error: e.message }; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW TOOL 26 — get_cascade_chip_summary
+// Snapshot of the 4 EMA cascade chip categories (matches Cascade Flow widget):
+//   Long Bull  — h4 → h1 → m15 bullish cascade
+//   Long Bear  — h4 → h1 → m15 bearish cascade
+//   Short Bull (↗) — m5 → m1 bullish (counter-rally inside long bear, OR aligned)
+//   Short Bear (↘) — m5 → m1 bearish (pullback inside long bull, OR aligned)
+// Plus regime score (-100..+100) and Wyckoff-style phase classification.
+// ─────────────────────────────────────────────────────────────────────────────
+async function getCascadeChipSummary({ long_series = 'h4,h1,m15', short_series = 'm5,m1', equal_threshold = 0.2 } = {}) {
+    try {
+        const longSeries  = (typeof long_series  === 'string' ? long_series.split(',')  : long_series ).map(s => s.trim());
+        const shortSeries = (typeof short_series === 'string' ? short_series.split(',') : short_series).map(s => s.trim());
+
+        // Latest reading per ticker from coin_metric_history (last 30 min)
+        const since = Date.now() - 30 * 60 * 1000;
+        const rows = db.prepare(`
+            WITH ranked AS (
+                SELECT ticker, ts, dist_m1, dist_m5, dist_m15, dist_h1, dist_h4, atr_m15,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY ts DESC) AS rn
+                FROM coin_metric_history WHERE ts > ?
+            )
+            SELECT * FROM ranked WHERE rn = 1
+        `).all(since);
+
+        const buckets = { longBull: [], longBear: [], shortBull: [], shortBear: [], neutral: [] };
+        const fakePrice = 100;
+
+        for (const r of rows) {
+            const emas = {};
+            if (r.dist_m1  != null) emas.m1  = fakePrice / (r.dist_m1  / 100 + 1);
+            if (r.dist_m5  != null) emas.m5  = fakePrice / (r.dist_m5  / 100 + 1);
+            if (r.dist_m15 != null) emas.m15 = fakePrice / (r.dist_m15 / 100 + 1);
+            if (r.dist_h1  != null) emas.h1  = fakePrice / (r.dist_h1  / 100 + 1);
+            if (r.dist_h4  != null) emas.h4  = fakePrice / (r.dist_h4  / 100 + 1);
+
+            const longDir  = _checkCascade(emas, longSeries, equal_threshold);
+            const shortDir = _checkCascade(emas, shortSeries, equal_threshold);
+            const atrOk    = _passesAtrGate(emas, shortSeries, { m15: r.atr_m15 }, fakePrice);
+
+            if (longDir  === 'bull')             buckets.longBull.push(r.ticker);
+            if (longDir  === 'bear')             buckets.longBear.push(r.ticker);
+            if (shortDir === 'bull' && atrOk)    buckets.shortBull.push(r.ticker);
+            if (shortDir === 'bear' && atrOk)    buckets.shortBear.push(r.ticker);
+            if (longDir === 'neutral' && shortDir === 'neutral') buckets.neutral.push(r.ticker);
+        }
+
+        const totalCoins = rows.length;
+        const rawScore = (buckets.longBull.length * 2) + (buckets.shortBull.length * 1)
+                       - (buckets.shortBear.length * 1) - (buckets.longBear.length * 2);
+        const score = totalCoins > 0 ? Math.round((rawScore / (totalCoins * 2)) * 100) : 0;
+
+        // Wyckoff-style phase (snapshot — no velocity since no history)
+        let phase = 'CONSOLIDATION';
+        if (score >  30)       phase = 'BULL_DOMINANCE';
+        else if (score < -30)  phase = 'BEAR_DOMINANCE';
+        else if (Math.abs(score) >= 15) phase = 'TRANSITION';
+
+        return {
+            description: "Snapshot of the 4 EMA cascade chip categories (matches the Cascade Flow widget). A coin can appear in both a long AND a short chip simultaneously (e.g. Long Bull + Short Bear = pullback inside uptrend).",
+            config: { long_series: longSeries, short_series: shortSeries, equal_threshold },
+            as_of: new Date().toISOString(),
+            total_coins_tracked: totalCoins,
+            regime_score:  score,
+            regime_score_explained: 'weighted: Long Bull +2, Short Bull +1, Short Bear -1, Long Bear -2, normalised to ±100',
+            phase,
+            chip_counts: {
+                long_bull:  buckets.longBull.length,
+                long_bear:  buckets.longBear.length,
+                short_bull_arrow_up:   buckets.shortBull.length,
+                short_bear_arrow_down: buckets.shortBear.length,
+                neutral:    buckets.neutral.length,
+            },
+            tickers_by_chip: {
+                long_bull:  buckets.longBull,
+                long_bear:  buckets.longBear,
+                short_bull: buckets.shortBull,
+                short_bear: buckets.shortBear,
+            },
+        };
+    } catch (e) { return { error: e.message }; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW TOOL 27 — get_ema_distance_board
+// Multi-coin EMA200 distance % across all timeframes (m1, m5, m15, h1, h4).
+// Positive = price above EMA (bullish), negative = below (bearish).
+// Optional filter by max absolute distance % and min activity window.
+// ─────────────────────────────────────────────────────────────────────────────
+async function getEmaDistanceBoard({ ticker, max_dist_pct = 10, active_min = 60, limit = 60 } = {}) {
+    try {
+        const cleanTicker = ticker ? ticker.replace('BINANCE:', '') : null;
+        const sinceMs = Date.now() - active_min * 60 * 1000;
+
+        let sql = `
+            WITH ranked AS (
+                SELECT ticker, ts, atr_m15, atr_h1, atr_h4, rvol_m15, rvol_h1,
+                       dist_m1, dist_m5, dist_m15, dist_h1, dist_h4,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY ts DESC) AS rn
+                FROM coin_metric_history WHERE ts > ?
+                ${cleanTicker ? 'AND ticker = ?' : ''}
+            )
+            SELECT * FROM ranked WHERE rn = 1
+        `;
+        const params = cleanTicker ? [sinceMs, cleanTicker] : [sinceMs];
+        const rows = db.prepare(sql).all(...params);
+
+        const filtered = rows.filter(r => {
+            if (!max_dist_pct) return true;
+            const maxAbs = Math.max(
+                Math.abs(r.dist_m15 ?? 0),
+                Math.abs(r.dist_h1  ?? 0),
+                Math.abs(r.dist_h4  ?? 0),
+            );
+            return maxAbs <= max_dist_pct;
+        });
+
+        // Sort by overall bullish bias (sum of distances)
+        filtered.sort((a, b) => {
+            const aBias = (a.dist_m15 || 0) + (a.dist_h1 || 0) + (a.dist_h4 || 0);
+            const bBias = (b.dist_m15 || 0) + (b.dist_h1 || 0) + (b.dist_h4 || 0);
+            return bBias - aBias;
+        });
+
+        return {
+            description: "Per-coin EMA200 distance % across all TFs (m1, m5, m15, h1, h4). Positive = price above EMA. Sorted by overall bullish bias.",
+            filters: { ticker: cleanTicker, max_dist_pct, active_min, limit },
+            count: Math.min(filtered.length, limit),
+            coins: filtered.slice(0, limit).map(r => ({
+                ticker: r.ticker, ts_ms: r.ts,
+                dist_pct: { m1: r.dist_m1, m5: r.dist_m5, m15: r.dist_m15, h1: r.dist_h1, h4: r.dist_h4 },
+                atr_pct:  { m15: r.atr_m15, h1: r.atr_h1, h4: r.atr_h4 },
+                rvol:     { m15: r.rvol_m15, h1: r.rvol_h1 },
+            })),
+        };
+    } catch (e) { return { error: e.message }; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW TOOL 28 — get_smart_alerts_list
+// Returns user-created Smart Alerts (custom price/RSI/volume conditions).
+// Lives in smart_alerts.db (separate file). state: ACTIVE | TRIGGERED | DISMISSED.
+// ─────────────────────────────────────────────────────────────────────────────
+let _smartAlertsDb = null;
+function _getSmartAlertsDb() {
+    if (_smartAlertsDb !== null) return _smartAlertsDb;
+    try {
+        const Database = require('better-sqlite3');
+        const dbPath = path.resolve(__dirname, '..', 'smart_alerts.db');
+        _smartAlertsDb = new Database(dbPath, { readonly: true, fileMustExist: true });
+        return _smartAlertsDb;
+    } catch (e) {
+        _smartAlertsDb = false; // sentinel — don't keep trying
+        return null;
+    }
+}
+
+async function getSmartAlertsList({ state = 'ACTIVE', limit = 50 } = {}) {
+    try {
+        const sdb = _getSmartAlertsDb();
+        if (!sdb) return { error: 'smart_alerts.db not available (may not exist yet on this deployment)' };
+
+        const validStates = ['ACTIVE', 'TRIGGERED', 'DISMISSED', 'ALL'];
+        if (!validStates.includes(state)) {
+            return { error: `state must be one of: ${validStates.join(', ')}` };
+        }
+
+        let sql, params;
+        if (state === 'ALL') {
+            sql = `SELECT * FROM smart_alerts ORDER BY created_at DESC LIMIT ?`;
+            params = [limit];
+        } else {
+            sql = `SELECT * FROM smart_alerts WHERE state = ? ORDER BY created_at DESC LIMIT ?`;
+            params = [state, limit];
+        }
+
+        const rows = sdb.prepare(sql).all(...params);
+        return {
+            description: "User-created Smart Alerts (custom price/RSI/volume conditions tracked across all 4 streams). state: ACTIVE (watching), TRIGGERED (fired), DISMISSED (manually removed).",
+            filters: { state, limit },
+            count: rows.length,
+            alerts: rows.map(r => ({
+                ...r,
+                rule:    parseJson(r.rule),
+                context: parseJson(r.context),
+            })),
+        };
+    } catch (e) { return { error: e.message }; }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1137,4 +1584,10 @@ module.exports = {
     getStreamHealth,
     // NEW v3
     getCoinMetrics,
+    // NEW v4 (May 2026 — built on new server endpoints)
+    getMomentumPulse,
+    getRsiCascadeGrid,
+    getCascadeChipSummary,
+    getEmaDistanceBoard,
+    getSmartAlertsList,
 };

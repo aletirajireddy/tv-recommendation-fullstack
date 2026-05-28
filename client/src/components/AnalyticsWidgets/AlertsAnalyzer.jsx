@@ -2,9 +2,11 @@ import React from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import styles from './AlertsAnalyzer.module.css';
 import { Activity, Zap, Layers, Target, TrendingUp } from 'lucide-react';
+import { FreshnessChip } from '../FreshnessChip';
 
 export function AlertsAnalyzer() {
     const analyticsData = useTimeStore(s => s.analyticsData);
+    const analyticsDataFetchedAt = useTimeStore(s => s.analyticsDataFetchedAt);
     const lookbackHours = useTimeStore(s => s.lookbackHours);
 
     if (!analyticsData || !analyticsData.time_spread || analyticsData.time_spread.length === 0) {
@@ -46,6 +48,7 @@ export function AlertsAnalyzer() {
                     <h3>360° SCALPING PULSE RADAR</h3>
                 </div>
                 <div className={styles.rangeControl}>
+                    <FreshnessChip ts={analyticsDataFetchedAt} title="Analytics data last fetched from server" />
                     <span className={styles.rangeLabel}>LOOKBACK: <strong>{lookbackHours}h</strong></span>
                 </div>
             </div>

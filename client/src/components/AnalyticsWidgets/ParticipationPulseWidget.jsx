@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { Activity, RefreshCw, Zap, TrendingUp, TrendingDown } from 'lucide-react';
+import { FreshnessChip } from '../FreshnessChip';
 import {
     ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush
 } from 'recharts';
@@ -10,10 +11,11 @@ import { useChartBrush } from '../../hooks/useChartBrush';
 
 export function ParticipationPulseWidget() {
     const containerRef           = useRef(null);
-    const participationPulse     = useTimeStore(s => s.participationPulse);
-    const fetchParticipationPulse = useTimeStore(s => s.fetchParticipationPulse);
-    const pulseLoading           = useTimeStore(s => s.pulseLoading);
-    const lastDataPush           = useTimeStore(s => s.lastDataPush);
+    const participationPulse        = useTimeStore(s => s.participationPulse);
+    const fetchParticipationPulse   = useTimeStore(s => s.fetchParticipationPulse);
+    const participationPulseFetchedAt = useTimeStore(s => s.participationPulseFetchedAt);
+    const pulseLoading              = useTimeStore(s => s.pulseLoading);
+    const lastDataPush              = useTimeStore(s => s.lastDataPush);
     const [isMobile, setIsMobile] = useState(false);
 
     useEffect(() => {
@@ -125,6 +127,7 @@ export function ParticipationPulseWidget() {
                 <div className="flex items-center gap-2">
                     <Activity size={18} className="text-[var(--accent-blue)]" />
                     <h3 className="text-sm font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Scout Screener Engine</h3>
+                    <FreshnessChip ts={participationPulseFetchedAt} title="Participation data last fetched from server" />
                 </div>
                 
                 <div className="flex gap-6 items-center">

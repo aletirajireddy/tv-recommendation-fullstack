@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import styles from './BYCWidget.module.css';
 import socketService from '../../services/SocketService';
+import { LastSyncBadge, ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
+import { useWidgetPrefs } from '../../hooks/useWidgetPrefs';
 
 const POLL_MS    = 60_000; // auto-poll every 60s (socket handles sub-minute freshness)
 const THROTTLE_MS = 15_000; // minimum gap between any two auto-runs
@@ -292,13 +294,25 @@ function chgColor(v) {
 // ─── Main Widget ──────────────────────────────────────────────────────────────
 
 export function BYCWidget() {
+    // ── UI prefs (persisted via shared hook — survives reloads, resettable)
+    // Single localStorage key holds: expanded panel state, list/grid view, auto-run toggle.
+    // Reset button (top-right) restores all three to defaults without touching saved clauses.
+    const [uiPrefs, setUIPrefs, resetUIPrefs] = useWidgetPrefs('byc_uiPrefs', {
+        expanded: true,
+        viewMode: 'list',  // 'list' | 'grid'
+        autoRun:  true,
+    });
+    const expanded = uiPrefs.expanded;
+    const setExpanded = (v) => setUIPrefs({ expanded: typeof v === 'function' ? v(expanded) : v });
+    const viewMode = uiPrefs.viewMode;
+    const setViewMode = (v) => setUIPrefs({ viewMode: v });
+    const autoRun = uiPrefs.autoRun;
+    const setAutoRun = (v) => setUIPrefs({ autoRun: typeof v === 'function' ? v(autoRun) : v });
+
     // ── State — lazy initialisers so localStorage is read ONCE, not every render
-    const [expanded,     setExpanded]     = useState(true);
     const [clauses,      setClauses]      = useState(() => loadActive()?.clauses || []);
     const [mode,         setMode]         = useState(() => loadActive()?.mode    || 'AND');
-    const [viewMode,     setViewMode]     = useState('list');
     const [expandedCoin, setExpandedCoin] = useState(null);
-    const [autoRun,      setAutoRun]      = useState(true);
 
     const [showPresets,    setShowPresets]    = useState(false);
     const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -612,6 +626,13 @@ export function BYCWidget() {
                             Reset
                         </button>
                     )}
+
+                    {/* Last-sync timestamp — updates every 15s */}
+                    <LastSyncBadge ts={lastRun} />
+
+                    {/* Reset UI prefs — restores expanded/viewMode/autoRun to defaults.
+                        Does NOT touch saved clauses (those have their own Trash button). */}
+                    <ResetPrefsButton onReset={resetUIPrefs} title="Reset widget defaults (collapse state, view mode, auto-run)" />
 
                     {/* Expand / collapse */}
                     <button className={styles.iconBtn} onClick={() => setExpanded(!expanded)}>

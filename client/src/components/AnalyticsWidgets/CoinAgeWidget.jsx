@@ -3,6 +3,7 @@ import styles from './CoinAgeWidget.module.css';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
+import { FreshnessChip } from '../FreshnessChip';
 
 const formatAge = (ms) => {
     const minutes = Math.floor(ms / 60000);
@@ -29,7 +30,7 @@ export function CoinAgeWidget() {
 
     // Push-first: primary trigger is lastDataPush (socket event); 5-min poll is
     // a safety net for missed socket events — NOT the main refresh mechanism.
-    const { data: coins, loading, reloadSilent } = usePolledFetch(
+    const { data: coins, loading, reloadSilent, lastFetchedAt } = usePolledFetch(
         () => '/api/coins/age',
         { intervalMs: 300_000, initialData: [] } // initialData:[] avoids null on first render
     );
@@ -63,7 +64,10 @@ export function CoinAgeWidget() {
 
     return (
         <div ref={containerRef} className={styles.widgetWrapper}>
-            <h3 className="widget-title">COIN LIFECYCLE TRACKER (TIME IN SYSTEM)</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <h3 className="widget-title">COIN LIFECYCLE TRACKER (TIME IN SYSTEM)</h3>
+                <FreshnessChip ts={lastFetchedAt} title="Coin age data last fetched from server" />
+            </div>
             <div className={styles.grid}>
                 {categories.map(cat => (
                     <div key={cat.key} className={`${styles.card} ${grouped[cat.key].length === 0 ? styles.cardEmpty : ''}`}>

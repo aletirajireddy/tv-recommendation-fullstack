@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
+import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
@@ -806,6 +807,7 @@ export function LevelReactionWidget({ filterTicker, compact }) {
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <FreshnessChip ts={lastFetchedAt} title="Data last fetched from server" />
+                        <ResetPrefsButton onReset={resetAll} title="Reset all filters, chips and sort to defaults" />
                         <button
                             className={styles.refreshBtn}
                             onClick={() => reload()}

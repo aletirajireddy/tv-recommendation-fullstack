@@ -9,6 +9,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
+import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
@@ -119,6 +120,12 @@ export function MomentumPulse() {
     const [sortDir, setSortDir] = useState('desc');
     const [filter,  setFilter]  = useState('all');
 
+    const resetMomentumPrefs = () => {
+        setSortKey('rvolPersist');
+        setSortDir('desc');
+        setFilter('all');
+    };
+
     const { data, loading, error, reload, reloadSilent, lastFetchedAt } = usePolledFetch(
         () => '/api/momentum-pulse',
         { intervalMs: 30_000, deps: [] }
@@ -193,6 +200,7 @@ export function MomentumPulse() {
                             </span>
                         )}
                         <FreshnessChip ts={lastFetchedAt} title="Last fetched" />
+                        <ResetPrefsButton onReset={resetMomentumPrefs} title="Reset sort and filter to defaults" />
                         <button className={styles.iconBtn} onClick={() => reload()} title="Refresh">
                             <RefreshCw size={14} />
                         </button>

@@ -2,15 +2,20 @@ import React from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import styles from './ConfluenceGrid.module.css';
 import { Layers, Activity, Zap, Wind } from 'lucide-react';
+import { FreshnessChip } from '../FreshnessChip';
 
 export function ConfluenceGrid() {
     const analyticsData = useTimeStore(s => s.analyticsData);
+    const analyticsDataFetchedAt = useTimeStore(s => s.analyticsDataFetchedAt);
 
     if (!analyticsData || !analyticsData.time_spread) return <div className={styles.loading}>Loading Macro Data...</div>;
 
     return (
         <div className={styles.gridContainer}>
-            <h3 className="widget-title">ENHANCED INSTITUTIONAL MACRO SUMMARY (Time Spread Analysis)</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <h3 className="widget-title">ENHANCED INSTITUTIONAL MACRO SUMMARY (Time Spread Analysis)</h3>
+                <FreshnessChip ts={analyticsDataFetchedAt} title="Analytics data last fetched from server" />
+            </div>
 
             <div
                 className={styles.tableWrapper}

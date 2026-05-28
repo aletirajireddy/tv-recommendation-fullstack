@@ -1,0 +1,75 @@
+/* ─── Shared header chrome — consistent look across all widgets ─── */
+
+.syncBadge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.syncBadge svg { opacity: 0.7; }
+
+.syncStale {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.4);
+    color: #F59E0B;
+}
+
+.syncDead {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #EF4444;
+}
+
+.resetBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all .12s ease;
+    padding: 0;
+}
+
+.resetBtn:hover {
+    color: var(--text-main);
+    background: var(--bg-app);
+    border-color: var(--border);
+    transform: rotate(-30deg);
+}
+
+.collapseBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all .12s ease;
+    padding: 0;
+}
+
+.collapseBtn:hover {
+    color: var(--text-main);
+    background: var(--bg-app);
+    border-color: var(--border);
+}

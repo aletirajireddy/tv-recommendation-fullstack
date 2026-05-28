@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Component } from 'reac
 import styles from './DailyCalendarWidget.module.css';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
+import { FreshnessChip } from '../FreshnessChip';
 
 // Prevent a bad heatmap row from blanking the entire page.
 class DrillErrorBoundary extends Component {
@@ -40,11 +41,12 @@ export function DailyCalendarWidget() {
     const [calendar, setCalendar] = useState([]);
     const [loading, setLoading]   = useState(true);
     const [drillDate, setDrillDate] = useState(null);
+    const [lastFetchedAt, setLastFetchedAt] = useState(null);
 
     const load = useCallback(async () => {
         try {
             const r = await fetch('/api/calendar/daily?days=7');
-            if (r.ok) setCalendar((await r.json()).calendar || []);
+            if (r.ok) { setCalendar((await r.json()).calendar || []); setLastFetchedAt(Date.now()); }
         } catch {} finally { setLoading(false); }
     }, []);
 
@@ -62,7 +64,10 @@ export function DailyCalendarWidget() {
         <div ref={containerRef} className={styles.widget}>
             <div className={styles.header}>
                 <h3 className="widget-title">📅 Daily Performance Calendar (7d)</h3>
-                <span className={styles.hint}>Click any day for full coin heatmap →</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <FreshnessChip ts={lastFetchedAt} title="Calendar data last fetched from server" />
+                    <span className={styles.hint}>Click any day for full coin heatmap →</span>
+                </div>
             </div>
 
             {loading ? (

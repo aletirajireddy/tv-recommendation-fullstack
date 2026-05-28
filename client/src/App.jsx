@@ -150,7 +150,7 @@ function App() {
               </section>
 
               <section id="section-cascade-trend" className={styles.widgetSection}>
-                <LazyWidget minHeight={380}>
+                <LazyWidget minHeight={520}>
                   <CascadeTrendWidget />
                 </LazyWidget>
               </section>

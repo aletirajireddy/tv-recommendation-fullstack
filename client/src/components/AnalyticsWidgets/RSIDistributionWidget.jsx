@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useTimeStore } from '../../store/useTimeStore';
 import SpeedbreakerPanel from '../Shared/SpeedbreakerPanel';
+import { FreshnessChip } from '../FreshnessChip';
 
 /**
  * RSIDistributionWidget
@@ -10,6 +11,7 @@ import SpeedbreakerPanel from '../Shared/SpeedbreakerPanel';
  */
 const RSIDistributionWidget = () => {
     const rsiDistribution = useTimeStore(s => s.rsiDistribution);
+    const fusionDataFetchedAt = useTimeStore(s => s.fusionDataFetchedAt); // rsiDistribution ships with fusionData
     const [activeCoinTicker, setActiveCoinTicker] = useState(null);
     const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0 });
 
@@ -80,9 +82,10 @@ const RSIDistributionWidget = () => {
 
     return (
         <div style={{ marginBottom: '16px', position: 'relative' }}>
-            <h3 className="widget-title" style={{ marginBottom: '12px' }}>
-                RSI SPEEDBREAKER DISTRIBUTION
-            </h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <h3 className="widget-title">RSI SPEEDBREAKER DISTRIBUTION</h3>
+                <FreshnessChip ts={fusionDataFetchedAt} title="RSI distribution last fetched from server" />
+            </div>
             
             <div style={{ display: 'flex', gap: '16px', overflowX: 'auto', paddingBottom: '8px' }}>
                 

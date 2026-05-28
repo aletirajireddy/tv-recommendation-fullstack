@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
+import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import styles from './ATRRaceWidget.module.css';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
@@ -454,9 +455,10 @@ export function ATRRaceWidget() {
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <FreshnessChip ts={lastFetchedAt} title="Board data last fetched from server" />
-                        <button className={styles.iconBtn}
-                            onClick={() => { try { localStorage.removeItem(LS_KEY); } catch {} setPrefs({ ...DEFAULTS }); }}
-                            title="Reset filters">↺</button>
+                        <ResetPrefsButton
+                            onReset={() => { try { localStorage.removeItem(LS_KEY); } catch {} setPrefs({ ...DEFAULTS }); }}
+                            title="Reset cascade filters to defaults"
+                        />
                         <button className={styles.iconBtn} onClick={() => setSettingsOpen(o => !o)} title="Cascade settings">
                             <Settings size={13} />
                         </button>

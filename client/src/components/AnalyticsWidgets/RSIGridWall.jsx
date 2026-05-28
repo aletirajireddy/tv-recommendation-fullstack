@@ -5,6 +5,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
+import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
@@ -296,6 +297,13 @@ export function RSIGridWall() {
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <FreshnessChip ts={lastFetchedAt} title="Last fetched" />
+                        <ResetPrefsButton
+                            onReset={() => {
+                                try { localStorage.removeItem(LS_KEY); } catch {}
+                                setPrefs({ ...DEFAULTS });
+                            }}
+                            title="Reset RSI cascade settings to defaults"
+                        />
                         <button className={styles.iconBtn}
                             onClick={() => setShowSettings(s => !s)}
                             title="Settings"

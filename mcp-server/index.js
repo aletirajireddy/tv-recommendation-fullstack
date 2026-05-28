@@ -18,13 +18,20 @@ app.use(cors({
 
 app.get('/mcp', (req, res) => {
     res.json({
-        name: "Trade View Dashboard MCP — v3",
-        version: "3.0.0",
+        name: "Trade View Dashboard MCP — v4",
+        version: "4.0.0",
         status: "Online",
-        tools_count: 23,
+        tools_count: 28,
         streams: ["A:MACRO", "B:SCOUT", "C:ALERT", "D:REALTIME"],
         endpoints: { sse: "/mcp/sse", message: "/mcp/message", health: "/mcp/health" },
-        transport: "sse"
+        transport: "sse",
+        v4_additions: [
+            "get_momentum_pulse",
+            "get_rsi_cascade_grid",
+            "get_cascade_chip_summary",
+            "get_ema_distance_board",
+            "get_smart_alerts_list",
+        ],
     });
 });
 
@@ -231,6 +238,72 @@ function createMcpServer() {
                 }
             },
 
+            // ── COMPOSITE MOMENTUM & CASCADE (v4) ────────────────────────────
+            {
+                name: "get_momentum_pulse",
+                description: "*** MOST ACTIONABLE TOOL FOR 'WHAT SHOULD I TRADE RIGHT NOW?' ***\n\nReturns coins with pre-computed composite momentum signals: SURGING (rvolPersist≥5 + change>2% + dist>1%), BUILDING (rvolPersist≥3 + change>0), RSI_OS (multi-TF oversold bounce), RSI_OB (multi-TF overbought fade), FADING (losing volume), EXTENDED (>4% above EMA without volume — mean-reversion risk), STRETCHED (capitulation low), AT_EMA (decision zone), WATCH.\n\nCombines Stream C session metrics (today_change_pct, today_volume, momentum.roc_pct) with Stream D rolling history (rvol_m15 persistence, atr_m15, dist_m15, RSI). Sorted by signal strength then |change%|.\n\nUse this FIRST when looking for active setups.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        signal:         { type: "string", description: "Optional — filter by exact signal: SURGING | BUILDING | RSI_OS | RSI_OB | FADING | EXTENDED | STRETCHED | AT_EMA | WATCH" },
+                        min_change_pct: { type: "number", description: "Optional — minimum |today_change_pct|" },
+                        rvol_thresh:    { type: "number", description: "RVOL threshold for persistence calculation (default 1.2)" },
+                        limit:          { type: "number", description: "Max results (default 50)" }
+                    }
+                }
+            },
+            {
+                name: "get_rsi_cascade_grid",
+                description: "Per-coin RSI cascade state across multiple TFs (default h1+m30 series, m15 temp). Returns:\n• BEAR_CASCADE — ALL series TFs oversold (<30) — strong bearish alignment\n• BULL_CASCADE — ALL series TFs overbought (>70) — strong bullish alignment\n• PARTIAL_BEAR / PARTIAL_BULL — partial alignment\n• NEUTRAL\n• pullback flag = cascade active AND temp TF RSI near 50 (potential trend-continuation entry)\n\nUse for trend-alignment screening (e.g. 'find all coins in BEAR_CASCADE with a pullback' for short-the-bounce setups).",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        series_tfs:    { type: "string", description: "Comma-separated cascade TFs (default 'h1,m30'). Options: m5, m15, m30, h1" },
+                        temp_tf:       { type: "string", description: "Temp/wick TF (default 'm15')" },
+                        oversold:      { type: "number", description: "Oversold threshold (default 30)" },
+                        overbought:    { type: "number", description: "Overbought threshold (default 70)" },
+                        pullback_zone: { type: "number", description: "Pullback distance from RSI 50 (default 5)" },
+                        filter:        { type: "string", description: "Optional — 'bear' | 'bull' | 'pullback' to filter results" }
+                    }
+                }
+            },
+            {
+                name: "get_cascade_chip_summary",
+                description: "Snapshot of the 4 EMA cascade chip categories (matches Cascade Flow widget):\n• LONG BULL — h4→h1→m15 bullish cascade\n• LONG BEAR — h4→h1→m15 bearish cascade\n• SHORT BULL ↗ — m5→m1 bullish (counter-rally or aligned)\n• SHORT BEAR ↘ — m5→m1 bearish (pullback or aligned)\n\nA coin can appear in BOTH a long AND a short chip — e.g. Long Bull + Short Bear = pullback inside uptrend (institutional accumulation pattern).\n\nReturns regime score (-100 to +100 weighted), Wyckoff-style phase (BULL_DOMINANCE / BEAR_DOMINANCE / TRANSITION / CONSOLIDATION), and the actual ticker lists in each chip. Use to assess overall market regime.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        long_series:     { type: "string", description: "Comma-separated long cascade TFs (default 'h4,h1,m15')" },
+                        short_series:    { type: "string", description: "Comma-separated short cascade TFs (default 'm5,m1')" },
+                        equal_threshold: { type: "number", description: "% threshold for treating adjacent EMAs as equal (default 0.2)" }
+                    }
+                }
+            },
+            {
+                name: "get_ema_distance_board",
+                description: "Multi-coin EMA200 distance % across all 5 timeframes (m1, m5, m15, h1, h4). Positive = price above EMA200 (bullish), negative = below (bearish). Sorted by overall bullish bias. Optionally filter to coins near their EMA (low max_dist_pct) for mean-reversion candidates, or far above/below for extended setups.\n\nUse for board-style screening: 'find coins close to all their EMAs' (low volatility coil) or 'find coins extended on all TFs' (overextension).",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        ticker:        { type: "string", description: "Optional — single ticker. Omit for all." },
+                        max_dist_pct:  { type: "number", description: "Filter: max absolute distance % on any TF (default 10)" },
+                        active_min:    { type: "number", description: "Only include coins with data in last N minutes (default 60)" },
+                        limit:         { type: "number", description: "Max results (default 60)" }
+                    }
+                }
+            },
+            {
+                name: "get_smart_alerts_list",
+                description: "Returns user-created Smart Alerts — custom alerts on price, RSI, EMA distance, volume, or any combination tracked across all 4 streams. State machine: ACTIVE (watching) → TRIGGERED (fired) → DISMISSED (manually removed). Use this to see what conditions the user is actively monitoring.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        state: { type: "string", description: "ACTIVE | TRIGGERED | DISMISSED | ALL (default ACTIVE)" },
+                        limit: { type: "number", description: "Max results (default 50)" }
+                    }
+                }
+            },
+
             // ── POWER TOOLS ──────────────────────────────────────────────────
             {
                 name: "query_technical_filters",
@@ -394,6 +467,13 @@ function createMcpServer() {
                 case 'get_coin_lifecycles':     result = await tools.getCoinLifecycles(args?.status); break;
                 case 'get_ghost_approval_queue': result = await tools.getGhostApprovalQueue(); break;
 
+                // NEW v4 — Composite momentum & cascade
+                case 'get_momentum_pulse':       result = await tools.getMomentumPulse(args || {}); break;
+                case 'get_rsi_cascade_grid':     result = await tools.getRsiCascadeGrid(args || {}); break;
+                case 'get_cascade_chip_summary': result = await tools.getCascadeChipSummary(args || {}); break;
+                case 'get_ema_distance_board':   result = await tools.getEmaDistanceBoard(args || {}); break;
+                case 'get_smart_alerts_list':    result = await tools.getSmartAlertsList(args || {}); break;
+
                 // Power tools
                 case 'query_technical_filters': result = await tools.queryTechnicalFilters({
                     rsi:           args?.rsi,
@@ -442,8 +522,9 @@ app.post('/mcp/message', async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-    console.log(`🚀 MCP Express Server v2 running on HTTP!`);
+    console.log(`🚀 MCP Express Server v4 running on HTTP!`);
     console.log(`👉 SSE endpoint: http://localhost:${PORT}/mcp/sse`);
-    console.log(`📡 23 tools registered across 4 stream sources (A/B/C/D)`);
+    console.log(`📡 28 tools registered across 4 stream sources (A/B/C/D)`);
+    console.log(`   + v4: momentum_pulse, rsi_cascade_grid, cascade_chip_summary, ema_distance_board, smart_alerts_list`);
     console.log(`🌐 Tailscale: route Funnel to localhost:${PORT}`);
 });

@@ -1,27 +1,95 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
-import { Activity, Settings, TrendingUp, TrendingDown, Layers, Zap } from 'lucide-react';
 import {
-    ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush, ReferenceDot
+    Activity, ArrowRight, ArrowUp, ArrowDown, Flame, Snowflake,
+    GitBranch, BarChart3, ListTree, TrendingUp, TrendingDown, Gauge,
+} from 'lucide-react';
+import {
+    ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+    ReferenceLine, Brush,
 } from 'recharts';
 import { format } from 'date-fns';
 import { useChartBrush } from '../../hooks/useChartBrush';
-import { classifyCoin, loadCascadeSeries } from '../../utils/cascadeUtils';
+import { checkCascade, passesAtrGate, classifyCoin, loadCascadeSeries } from '../../utils/cascadeUtils';
+import { LastSyncBadge, ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
+import { useWidgetPrefs } from '../../hooks/useWidgetPrefs';
 import styles from './CascadeTrendWidget.module.css';
 
-export function CascadeTrendWidget() {
-    const containerRef = useRef(null);
-    const cascadeHistory = useTimeStore(s => s.cascadeHistory);
-    const fetchCascadeHistory = useTimeStore(s => s.fetchCascadeHistory);
-    const lastDataPush = useTimeStore(s => s.lastDataPush);
-    const [isMobile, setIsMobile] = useState(false);
+/* ─── Cascade Chip Trend (best-of-both)
+   Primary view: 4 independent chip-count lines over time (matches EMA Cascade
+   Monitor's solid long chips + dotted short ↗/↘ chips).
+   Plus header insights: Wyckoff Phase, Velocity 30m, Flips 60m.
+   Plus tabbed footer: live Transitions / per-coin Paths / Flow Matrix.       */
 
-    // Settings
-    const [viewMode, setViewMode] = useState('combined'); // 'combined' | 'individual'
-    const [selectedCoins, setSelectedCoins] = useState([]);
-    const [showSettings, setShowSettings] = useState(false);
-    const [cascadeConfig, setCascadeConfig] = useState(loadCascadeSeries());
+const COLORS = {
+    longBull:  '#10B981',
+    longBear:  '#EF4444',
+    shortBull: '#34D399',
+    shortBear: '#F87171',
+};
+
+// 5-state mutually-exclusive classification (for coin-paths / transitions / flow)
+const STATE_META = {
+    longBull: { weight:  2, color: '#10B981', light: '#10B98133', short: 'LB+',  label: 'Long Bull'  },
+    tempBull: { weight:  1, color: '#34D399', light: '#34D39933', short: 'SB↗',  label: 'Short Bull' },
+    neutral:  { weight:  0, color: '#6B7280', light: '#6B728022', short: '—',    label: 'Neutral'    },
+    tempBear: { weight: -1, color: '#F87171', light: '#F8717133', short: 'SB↘',  label: 'Short Bear' },
+    longBear: { weight: -2, color: '#EF4444', light: '#EF444433', short: 'LB-',  label: 'Long Bear'  },
+};
+
+function tickerShort(t) {
+    const clean = (t || '').split(':').pop() || '';
+    return clean.replace(/USDT(\.P)?$/i, '').slice(0, 6);
+}
+
+function getPhase(score, velocity) {
+    if (Math.abs(score) < 15 && Math.abs(velocity) < 5) return { label: 'CONSOLIDATION',     color: '#6B7280', icon: Activity     };
+    if (score >  30 && velocity >  5)                   return { label: 'MARKUP',            color: '#10B981', icon: TrendingUp   };
+    if (score >  30 && velocity < -5)                   return { label: 'DISTRIBUTION',      color: '#F59E0B', icon: TrendingDown };
+    if (score < -30 && velocity < -5)                   return { label: 'MARKDOWN',          color: '#EF4444', icon: TrendingDown };
+    if (score < -30 && velocity >  5)                   return { label: 'ACCUMULATION',      color: '#3B82F6', icon: TrendingUp   };
+    if (Math.abs(velocity) > 10)                        return { label: 'REVERSAL BREWING',  color: '#A855F7', icon: GitBranch    };
+    return                                                     { label: 'TRANSITION',        color: '#6B7280', icon: Activity     };
+}
+
+export function CascadeTrendWidget() {
+    const containerRef        = useRef(null);
+    const cascadeHistory      = useTimeStore(s => s.cascadeHistory);
+    const fetchCascadeHistory = useTimeStore(s => s.fetchCascadeHistory);
+    const lastDataPush        = useTimeStore(s => s.lastDataPush);
+    const [config]            = useState(loadCascadeSeries());
+    const [isMobile, setIsMobile]   = useState(false);
+    const [lastFetchedAt, setLastFetchedAt] = useState(null);
+
+    // Persisted UI prefs — survive reloads, reset via header button
+    const [uiPrefs, setUIPrefs, resetUIPrefs] = useWidgetPrefs('cascadeTrend_prefs', {
+        visibleLongBull:  true,
+        visibleLongBear:  true,
+        visibleShortBull: true,
+        visibleShortBear: true,
+        bottomView: 'transitions', // transitions | coins | flow
+        coinSort:   'volatile',    // volatile | recent | bullish | bearish
+    });
+    const visible = {
+        longBull:  uiPrefs.visibleLongBull,
+        longBear:  uiPrefs.visibleLongBear,
+        shortBull: uiPrefs.visibleShortBull,
+        shortBear: uiPrefs.visibleShortBear,
+    };
+    const setVisible = (updater) => {
+        const next = typeof updater === 'function' ? updater(visible) : updater;
+        setUIPrefs({
+            visibleLongBull:  next.longBull,
+            visibleLongBear:  next.longBear,
+            visibleShortBull: next.shortBull,
+            visibleShortBear: next.shortBear,
+        });
+    };
+    const bottomView = uiPrefs.bottomView;
+    const setBottomView = (v) => setUIPrefs({ bottomView: v });
+    const coinSort = uiPrefs.coinSort;
+    const setCoinSort = (v) => setUIPrefs({ coinSort: v });
 
     useEffect(() => {
         const mql = window.matchMedia('(pointer: coarse)');
@@ -31,356 +99,505 @@ export function CascadeTrendWidget() {
         return () => mql.removeEventListener('change', handler);
     }, []);
 
-    useEffect(() => {
-        fetchCascadeHistory();
-    }, []);
+    // Wrap fetchCascadeHistory so we can stamp lastFetchedAt on every successful sync
+    const fetchAndStamp = useCallback(async () => {
+        try {
+            await fetchCascadeHistory();
+            setLastFetchedAt(Date.now());
+        } catch {}
+    }, [fetchCascadeHistory]);
 
-    useDataInvalidation(containerRef, fetchCascadeHistory, lastDataPush);
+    useEffect(() => { fetchAndStamp(); }, []);
+    useDataInvalidation(containerRef, fetchAndStamp, lastDataPush);
 
-    // Calculate derived chart data
-    const { chartData, availableCoins } = useMemo(() => {
-        if (!cascadeHistory || cascadeHistory.length === 0) return { chartData: [], availableCoins: [] };
-        
-        let dataToProcess = cascadeHistory;
-        if (dataToProcess.length === 1) {
-            const clone = { ...dataToProcess[0], ts: dataToProcess[0].ts + 5*60*1000 };
-            dataToProcess = [dataToProcess[0], clone];
+    // ─── Build timeline + coin series (one pass, multiple data shapes) ──────
+    // tickersByChip in each bucket = { longBull: ['BTC',…], longBear:[…], … }
+    // so the tooltip can show WHICH coins were in each category at that time.
+    const { timeline, coinSeries, allCoins, sparse } = useMemo(() => {
+        if (!cascadeHistory || cascadeHistory.length === 0) {
+            return { timeline: [], coinSeries: {}, allCoins: [], sparse: false };
+        }
+        const { longSeries, shortSeries, equalThreshold } = config;
+
+        // Recharts <Line> needs ≥2 points to draw. If the API only returned a
+        // single bucket (rare — only first few minutes after Stream D boot),
+        // clone it forward by 5 min so the chart renders a horizontal segment.
+        let source = cascadeHistory;
+        const isSparse = source.length < 2;
+        if (isSparse && source.length === 1) {
+            source = [source[0], { ...source[0], ts: source[0].ts + 5 * 60 * 1000 }];
         }
 
+        const tl     = [];
+        const series = {};
         const coinSet = new Set();
-        
-        const processed = dataToProcess.map(bucket => {
-            const result = {
-                ts: bucket.ts,
-                timeLabel: format(new Date(bucket.ts), 'HH:mm'),
-                coins: {},
-                counts: { longBull: 0, longBear: 0, tempBull: 0, tempBear: 0, neutral: 0 },
-                volSpikes: []
-            };
+
+        for (const bucket of source) {
+            // Per-chip ticker lists for this bucket — used by tooltip & flip detector
+            const tickersByChip = { longBull: [], longBear: [], shortBull: [], shortBear: [] };
+            const stateCounts = { longBull: 0, tempBull: 0, neutral: 0, tempBear: 0, longBear: 0 };
 
             if (bucket.data) {
-                Object.entries(bucket.data).forEach(([ticker, metrics]) => {
+                for (const [ticker, m] of Object.entries(bucket.data)) {
                     coinSet.add(ticker);
-                    
-                    // Reconstruct fake EMAs relative to price=100
+
+                    // Reconstruct fake EMAs from dist% readings
                     const fakePrice = 100;
                     const emas = {};
-                    if (metrics.m1 != null) emas.m1 = fakePrice / (metrics.m1 / 100 + 1);
-                    if (metrics.m5 != null) emas.m5 = fakePrice / (metrics.m5 / 100 + 1);
-                    if (metrics.m15 != null) emas.m15 = fakePrice / (metrics.m15 / 100 + 1);
-                    if (metrics.h1 != null) emas.h1 = fakePrice / (metrics.h1 / 100 + 1);
-                    if (metrics.h4 != null) emas.h4 = fakePrice / (metrics.h4 / 100 + 1);
-                    
-                    const atrs = { m15: metrics.atr15 };
-                    
-                    const coinObj = { emas, atrs, price: fakePrice };
-                    const state = classifyCoin(coinObj, cascadeConfig.longSeries, cascadeConfig.shortSeries, cascadeConfig.equalThreshold);
-                    
-                    result.coins[ticker] = { state, v: metrics.v };
-                    result.counts[state]++;
-                    
-                    if (metrics.v > 0) {
-                        result.volSpikes.push(ticker);
-                    }
-                });
+                    if (m.m1  != null) emas.m1  = fakePrice / (m.m1  / 100 + 1);
+                    if (m.m5  != null) emas.m5  = fakePrice / (m.m5  / 100 + 1);
+                    if (m.m15 != null) emas.m15 = fakePrice / (m.m15 / 100 + 1);
+                    if (m.h1  != null) emas.h1  = fakePrice / (m.h1  / 100 + 1);
+                    if (m.h4  != null) emas.h4  = fakePrice / (m.h4  / 100 + 1);
+
+                    // Independent chip categorisation (chart lines + tooltip lists)
+                    const longDir  = checkCascade(emas, longSeries,  equalThreshold);
+                    const shortDir = checkCascade(emas, shortSeries, equalThreshold);
+                    const atrOk    = passesAtrGate(emas, shortSeries, { m15: m.atr15 }, fakePrice);
+                    if (longDir  === 'bull')             tickersByChip.longBull.push(ticker);
+                    if (longDir  === 'bear')             tickersByChip.longBear.push(ticker);
+                    if (shortDir === 'bull' && atrOk)    tickersByChip.shortBull.push(ticker);
+                    if (shortDir === 'bear' && atrOk)    tickersByChip.shortBear.push(ticker);
+
+                    // 5-state exclusive classification (for transitions / coin paths / flow)
+                    const exclusiveState = classifyCoin(
+                        { emas, atrs: { m15: m.atr15 }, price: fakePrice },
+                        longSeries, shortSeries, equalThreshold
+                    );
+                    stateCounts[exclusiveState]++;
+
+                    if (!series[ticker]) series[ticker] = [];
+                    series[ticker].push({ ts: bucket.ts, state: exclusiveState, v: m.v || 0 });
+                }
             }
 
-            // Map counts to ranges for Area charts
-            // Y-axis order: TempBear, LongBear, Neutral, LongBull, TempBull
-            const tb = result.counts.tempBear;
-            const lb = result.counts.longBear;
-            const lbu = result.counts.longBull;
-            const tbu = result.counts.tempBull;
-            
-            result.bearArea = -(tb + lb);
-            result.bullArea = lbu + tbu;
-            result.tempBear = -tb;
-            result.longBear = -lb;
-            result.longBull = lbu;
-            result.tempBull = tbu;
-            result.netTrend = result.bullArea + result.bearArea; // Net score
-
-            return result;
-        });
-
-        const coins = Array.from(coinSet).sort();
-        return { chartData: processed, availableCoins: coins };
-    }, [cascadeHistory, cascadeConfig]);
-
-    // Handle initial selected coins
-    useEffect(() => {
-        if (selectedCoins.length === 0 && availableCoins.length > 0) {
-            setSelectedCoins(availableCoins.slice(0, 5));
-        }
-    }, [availableCoins, selectedCoins.length]);
-
-    const { brushRange, handleBrushChange } = useChartBrush('tv_cascadeBrush', chartData);
-
-    const toggleCoin = (coin) => {
-        if (selectedCoins.includes(coin)) {
-            setSelectedCoins(selectedCoins.filter(c => c !== coin));
-        } else {
-            if (selectedCoins.length < 10) { // Limit to 10 for performance
-                setSelectedCoins([...selectedCoins, coin]);
-            }
-        }
-    };
-
-    if (chartData.length === 0) return null;
-
-    const CustomTooltip = ({ active, payload, label }) => {
-        if (active && payload && payload.length) {
-            const data = payload[0].payload;
-            return (
-                <div className={styles.tooltipContainer}>
-                    <div className={styles.tooltipTime}>{label}</div>
-                    
-                    {viewMode === 'combined' ? (
-                        <div className={styles.combinedTooltip}>
-                            <div className={styles.tooltipRow}>
-                                <span className={styles.labelTempBull}>Temp Bull</span>
-                                <span>{data.tempBull}</span>
-                            </div>
-                            <div className={styles.tooltipRow}>
-                                <span className={styles.labelLongBull}>Long Bull</span>
-                                <span>{data.longBull}</span>
-                            </div>
-                            <div className={styles.tooltipRow}>
-                                <span className={styles.labelLongBear}>Long Bear</span>
-                                <span>{Math.abs(data.longBear)}</span>
-                            </div>
-                            <div className={styles.tooltipRow}>
-                                <span className={styles.labelTempBear}>Temp Bear</span>
-                                <span>{Math.abs(data.tempBear)}</span>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className={styles.individualTooltip}>
-                            {selectedCoins.map(coin => {
-                                const st = data.coins[coin];
-                                if (!st) return null;
-                                const stateColor = 
-                                    st.state === 'longBull' ? '#10B981' :
-                                    st.state === 'tempBull' ? '#34D399' :
-                                    st.state === 'longBear' ? '#EF4444' :
-                                    st.state === 'tempBear' ? '#F87171' : '#6B7280';
-                                return (
-                                    <div key={coin} className={styles.tooltipRow}>
-                                        <div className="flex items-center gap-1">
-                                            <span style={{ color: stateColor }}>●</span>
-                                            <span className="font-mono text-xs">{coin}</span>
-                                            {st.v > 0 && <Zap size={10} className="text-yellow-400 ml-1" />}
-                                        </div>
-                                        <span className="text-[10px] opacity-70 uppercase">{st.state}</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
-                    
-                    {data.volSpikes.length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-[var(--border)]">
-                            <div className="text-[10px] text-[var(--text-muted)] flex items-center gap-1">
-                                <Zap size={10} className="text-yellow-400" /> Volume Spikes
-                            </div>
-                            <div className="text-[10px] font-mono opacity-80 mt-1 max-w-[150px] flex flex-wrap gap-1">
-                                {data.volSpikes.slice(0, 5).join(', ')}
-                                {data.volSpikes.length > 5 && ` +${data.volSpikes.length - 5}`}
-                            </div>
-                        </div>
-                    )}
-                </div>
+            const rawScore = (
+                stateCounts.longBull * 2 + stateCounts.tempBull * 1 +
+                stateCounts.tempBear * -1 + stateCounts.longBear * -2
             );
+            const totalCoins = Object.values(stateCounts).reduce((a, b) => a + b, 0);
+            const score = totalCoins > 0 ? Math.round((rawScore / (totalCoins * 2)) * 100) : 0;
+
+            tl.push({
+                ts: bucket.ts,
+                timeLabel: format(new Date(bucket.ts), 'HH:mm'),
+                longBull:  tickersByChip.longBull.length,
+                longBear:  tickersByChip.longBear.length,
+                shortBull: tickersByChip.shortBull.length,
+                shortBear: tickersByChip.shortBear.length,
+                score, totalCoins,
+                tickersByChip,
+            });
         }
-        return null;
+
+        // Annotate each bucket with the COINS THAT JOINED / LEFT each chip
+        // compared to the previous bucket — this is the backtest signal.
+        for (let i = 1; i < tl.length; i++) {
+            const cur = tl[i].tickersByChip;
+            const prev = tl[i - 1].tickersByChip;
+            const flips = {};
+            for (const k of ['longBull','longBear','shortBull','shortBear']) {
+                const curSet = new Set(cur[k]);
+                const prevSet = new Set(prev[k]);
+                flips[k] = {
+                    joined: cur[k].filter(t => !prevSet.has(t)),
+                    left:   prev[k].filter(t => !curSet.has(t)),
+                };
+            }
+            tl[i].flips = flips;
+        }
+
+        return { timeline: tl, coinSeries: series, allCoins: Array.from(coinSet).sort(), sparse: isSparse };
+    }, [cascadeHistory, config]);
+
+    // ─── Derived KPIs (phase, velocity, transitions, flow) ───────────────────
+    const kpis = useMemo(() => {
+        if (timeline.length === 0) return null;
+        const latest = timeline[timeline.length - 1];
+        const back = Math.min(6, timeline.length - 1); // ~30min @ 5-min buckets
+        const earlier = timeline[timeline.length - 1 - back];
+        const velocity = earlier ? (latest.score - earlier.score) : 0;
+
+        const cutoffMs = (latest.ts || Date.now()) - 60 * 60 * 1000;
+        let transitionCount = 0;
+        const transitions = [];
+        for (const ticker of Object.keys(coinSeries)) {
+            const arr = coinSeries[ticker];
+            for (let i = 1; i < arr.length; i++) {
+                if (arr[i].ts < cutoffMs) continue;
+                if (arr[i].state !== arr[i - 1].state) {
+                    transitionCount++;
+                    transitions.push({ ts: arr[i].ts, ticker, from: arr[i - 1].state, to: arr[i].state, v: arr[i].v });
+                }
+            }
+        }
+        transitions.sort((a, b) => b.ts - a.ts);
+        const phase = getPhase(latest.score, velocity);
+        return { latest, velocity, phase, transitions, transitionCount };
+    }, [timeline, coinSeries]);
+
+    // ─── Sorted coin list for "Coin Paths" view ──────────────────────────────
+    const sortedCoins = useMemo(() => {
+        if (!allCoins.length) return [];
+        const rows = allCoins.map(t => {
+            const series = coinSeries[t] || [];
+            const latest = series[series.length - 1];
+            let flips = 0;
+            for (let i = Math.max(1, series.length - 30); i < series.length; i++) {
+                if (series[i].state !== series[i - 1].state) flips++;
+            }
+            const score = latest ? STATE_META[latest.state]?.weight ?? 0 : 0;
+            const lastFlipTs = (series.length > 1 && series[series.length - 1].state !== series[series.length - 2].state)
+                ? series[series.length - 1].ts : 0;
+            return { ticker: t, series, latest, flips, score, lastFlipTs };
+        });
+        switch (coinSort) {
+            case 'volatile': return rows.sort((a, b) => b.flips - a.flips);
+            case 'bullish':  return rows.sort((a, b) => b.score - a.score);
+            case 'bearish':  return rows.sort((a, b) => a.score - b.score);
+            case 'recent':
+            default:         return rows.sort((a, b) => b.lastFlipTs - a.lastFlipTs);
+        }
+    }, [allCoins, coinSeries, coinSort]);
+
+    // ─── Flow matrix ─────────────────────────────────────────────────────────
+    const flowMatrix = useMemo(() => {
+        if (!kpis) return [];
+        const pairs = {};
+        for (const t of kpis.transitions) {
+            const key = `${t.from}→${t.to}`;
+            if (!pairs[key]) pairs[key] = { from: t.from, to: t.to, count: 0, tickers: [] };
+            pairs[key].count++;
+            if (pairs[key].tickers.length < 8) pairs[key].tickers.push(t.ticker);
+        }
+        return Object.values(pairs).sort((a, b) => b.count - a.count).slice(0, 8);
+    }, [kpis]);
+
+    const { brushRange, handleBrushChange } = useChartBrush('tv_cascadeBrush_v3', timeline);
+
+    if (timeline.length === 0) {
+        return (
+            <div ref={containerRef} className={styles.widgetWrapper}>
+                <div className={styles.emptyState}>
+                    <Activity size={26} opacity={0.4} />
+                    <div>Waiting for Stream D cascade data…</div>
+                </div>
+            </div>
+        );
+    }
+
+    const latest = timeline[timeline.length - 1];
+    const PhaseIcon = kpis.phase.icon;
+
+    // ─── Tooltip — shows ticker names per chip + transitions vs previous bucket ─
+    const CustomTooltip = ({ active, payload, label }) => {
+        if (!active || !payload || !payload.length) return null;
+        const d = payload[0].payload;
+        const tbc   = d.tickersByChip || { longBull: [], longBear: [], shortBull: [], shortBear: [] };
+        const flips = d.flips         || null;
+        return (
+            <div className={styles.tooltipContainer}>
+                <div className={styles.tooltipTime}>
+                    {label} · <span style={{ color: d.score > 0 ? COLORS.longBull : d.score < 0 ? COLORS.longBear : 'var(--text-muted)' }}>
+                        Score {d.score > 0 ? '+' : ''}{d.score}
+                    </span>
+                </div>
+                {[
+                    { k: 'longBull',  label: 'Long Bull',   dotted: false },
+                    { k: 'longBear',  label: 'Long Bear',   dotted: false },
+                    { k: 'shortBull', label: 'Short Bull ↗', dotted: true  },
+                    { k: 'shortBear', label: 'Short Bear ↘', dotted: true  },
+                ].map(({ k, label, dotted }) => {
+                    const tickers = tbc[k] || [];
+                    return (
+                        <div key={k} className={styles.tooltipChipBlock}>
+                            <div className={styles.tooltipRow}>
+                                <span
+                                    className={dotted ? styles.ttDotted : styles.ttSolid}
+                                    style={{ background: dotted ? 'transparent' : COLORS[k], borderColor: COLORS[k] }}
+                                />
+                                <span className={styles.tooltipLabel}>{label}</span>
+                                <span className={styles.tooltipVal} style={{ color: COLORS[k] }}>{d[k]}</span>
+                            </div>
+                            {tickers.length > 0 && (
+                                <div className={styles.tooltipTickers}>
+                                    {tickers.slice(0, 12).map(t => {
+                                        const isNew = flips?.[k]?.joined?.includes(t);
+                                        return (
+                                            <span key={t}
+                                                  className={`${styles.ttTicker} ${isNew ? styles.ttTickerNew : ''}`}
+                                                  style={isNew ? { borderColor: COLORS[k], color: COLORS[k] } : undefined}>
+                                                {isNew && '+'}{tickerShort(t)}
+                                            </span>
+                                        );
+                                    })}
+                                    {tickers.length > 12 && (
+                                        <span className={styles.ttTickerMore}>+{tickers.length - 12}</span>
+                                    )}
+                                </div>
+                            )}
+                            {flips?.[k]?.left?.length > 0 && (
+                                <div className={styles.tooltipTickers}>
+                                    {flips[k].left.slice(0, 8).map(t => (
+                                        <span key={t} className={`${styles.ttTicker} ${styles.ttTickerLeft}`}>
+                                            −{tickerShort(t)}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        );
     };
 
-    // State numeric mapping for individual view:
-    // TempBull = 2, LongBull = 1, Neutral = 0, LongBear = -1, TempBear = -2
-    const stateVal = { tempBull: 2, longBull: 1, neutral: 0, longBear: -1, tempBear: -2 };
-    
-    // Add individual state values to data for charting
-    const chartDataWithIndividual = chartData.map(d => {
-        const item = { ...d };
-        selectedCoins.forEach(c => {
-            const st = item.coins[c];
-            item[`val_${c}`] = st ? stateVal[st.state] : null;
-        });
-        return item;
-    });
-
-    const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f97316', '#eab308', '#14b8a6', '#6366f1', '#f43f5e', '#84cc16', '#06b6d4'];
-
-    const latest = chartData[chartData.length - 1] || {};
-    const isBullDominant = latest.bullArea > Math.abs(latest.bearArea) * 1.5 && latest.bullArea > 3;
-    const isBearDominant = Math.abs(latest.bearArea) > latest.bullArea * 1.5 && Math.abs(latest.bearArea) > 3;
-    const isNeutral = !isBullDominant && !isBearDominant;
+    const toggle = (key) => setVisible(v => ({ ...v, [key]: !v[key] }));
+    const HeaderChip = ({ k, label, arrow, dotted }) => (
+        <button
+            onClick={() => toggle(k)}
+            className={`${styles.headerChip} ${visible[k] ? '' : styles.headerChipOff}`}
+            style={{ borderColor: visible[k] ? COLORS[k] + '88' : 'var(--border)' }}
+            title={visible[k] ? 'Hide line' : 'Show line'}
+        >
+            <span
+                className={dotted ? styles.chipDotted : styles.chipSolid}
+                style={{
+                    background: !dotted && visible[k] ? COLORS[k] : 'transparent',
+                    borderColor: COLORS[k],
+                    color: COLORS[k],
+                }}
+            />
+            <span className={styles.chipLabel}>{label}{arrow}</span>
+            <span className={styles.chipCount} style={{ color: visible[k] ? COLORS[k] : 'var(--text-muted)' }}>
+                {latest[k]}
+            </span>
+        </button>
+    );
 
     return (
         <div ref={containerRef} className={styles.widgetWrapper}>
+            {/* ─── HEADER ──────────────────────────────────────────────── */}
             <div className={styles.header}>
-                <div className="flex items-center gap-2">
-                    <Layers size={18} className="text-[var(--accent-purple)]" />
-                    <h3 className="text-sm font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Cascade Trend Monitor</h3>
-                </div>
-                
-                <div className="flex gap-6 items-center mr-auto ml-8">
-                    <div className="flex flex-col items-end">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Net Cascade</span>
-                        <span className={`text-lg font-bold font-mono ${latest.netTrend > 0 ? 'text-[#10B981]' : latest.netTrend < 0 ? 'text-[#EF4444]' : 'text-gray-400'}`}>
-                            {latest.netTrend > 0 ? '+' : ''}{latest.netTrend || 0}
-                        </span>
-                    </div>
-                    <div className="flex flex-col items-end border-l border-[var(--border)] pl-6">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Bull Coins</span>
-                        <span className="text-lg font-bold font-mono text-[#10B981]">{latest.bullArea || 0}</span>
-                    </div>
-                    <div className="flex flex-col items-end border-l border-[var(--border)] pl-6 hidden sm:flex">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Bear Coins</span>
-                        <span className="text-lg font-bold font-mono text-[#EF4444]">{Math.abs(latest.bearArea) || 0}</span>
-                    </div>
+                <div className={styles.titleBlock}>
+                    <h3 className={styles.title}>Cascade Chip Trend</h3>
+                    <span className={styles.subtitle}>
+                        long {config.longSeries.join('→')} · short {config.shortSeries.join('→')}
+                    </span>
                 </div>
 
-                <div className="flex items-center gap-4">
-                    <div className="flex bg-[var(--bg-app)] rounded p-1">
-                        <button 
-                            className={`${styles.viewToggleBtn} ${viewMode === 'combined' ? styles.active : ''}`}
-                            onClick={() => setViewMode('combined')}
-                        >Combined</button>
-                        <button 
-                            className={`${styles.viewToggleBtn} ${viewMode === 'individual' ? styles.active : ''}`}
-                            onClick={() => setViewMode('individual')}
-                        >Split View</button>
-                    </div>
-                    <button 
-                        className={styles.iconBtn} 
-                        onClick={() => setShowSettings(!showSettings)}
-                    >
-                        <Settings size={16} />
-                    </button>
+                <div className={styles.chipRow}>
+                    <HeaderChip k="longBull"  label="Long Bull"   arrow=""   dotted={false} />
+                    <HeaderChip k="longBear"  label="Long Bear"   arrow=""   dotted={false} />
+                    <HeaderChip k="shortBull" label="Short Bull " arrow="↗"  dotted={true}  />
+                    <HeaderChip k="shortBear" label="Short Bear " arrow="↘"  dotted={true}  />
+                </div>
+
+                <div className={styles.headerActions}>
+                    <LastSyncBadge ts={lastFetchedAt} />
+                    <ResetPrefsButton onReset={resetUIPrefs} title="Reset chip visibility, view, and sort to defaults" />
                 </div>
             </div>
 
-            {/* Dynamic Interpretation */}
-            <div className="flex items-center gap-2 mb-4 p-2 rounded text-xs" style={{ backgroundColor: 'var(--bg-app)' }}>
-                {isBullDominant && <><TrendingUp size={14} className="text-[#10B981]" /> <span className="font-semibold text-[#10B981]">Bullish Cascade:</span> <span>Market structure is expanding upward.</span></>}
-                {isBearDominant && <><TrendingDown size={14} className="text-[#EF4444]" /> <span className="font-semibold text-[#EF4444]">Bearish Cascade:</span> <span>Market structure is deteriorating.</span></>}
-                {isNeutral && <><Activity size={14} className="text-[#FACC15]" /> <span className="font-semibold text-[#FACC15]">Consolidating:</span> <span>Cascade states are transitioning or balanced.</span></>}
+            {/* ─── INSIGHTS STRIP — Phase + Score + Velocity + Flips ──── */}
+            <div className={styles.insightsStrip}>
+                <div className={styles.phaseBadge}
+                    style={{ color: kpis.phase.color, borderColor: kpis.phase.color + '66', background: kpis.phase.color + '11' }}
+                    title="Wyckoff-style market phase derived from regime score × 30m velocity">
+                    <PhaseIcon size={11} /> {kpis.phase.label}
+                </div>
+
+                <div className={styles.kpi} title="Regime score: weighted (Long Bull +2, Short Bull +1, Short Bear -1, Long Bear -2), normalised to ±100">
+                    <Gauge size={10} className={styles.kpiIcon}/>
+                    <span className={styles.kpiLabel}>Score</span>
+                    <span className={styles.kpiVal} style={{ color: latest.score > 0 ? COLORS.longBull : latest.score < 0 ? COLORS.longBear : 'var(--text-muted)' }}>
+                        {latest.score > 0 ? '+' : ''}{latest.score}
+                    </span>
+                </div>
+
+                <div className={styles.kpi} title="Change in regime score over the last ~30 minutes — early regime-shift detector">
+                    {kpis.velocity > 0 ? <ArrowUp size={10} color={COLORS.longBull}/> :
+                     kpis.velocity < 0 ? <ArrowDown size={10} color={COLORS.longBear}/> :
+                     <ArrowRight size={10}/>}
+                    <span className={styles.kpiLabel}>Velocity 30m</span>
+                    <span className={styles.kpiVal} style={{ color: kpis.velocity > 0 ? COLORS.longBull : kpis.velocity < 0 ? COLORS.longBear : 'var(--text-muted)' }}>
+                        {kpis.velocity > 0 ? '+' : ''}{kpis.velocity}
+                    </span>
+                </div>
+
+                <div className={styles.kpi} title="Number of coin state changes in the last 60 minutes — market churn level">
+                    <GitBranch size={10} className={styles.kpiIcon}/>
+                    <span className={styles.kpiLabel}>Flips 60m</span>
+                    <span className={styles.kpiVal} style={{ color: kpis.transitionCount > 20 ? '#F59E0B' : 'var(--text-main)' }}>
+                        {kpis.transitionCount}
+                    </span>
+                    {kpis.transitionCount > 20 ? <Flame size={9} color="#F59E0B"/> :
+                     kpis.transitionCount < 5 ? <Snowflake size={9} color="var(--text-muted)"/> : null}
+                </div>
             </div>
 
-            {showSettings && viewMode === 'individual' && (
-                <div className={styles.settingsPanel}>
-                    <div className="text-xs mb-2 text-[var(--text-muted)]">Select up to 10 coins to track:</div>
-                    <div className="flex flex-wrap gap-1 max-h-[100px] overflow-y-auto custom-scrollbar">
-                        {availableCoins.map(c => (
-                            <button
-                                key={c}
-                                className={`${styles.coinChip} ${selectedCoins.includes(c) ? styles.selected : ''}`}
-                                onClick={() => toggleCoin(c)}
-                            >
-                                {c}
-                            </button>
-                        ))}
+            {/* ─── CHART ───────────────────────────────────────────────── */}
+            <div className={styles.chartArea}>
+                {sparse && (
+                    <div className={styles.sparseHint}>
+                        Only 1 data bucket so far — chart will populate as Stream D scans accumulate
+                        (one bucket per 5 min).
                     </div>
-                </div>
-            )}
-
-            <div className="flex-1 w-full mt-2 h-[220px]">
+                )}
                 <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartDataWithIndividual} margin={{ top: 15, right: 0, left: 10, bottom: 0 }}>
-                        <defs>
-                            <linearGradient id="bullGrad" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#10B981" stopOpacity={0.8}/>
-                                <stop offset="95%" stopColor="#10B981" stopOpacity={0.2}/>
-                            </linearGradient>
-                            <linearGradient id="bearGrad" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#EF4444" stopOpacity={0.2}/>
-                                <stop offset="95%" stopColor="#EF4444" stopOpacity={0.8}/>
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" opacity={0.3} />
-                        
-                        <XAxis 
-                            dataKey="timeLabel" 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fontSize: 9, fill: 'var(--text-muted)' }}
-                            minTickGap={30}
-                        />
-                        
-                        {viewMode === 'combined' ? (
-                            <YAxis hide={true} domain={['auto', 'auto']} />
-                        ) : (
-                            <YAxis 
-                                hide={false} 
-                                domain={[-2.5, 2.5]} 
-                                ticks={[-2, -1, 0, 1, 2]} 
-                                axisLine={false} 
-                                tickLine={false}
-                                width={40}
-                                tickFormatter={(val) => {
-                                    if (val === 2) return 'T-Bull';
-                                    if (val === 1) return 'L-Bull';
-                                    if (val === 0) return 'Neut';
-                                    if (val === -1) return 'L-Bear';
-                                    if (val === -2) return 'T-Bear';
-                                    return '';
-                                }}
-                                tick={{ fontSize: 9, fill: 'var(--text-muted)' }}
-                            />
-                        )}
-                        
-                        <Tooltip 
-                            content={<CustomTooltip />} 
-                            cursor={{ strokeDasharray: '3 3', stroke: 'rgba(255,255,255,0.2)' }}
+                    <ComposedChart data={timeline} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="var(--border)" opacity={0.4} />
+                        <XAxis dataKey="timeLabel" axisLine={false} tickLine={false}
+                            tick={{ fontSize: 10, fill: 'var(--text-muted)' }} minTickGap={40} />
+                        <YAxis axisLine={false} tickLine={false} width={28}
+                            tick={{ fontSize: 9, fill: 'var(--text-muted)' }} allowDecimals={false}
+                            domain={[0, (dataMax) => Math.max(dataMax + 1, 5)]} />
+                        <ReferenceLine y={0} stroke="var(--text-muted)" strokeOpacity={0.4} />
+                        <Tooltip content={<CustomTooltip />}
+                            cursor={{ stroke: 'rgba(255,255,255,0.25)', strokeWidth: 1, strokeDasharray: '3 3' }}
                             isAnimationActive={false}
-                            trigger={isMobile ? 'click' : 'hover'}
-                            shared={true}
-                        />
+                            trigger={isMobile ? 'click' : 'hover'} />
 
-                        {viewMode === 'combined' ? (
-                            <>
-                                {/* Combined View: Stacked areas or distinct lines for breadth */}
-                                <ReferenceDot x={latest.timeLabel} y={0} r={0} stroke="none" />
-                                <Area type="monotone" dataKey="tempBull" stackId="bull" fill="url(#bullGrad)" stroke="none" opacity={0.6} isAnimationActive={false}/>
-                                <Area type="monotone" dataKey="longBull" stackId="bull" fill="url(#bullGrad)" stroke="none" opacity={1} isAnimationActive={false}/>
-                                
-                                <Area type="monotone" dataKey="tempBear" stackId="bear" fill="url(#bearGrad)" stroke="none" opacity={0.6} isAnimationActive={false}/>
-                                <Area type="monotone" dataKey="longBear" stackId="bear" fill="url(#bearGrad)" stroke="none" opacity={1} isAnimationActive={false}/>
-                                
-                                <Line type="monotone" dataKey="bullArea" stroke="#10B981" strokeWidth={2} dot={false} isAnimationActive={false} />
-                                <Line type="monotone" dataKey="bearArea" stroke="#EF4444" strokeWidth={2} dot={false} isAnimationActive={false} />
-                            </>
-                        ) : (
-                            <>
-                                {/* Individual View: One line per selected coin */}
-                                {selectedCoins.map((c, i) => (
-                                    <Line 
-                                        key={c}
-                                        type="stepAfter" 
-                                        dataKey={`val_${c}`} 
-                                        stroke={colors[i % colors.length]} 
-                                        strokeWidth={2} 
-                                        dot={false}
-                                        isAnimationActive={false} 
-                                        connectNulls
-                                    />
-                                ))}
-                            </>
+                        {/* Small dots show each data point — critical when timeline is short
+                            (lines collapse to single segments otherwise). Active dot enlarges
+                            on hover to show the exact bucket being inspected. */}
+                        {visible.longBull && (
+                            <Line type="monotone" dataKey="longBull"
+                                stroke={COLORS.longBull} strokeWidth={2.2}
+                                dot={{ r: 2, fill: COLORS.longBull, strokeWidth: 0 }}
+                                activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
+                                isAnimationActive={false} />
+                        )}
+                        {visible.longBear && (
+                            <Line type="monotone" dataKey="longBear"
+                                stroke={COLORS.longBear} strokeWidth={2.2}
+                                dot={{ r: 2, fill: COLORS.longBear, strokeWidth: 0 }}
+                                activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
+                                isAnimationActive={false} />
+                        )}
+                        {visible.shortBull && (
+                            <Line type="monotone" dataKey="shortBull"
+                                stroke={COLORS.shortBull} strokeWidth={1.8} strokeDasharray="4 3"
+                                dot={{ r: 2, fill: COLORS.shortBull, strokeWidth: 0 }}
+                                activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
+                                isAnimationActive={false} />
+                        )}
+                        {visible.shortBear && (
+                            <Line type="monotone" dataKey="shortBear"
+                                stroke={COLORS.shortBear} strokeWidth={1.8} strokeDasharray="4 3"
+                                dot={{ r: 2, fill: COLORS.shortBear, strokeWidth: 0 }}
+                                activeDot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
+                                isAnimationActive={false} />
                         )}
 
-                        <Brush 
-                            dataKey="timeLabel" 
-                            height={22}
-                            travellerWidth={18}
-                            stroke="var(--text-muted)" 
-                            fill="var(--bg-app)"
+                        <Brush
+                            dataKey="timeLabel" height={20} travellerWidth={16}
+                            stroke="var(--text-muted)" fill="var(--bg-app)"
                             onChange={handleBrushChange}
-                            startIndex={brushRange.startIndex}
-                            endIndex={brushRange.endIndex}
+                            startIndex={brushRange.startIndex} endIndex={brushRange.endIndex}
+                            tickFormatter={() => ''}
                         />
                     </ComposedChart>
                 </ResponsiveContainer>
+            </div>
+
+            {/* ─── BOTTOM TABBED PANEL ─────────────────────────────────── */}
+            <div className={styles.bottomBar}>
+                <div className={styles.tabRow}>
+                    <button className={`${styles.tabBtn} ${bottomView === 'transitions' ? styles.tabActive : ''}`}
+                        onClick={() => setBottomView('transitions')}>
+                        <GitBranch size={11}/> Transitions
+                        {kpis.transitionCount > 0 && <span className={styles.tabBadge}>{kpis.transitionCount}</span>}
+                    </button>
+                    <button className={`${styles.tabBtn} ${bottomView === 'coins' ? styles.tabActive : ''}`}
+                        onClick={() => setBottomView('coins')}>
+                        <ListTree size={11}/> Coin Paths
+                    </button>
+                    <button className={`${styles.tabBtn} ${bottomView === 'flow' ? styles.tabActive : ''}`}
+                        onClick={() => setBottomView('flow')}>
+                        <BarChart3 size={11}/> Flow
+                        {flowMatrix.length > 0 && <span className={styles.tabBadge}>{flowMatrix.length}</span>}
+                    </button>
+                </div>
+
+                {bottomView === 'transitions' && (
+                    <div className={styles.scrollPanel}>
+                        {kpis.transitions.slice(0, 25).map((t, i) => {
+                            const fromM = STATE_META[t.from];
+                            const toM   = STATE_META[t.to];
+                            const isBullish = toM.weight > fromM.weight;
+                            return (
+                                <div key={i} className={styles.transitionRow} style={{ borderLeftColor: toM.color }}>
+                                    <span className={styles.tickerSm}>{tickerShort(t.ticker)}</span>
+                                    <span className={styles.statePill} style={{ background: fromM.light, color: fromM.color }}>{fromM.short}</span>
+                                    <ArrowRight size={10} color={isBullish ? COLORS.longBull : COLORS.longBear}/>
+                                    <span className={styles.statePill} style={{ background: toM.light, color: toM.color }}>{toM.short}</span>
+                                    <span className={styles.timeSm}>{format(new Date(t.ts), 'HH:mm')}</span>
+                                </div>
+                            );
+                        })}
+                        {kpis.transitions.length === 0 && (
+                            <div className={styles.emptyHint}>No state transitions in the last hour — market is stable.</div>
+                        )}
+                    </div>
+                )}
+
+                {bottomView === 'coins' && (
+                    <>
+                        <div className={styles.sortBar}>
+                            <span className={styles.sortLabel}>Sort:</span>
+                            {[['volatile','Most Flips'], ['recent','Recent Flip'], ['bullish','Most Bullish'], ['bearish','Most Bearish']].map(([k, l]) => (
+                                <button key={k} className={`${styles.sortBtn} ${coinSort === k ? styles.sortActive : ''}`}
+                                    onClick={() => setCoinSort(k)}>{l}</button>
+                            ))}
+                        </div>
+                        <div className={styles.scrollPanel}>
+                            {sortedCoins.slice(0, 30).map(({ ticker, series, latest: c, flips }) => (
+                                <div key={ticker} className={styles.coinPathRow}>
+                                    <span className={styles.tickerSm}>{tickerShort(ticker)}</span>
+                                    <div className={styles.coinPathStrip}>
+                                        {series.slice(-40).map((pt, i) => (
+                                            <div key={i} className={styles.coinPathCell}
+                                                style={{ background: STATE_META[pt.state]?.color || '#444' }}
+                                                title={`${format(new Date(pt.ts), 'HH:mm')} · ${STATE_META[pt.state]?.label}`} />
+                                        ))}
+                                    </div>
+                                    <span className={styles.coinPathState} style={{ color: STATE_META[c?.state]?.color || 'var(--text-muted)' }}>
+                                        {STATE_META[c?.state]?.short || '—'}
+                                    </span>
+                                    {flips > 0 && <span className={styles.flipsBadge}>{flips}×</span>}
+                                </div>
+                            ))}
+                            {sortedCoins.length === 0 && <div className={styles.emptyHint}>No coin data yet.</div>}
+                        </div>
+                    </>
+                )}
+
+                {bottomView === 'flow' && (
+                    <div className={styles.scrollPanel}>
+                        {flowMatrix.map((f, i) => {
+                            const fromM = STATE_META[f.from];
+                            const toM   = STATE_META[f.to];
+                            const isBullish  = toM.weight > fromM.weight;
+                            const isReversal = (fromM.weight < 0 && toM.weight > 0) || (fromM.weight > 0 && toM.weight < 0);
+                            return (
+                                <div key={i} className={styles.flowRow}>
+                                    <div className={styles.flowPair}>
+                                        <span className={styles.statePill} style={{ background: fromM.light, color: fromM.color }}>{fromM.label}</span>
+                                        <ArrowRight size={12} color={isBullish ? COLORS.longBull : COLORS.longBear}/>
+                                        <span className={styles.statePill} style={{ background: toM.light, color: toM.color }}>{toM.label}</span>
+                                        {isReversal && <span className={styles.reversalBadge}>REVERSAL</span>}
+                                    </div>
+                                    <div className={styles.flowCount}>{f.count} coin{f.count !== 1 ? 's' : ''}</div>
+                                    <div className={styles.flowTickers}>
+                                        {f.tickers.map(t => <span key={t} className={styles.flowTicker}>{tickerShort(t)}</span>)}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {flowMatrix.length === 0 && <div className={styles.emptyHint}>No transitions in window — market is stable.</div>}
+                    </div>
+                )}
             </div>
         </div>
     );

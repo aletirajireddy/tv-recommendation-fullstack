@@ -46,9 +46,13 @@ export const useTimeStore = create((set, get) => ({
     strategyLogs: [],  // TLogs (Telegram History)
     aiHistory: [],     // New History State
     analyticsData: null,
+    analyticsDataFetchedAt: null,
     researchData: null, // New Research Data
+    researchDataFetchedAt: null,
     fusionData: null, // New Fusion Dashboard Data
+    fusionDataFetchedAt: null,
     participationPulse: [], // Phase 8: Inflow/Outflow Participation Data
+    participationPulseFetchedAt: null,
     alphaSquad: [], // Phase 14: Time-Series Delta Alpha Quadrant
     cascadeHistory: [], // Phase 15: EMA Cascade Trends
     lastDataPush: 0, // Global invalidation signal — bumped on every socket push
@@ -295,7 +299,7 @@ export const useTimeStore = create((set, get) => ({
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
 
-                set({ analyticsData: data });
+                set({ analyticsData: data, analyticsDataFetchedAt: Date.now() });
             } catch (err) {
                 if (err.name !== 'AbortError') {
                     console.error('Analytics Error:', err);
@@ -524,7 +528,7 @@ export const useTimeStore = create((set, get) => ({
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
                 const data = await res.json();
-                set({ researchData: data });
+                set({ researchData: data, researchDataFetchedAt: Date.now() });
             } catch (err) {
                 if (err.name !== 'AbortError') {
                     console.error('Research API Error:', err);
@@ -550,7 +554,8 @@ export const useTimeStore = create((set, get) => ({
                 const data = await res.json();
                 set({
                     fusionData: data.records || [],
-                    rsiDistribution: data.rsi_distribution || null
+                    rsiDistribution: data.rsi_distribution || null,
+                    fusionDataFetchedAt: Date.now(),
                 });
             } catch (err) {
                 console.error('Failed to fetch Fusion Dashboard data:', err);
@@ -573,7 +578,7 @@ export const useTimeStore = create((set, get) => ({
                 const res = await fetch(`${API_BASE}/analytics/participation-pulse?hours=${lookbackHours}${refTimeStr}`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
-                set({ participationPulse: data.timeline || [] });
+                set({ participationPulse: data.timeline || [], participationPulseFetchedAt: Date.now() });
             } catch (err) {
                 console.error('Failed to fetch Participation Pulse data:', err);
                 set({ participationPulse: [] });

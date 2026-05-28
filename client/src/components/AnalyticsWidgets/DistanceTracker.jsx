@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, lazy, Suspense } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
+import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
@@ -236,6 +237,7 @@ export function DistanceTracker({ filterTicker, compact }) {
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <FreshnessChip ts={lastFetchedAt} title="Board data last fetched from server" />
+                        <ResetPrefsButton onReset={resetDist} title="Reset distance / sort to defaults" />
                         <button className={styles.refreshBtn} onClick={() => reload()} title="Refresh">
                             <RefreshCw size={14} />
                         </button>
