@@ -128,6 +128,16 @@ h1, h2, h3, h4, h5, h6 {
     50%       { opacity: 0.45; transform: scale(0.85); }
 }
 
+/* Ghost-pending: slow amber fade used on ghost-queue rows that are awaiting
+   approval. Signals "this coin is marked for removal" without being jarring. */
+@keyframes ghost-pending {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.5; }
+}
+.ghost-pending-pulse {
+    animation: ghost-pending 2.8s ease-in-out infinite;
+}
+
 .animate-slide-left {
     animation: slideInLeft 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }

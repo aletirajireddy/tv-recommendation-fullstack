@@ -255,6 +255,13 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
     );
     useDataInvalidation(containerRef, reloadBoardSilent, lastDataPush);
 
+    // Fetch whitelist — used to augment dropdown so whitelisted coins (which may
+    // lack Stream D EMA history) are always searchable even when off the board.
+    const { data: whitelistData } = usePolledFetch(
+        () => `/api/whitelist`,
+        { intervalMs: 60_000, deps: [] }
+    );
+
     // Cascade classification — uses EMA200 value stacking (not price-to-EMA distance).
     // longSeries / shortSeries / equalThreshold come from shared cascadeUtils settings.
     const coinsWithCascade = useMemo(() => {
@@ -312,11 +319,32 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
         return () => document.removeEventListener('mousedown', handler);
     }, [dropdownOpen]);
 
+    // Whitelist coins converted to clean ticker form — same regex the board uses.
+    // These are added to the dropdown for coins that have no Stream D EMA data yet.
+    const whitelistExtras = useMemo(() => {
+        if (!Array.isArray(whitelistData)) return [];
+        const activeSet = new Set(coinsWithCascade.map(c => c.ticker));
+        return whitelistData
+            .map(w => ({
+                ticker:       (w.ticker || '').replace(/USDT(\.P)?$/i, '').toUpperCase(),
+                cascade:      'neutral',
+                shortCascade: 'neutral',
+                whitelisted:  true,
+            }))
+            .filter(w => w.ticker && !activeSet.has(w.ticker));
+    }, [whitelistData, coinsWithCascade]);
+
     const filteredCoins = useMemo(() => {
         const q = searchQuery.trim().toUpperCase();
-        if (!q) return coinsWithCascade;
-        return coinsWithCascade.filter(c => c.ticker.includes(q));
-    }, [coinsWithCascade, searchQuery]);
+        const filteredExtras = q
+            ? whitelistExtras.filter(w => w.ticker.includes(q))
+            : whitelistExtras;
+        if (!q) return [...coinsWithCascade, ...filteredExtras];
+        return [
+            ...coinsWithCascade.filter(c => c.ticker.includes(q)),
+            ...filteredExtras,
+        ];
+    }, [coinsWithCascade, whitelistExtras, searchQuery]);
 
     // Cascade status of the currently selected ticker (for trigger border colour)
     const selectedCascade = useMemo(
@@ -643,27 +671,41 @@ export function EMACascadeMonitor({ filterTicker, compact }) {
                                                     setDropdownOpen(false);
                                                     setSearchQuery('');
                                                 }}
+                                                title={c.whitelisted ? 'Whitelisted — no Stream D EMA data yet' : undefined}
                                             >
-                                                <span className={`${styles.cascadeDot} ${
-                                                    c.cascade === 'bull' ? styles.dotBull :
-                                                    c.cascade === 'bear' ? styles.dotBear :
-                                                    styles.dotNeutral
-                                                }`} />
+                                                {c.whitelisted ? (
+                                                    <span className={styles.wlPinDot} title="Whitelisted">📍</span>
+                                                ) : (
+                                                    <span className={`${styles.cascadeDot} ${
+                                                        c.cascade === 'bull' ? styles.dotBull :
+                                                        c.cascade === 'bear' ? styles.dotBear :
+                                                        styles.dotNeutral
+                                                    }`} />
+                                                )}
                                                 <span className={styles.coinItemName}>{c.ticker}</span>
-                                                <span className={`${styles.cascadeTag} ${
-                                                    c.cascade === 'bull' ? styles.tagBull :
-                                                    c.cascade === 'bear' ? styles.tagBear :
-                                                    styles.tagNeutral
-                                                }`}>
-                                                    {c.cascade === 'bull' ? '▲ L' : c.cascade === 'bear' ? '▼ L' : '— L'}
-                                                </span>
-                                                <span className={`${styles.cascadeTag} ${styles.tagShort} ${
-                                                    c.shortCascade === 'bull' ? styles.tagBull :
-                                                    c.shortCascade === 'bear' ? styles.tagBear :
-                                                    styles.tagNeutral
-                                                }`}>
-                                                    {c.shortCascade === 'bull' ? 'S▲' : c.shortCascade === 'bear' ? 'S▼' : 'S—'}
-                                                </span>
+                                                {c.whitelisted ? (
+                                                    <span className={`${styles.cascadeTag} ${styles.tagNeutral}`}
+                                                          style={{ color: '#68d391', borderColor: 'rgba(104,211,145,0.3)' }}>
+                                                        🛡 WL
+                                                    </span>
+                                                ) : (
+                                                    <>
+                                                        <span className={`${styles.cascadeTag} ${
+                                                            c.cascade === 'bull' ? styles.tagBull :
+                                                            c.cascade === 'bear' ? styles.tagBear :
+                                                            styles.tagNeutral
+                                                        }`}>
+                                                            {c.cascade === 'bull' ? '▲ L' : c.cascade === 'bear' ? '▼ L' : '— L'}
+                                                        </span>
+                                                        <span className={`${styles.cascadeTag} ${styles.tagShort} ${
+                                                            c.shortCascade === 'bull' ? styles.tagBull :
+                                                            c.shortCascade === 'bear' ? styles.tagBear :
+                                                            styles.tagNeutral
+                                                        }`}>
+                                                            {c.shortCascade === 'bull' ? 'S▲' : c.shortCascade === 'bear' ? 'S▼' : 'S—'}
+                                                        </span>
+                                                    </>
+                                                )}
                                             </button>
                                         ))}
                                         {filteredCoins.length === 0 && (

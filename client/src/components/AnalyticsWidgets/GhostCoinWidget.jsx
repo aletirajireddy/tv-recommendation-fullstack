@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Ghost, Shield, ShieldCheck, Plus, X, Search } from 'lucide-react';
+import { Ghost, Shield, ShieldCheck, ShieldOff, Plus, X, Search, AlertTriangle } from 'lucide-react';
 import styles from './GhostCoinWidget.module.css';
 import { FreshnessChip } from '../FreshnessChip';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
@@ -8,10 +8,13 @@ import { useTimeStore } from '../../store/useTimeStore';
 // ── Ghost Queue Section ───────────────────────────────────────────────────────
 function GhostQueue({ containerRef }) {
     const lastDataPush = useTimeStore(s => s.lastDataPush);
-    const [queue, setQueue]           = useState([]);
+    const [queue, setQueue]             = useState([]);
     const [autoApprove, setAutoApprove] = useState(false);
-    const [loading, setLoading]       = useState(true);
+    const [loading, setLoading]         = useState(true);
     const [lastFetchedAt, setLastFetchedAt] = useState(null);
+    // Per-coin loading: Set of tickers currently being pruned
+    const [pruningSet, setPruningSet]   = useState(() => new Set());
+    const [approvingAll, setApprovingAll] = useState(false);
 
     const fetchQueue = useCallback(async () => {
         try {
@@ -36,29 +39,61 @@ function GhostQueue({ containerRef }) {
 
     const toggleAutoApprove = async () => {
         const next = !autoApprove;
-        setAutoApprove(next);
+        setAutoApprove(next); // optimistic toggle
+        if (next) {
+            // Enabling Auto-Prune: clear all prunable coins from the local list
+            // immediately — server bulk-approves them in the same request, so
+            // there is no flicker or wait. Whitelisted coins stay visible.
+            setQueue(prev => prev.filter(c => c.is_whitelisted));
+        }
         try {
             await fetch('/api/ghosts/toggle-auto', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ enabled: next }),
             });
-            fetchQueue();
-        } catch { setAutoApprove(!next); }
+            fetchQueue(); // reconcile — server may have kept whitelisted entries
+        } catch {
+            setAutoApprove(!next); // rollback toggle on error
+            fetchQueue();          // restore list
+        }
     };
 
-    const approveAll = async () => {
-        try { await fetch('/api/ghosts/approve-all', { method: 'POST' }); fetchQueue(); } catch {}
-    };
-
-    const approveCoin = async (ticker) => {
+    const approveAll = useCallback(async () => {
+        if (approvingAll) return;
+        setApprovingAll(true);
+        // Optimistic: clear non-whitelisted coins immediately; server keeps protected ones.
+        setQueue(prev => prev.filter(c => c.is_whitelisted));
         try {
-            await fetch('/api/ghosts/approve', {
+            await fetch('/api/ghosts/approve-all', { method: 'POST' });
+        } catch {}
+        finally {
+            // Always reconcile — server is the source of truth for what survived
+            await fetchQueue();
+            setApprovingAll(false);
+        }
+    }, [approvingAll, fetchQueue]);
+
+    const approveCoin = useCallback(async (ticker, isWhitelisted) => {
+        if (pruningSet.has(ticker) || isWhitelisted) return;
+        // Optimistic: remove from list immediately
+        setPruningSet(prev => new Set([...prev, ticker]));
+        setQueue(prev => prev.filter(c => c.ticker !== ticker));
+        try {
+            const res = await fetch('/api/ghosts/approve', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ticker }),
             });
-            fetchQueue();
-        } catch {}
-    };
+            if (res.status === 409) {
+                // Server says coin is whitelisted — re-fetch to restore + mark it
+                await fetchQueue();
+            }
+        } catch {
+            // Network error: rollback
+            await fetchQueue();
+        } finally {
+            setPruningSet(prev => { const n = new Set(prev); n.delete(ticker); return n; });
+        }
+    }, [pruningSet, fetchQueue]);
 
     if (loading) return null;
 
@@ -80,9 +115,25 @@ function GhostQueue({ containerRef }) {
                         <input type="checkbox" checked={autoApprove} onChange={toggleAutoApprove} />
                         <span className={styles.slider} />
                     </label>
-                    {queue.length > 0 && !autoApprove && (
-                        <button className={styles.approveAllBtn} onClick={approveAll}>Approve All</button>
-                    )}
+                    {queue.length > 0 && !autoApprove && (() => {
+                        const prunable   = queue.filter(c => !c.is_whitelisted).length;
+                        const protected_ = queue.length - prunable;
+                        return (
+                            <button
+                                className={styles.approveAllBtn}
+                                onClick={approveAll}
+                                disabled={approvingAll || prunable === 0}
+                                style={{ opacity: (approvingAll || prunable === 0) ? 0.5 : 1 }}
+                                title={protected_ > 0 ? `${protected_} whitelisted coin${protected_ > 1 ? 's' : ''} will be skipped` : undefined}
+                            >
+                                {approvingAll
+                                    ? 'Pruning…'
+                                    : protected_ > 0
+                                        ? `Prune ${prunable} (${protected_} protected)`
+                                        : 'Approve All'}
+                            </button>
+                        );
+                    })()}
                 </div>
             </div>
 
@@ -97,10 +148,33 @@ function GhostQueue({ containerRef }) {
                         const bd = coin.score_breakdown;
                         const confLabel = bd?.confidence || null;
                         const confColor = confLabel === 'HIGH' ? '#68d391' : confLabel === 'MEDIUM' ? '#f6ad55' : confLabel === 'LOW' ? '#fc8181' : '#718096';
+                        const isPruning    = pruningSet.has(coin.ticker);
+                        const isProtected  = coin.is_whitelisted;
+                        // Pending (queued, not yet pruned, not protected) → gentle amber pulse
+                        const isPending    = !isPruning && !isProtected;
                         return (
-                            <div key={coin.ticker} className={styles.coinRow}>
+                            <div
+                                key={coin.ticker}
+                                className={`${styles.coinRow}${isPending ? ' ghost-pending-pulse' : ''}`}
+                                style={{
+                                    opacity: isPruning ? 0.4 : 1,
+                                    transition: 'opacity 0.15s',
+                                    // Whitelisted coins get a subtle green tint border
+                                    ...(isProtected && { borderLeft: '2px solid rgba(104,211,145,0.5)', paddingLeft: 6 }),
+                                }}
+                            >
                                 <div className={styles.coinInfo}>
-                                    <div className={styles.ticker}>{coin.ticker}</div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                        <div className={styles.ticker}>{coin.ticker}</div>
+                                        {isProtected && (
+                                            <span
+                                                title="Whitelisted — immune to ghost pruning. Remove from whitelist to prune."
+                                                style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, color: '#68D391', background: 'rgba(104,211,145,0.12)', border: '1px solid rgba(104,211,145,0.3)', borderRadius: 3, padding: '1px 5px' }}
+                                            >
+                                                <Shield size={8} /> PROTECTED
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className={styles.reason}>{coin.reason} · {ageMin}m ago</div>
                                     {score != null && (
                                         <div style={{ marginTop: 5 }}>
@@ -122,9 +196,23 @@ function GhostQueue({ containerRef }) {
                                         </div>
                                     )}
                                 </div>
-                                <button className={styles.approveBtn} onClick={() => approveCoin(coin.ticker)}>
-                                    Prune
-                                </button>
+                                {isProtected ? (
+                                    <span
+                                        title="Whitelisted — remove from whitelist first to enable pruning"
+                                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 52, color: '#68D391', opacity: 0.6 }}
+                                    >
+                                        <ShieldOff size={14} />
+                                    </span>
+                                ) : (
+                                    <button
+                                        className={styles.approveBtn}
+                                        onClick={() => approveCoin(coin.ticker, false)}
+                                        disabled={isPruning}
+                                        style={{ opacity: isPruning ? 0.5 : 1, minWidth: 52 }}
+                                    >
+                                        {isPruning ? '…' : 'Prune'}
+                                    </button>
+                                )}
                             </div>
                         );
                     })}

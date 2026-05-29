@@ -5,6 +5,7 @@ import {
     PanelLeftClose, PanelLeft, Brain, Bell, MonitorPlay,
     TrendingUp, BarChart2, Gauge, Heart, PieChart, Map,
     LayoutGrid, Search, Star, Calendar, Flame, Filter,
+    GitCompareArrows,
 } from 'lucide-react';
 import styles from './Sidebar.module.css';
 
@@ -60,6 +61,7 @@ export const Sidebar = () => {
         { id: 'rsi-grid',         label: 'RSI Grid Wall',    icon: BarChart2,  prefetch: () => import('./AnalyticsWidgets/RSIGridWall') },
         { id: 'momentum-pulse',   label: 'Momentum Pulse',   icon: Gauge,      prefetch: () => import('./AnalyticsWidgets/MomentumPulse') },
         { id: 'smart-mood',       label: 'Smart Mood',       icon: Heart,      prefetch: () => import('./AnalyticsWidgets/SmartMoodChart') },
+        { id: 'sync-diag',        label: 'Stream Sync',      icon: GitCompareArrows, prefetch: () => import('./AnalyticsWidgets/StreamSyncDiagnostics') },
         { id: 'calendar',         label: 'Daily Calendar',   icon: Calendar,   prefetch: () => import('./AnalyticsWidgets/DailyCalendarWidget') },
     ];
 

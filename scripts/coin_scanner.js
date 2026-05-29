@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Institutional Conviction Engine - Bidirectional v20.4 (Full-Format Dedup)
+// @name         Institutional Conviction Engine - Bidirectional v20.6 (Watchlist Refresh Guard)
 // @namespace    http://tampermonkey.net/
-// @version      20.4
-// @description  v20.5: Bug-6 fix — screener snap cached by monitor() and used by sendTelemetry() (opening watchlist tab was removing screener rows from DOM, causing screener_total_count: 0 every cycle → DISCOVERY permanently offline). v20.4: Bug fixes — full-format diff, cross-exchange watchlist guard, always-fresh telemetry, Tech Rating whitespace fix, always call processSyncPayload.
+// @version      20.6
+// @description  v20.6: REFRESH_WATCHLIST signal — when backend detects >5m of zero watchlist, immediately re-read panel + re-send telemetry (no wait for next 5-min poll). v20.5: screener snap cached by monitor(), absolute-index column mapping (no hardcoded class names or column order). v20.4: full-format diff, cross-exchange guard, always-fresh telemetry.
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
@@ -72,8 +72,12 @@
     // =========================================================================
 
     function mapHeaders() {
-        document.querySelectorAll('thead th[data-field]').forEach((th, i) => {
-            const field = th.dataset.field;
+        // Iterate ALL th elements so `i` is the true absolute column index,
+        // matching the td index in each row. Using `th[data-field]` only would
+        // give a filtered index that breaks if any header column lacks data-field.
+        document.querySelectorAll('thead th').forEach((th, i) => {
+            const field = th.getAttribute('data-field');
+            if (!field) return;
             for (let k in CONFIG.FIELDS) if (field === CONFIG.FIELDS[k]) colMap[k] = i;
         });
     }
@@ -160,6 +164,20 @@
         const forcePrune     = Array.isArray(serverInfo.force_prune) ? serverInfo.force_prune : [];
         const actionRequired = serverInfo.action_required || null;
         const isForcedUpdate = actionRequired === 'UPDATE_WATCHLIST' || actionRequired === 'RESET_WATCHLIST';
+
+        // ── 0. REFRESH_WATCHLIST ─────────────────────────────────────────────────
+        // Backend detected ≥2 consecutive zero-count snapshots in 5m, meaning the
+        // watchlist panel wasn't readable when sendTelemetry() ran. Re-open the
+        // panel immediately and fire a fresh telemetry snapshot — don't wait for
+        // the next 5-min POLL_MS cycle.
+        if (actionRequired === 'REFRESH_WATCHLIST') {
+            auditLog("WATCHLIST_REFRESH", null, "Backend: zero watchlist extended. Forcing immediate re-read + re-send.", "SYNC");
+            ensureWatchlistPanelOpen().then(() => {
+                updateArea2Watchlist();
+                sendTelemetry();
+            });
+            // Fall through — still process prune/target lists from this response
+        }
 
         // ── 1. Force-prune exchange duplicates (bypasses VETO_PRUNE) ────────────
         if (forcePrune.length > 0) {

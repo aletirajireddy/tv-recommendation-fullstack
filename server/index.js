@@ -1228,6 +1228,23 @@ app.post('/api/market-context', (req, res) => {
         const _forcedTargets = [...new Set([...(feedback.master_targets || []), ...cleanWatchlist])]
             .filter(t => !_rejectedSet.has(t));
 
+        // ── Determine action_required ─────────────────────────────────────────
+        // Priority: dedup-triggered UPDATE_WATCHLIST > REFRESH_WATCHLIST > null
+        // REFRESH_WATCHLIST fires when the watchlist snapshot has been empty for
+        // ≥5 minutes — signals Tampermonkey to immediately re-read the panel and
+        // re-send a fresh snapshot rather than waiting for the next POLL_MS cycle.
+        let _actionRequired = (dedupApplied || feedback.action_required) ? 'UPDATE_WATCHLIST' : null;
+        if (uniqueCount === 0 && !_actionRequired) {
+            const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+            const zeroCheck = db.prepare(
+                `SELECT COUNT(*) AS cnt FROM market_context_logs WHERE timestamp > ? AND watchlist_count = 0`
+            ).get(fiveMinAgo);
+            if (zeroCheck.cnt >= 2) {
+                _actionRequired = 'REFRESH_WATCHLIST';
+                console.warn(`[WATCHLIST-ENGINE] 🔄 REFRESH_WATCHLIST — ${zeroCheck.cnt} consecutive zero-count snapshots in last 5m`);
+            }
+        }
+
         res.json({
             success:          true,
             message:          'Market Context Telemetry Saved',
@@ -1236,7 +1253,7 @@ app.post('/api/market-context', (req, res) => {
             dedup_applied:    dedupApplied,
             clean_watchlist:  cleanWatchlist,
             rejected_tickers: rejectedTickers,
-            action_required:  (dedupApplied || feedback.action_required) ? 'UPDATE_WATCHLIST' : null,
+            action_required:  _actionRequired,
             master_targets:   _forcedTargets,   // duplicates physically removed
             prune_list:       combinedForcePrune, // rejected dupes forced into prune list
             force_prune:      [...new Set([...rejectedTickers, ...(feedback.force_prune || [])])], // explicit field for scanners that key on it
@@ -2076,6 +2093,193 @@ app.get('/api/source-health', (req, res) => {
     }
 });
 
+// ── STREAM SYNC DIAGNOSTICS (read-only) ──────────────────────────────────────
+// Visualises the gap between Stream B (the authoritative watchlist) and what
+// Stream A (macro scan) + Stream D (per-coin technicals) actually contain.
+//
+// A "cycle" = one Stream B publish (a market_context_logs row). For each cycle:
+//   • find the nearest Stream A scan within ±tolerance
+//   • collect all distinct Stream D tickers bucketed within [t0 ± tolerance]
+//   • diff both coin-sets against B's list (the reference)
+// The headline signal is A↔D divergence *within B's list* — coins B asked for
+// that A and D disagree on.
+//
+// PURE DERIVED VIEW: no writes, no socket emits, no migrations. All queries are
+// index-backed and bounded (≤40 cycles, ≤8h window, 30s in-memory cache).
+const _streamSyncCache = new Map();
+const STREAM_SYNC_CACHE_TTL = 30_000;
+
+// Strip exchange prefix ("BINANCE:XRPUSDT.P") then USDT/.P suffix → base ("XRP").
+function _syncCleanBase(t) {
+    if (!t) return '';
+    const colon = t.indexOf(':');
+    const sym = colon >= 0 ? t.slice(colon + 1) : t;
+    return sym.replace(/USDT(\.P)?$/i, '').replace(/\.P$/i, '').toUpperCase();
+}
+
+app.get('/api/stream-sync', (req, res) => {
+    try {
+        const windowMin    = Math.min(Math.max(parseInt(req.query.window_min)    || 120, 30), 480);
+        const toleranceMin = Math.min(Math.max(parseInt(req.query.tolerance_min) || 5,    1),  15);
+
+        const cacheKey = `${windowMin}:${toleranceMin}`;
+        const cached = _streamSyncCache.get(cacheKey);
+        if (cached && Date.now() - cached.ts < STREAM_SYNC_CACHE_TTL) {
+            return res.json(cached.payload);
+        }
+
+        const nowMs    = Date.now();
+        const sinceMs  = nowMs - windowMin * 60 * 1000;
+        const sinceISO = new Date(sinceMs).toISOString();
+        const tolMs    = toleranceMin * 60 * 1000;
+
+        // ── Stream B cycles (reference list) — 40 most recent in window ──────
+        const bRows = db.prepare(`
+            SELECT id, timestamp, watchlist_count, payload_json
+            FROM market_context_logs
+            WHERE timestamp >= ?
+            ORDER BY timestamp DESC
+            LIMIT 40
+        `).all(sinceISO);
+
+        // Stream A scans in window (+tolerance lead) — small set, id+ts only.
+        const aScans = db.prepare(`
+            SELECT id, timestamp FROM scans
+            WHERE timestamp >= ?
+            ORDER BY timestamp ASC
+        `).all(new Date(sinceMs - tolMs).toISOString());
+        const aScanTs = aScans.map(s => ({ id: s.id, t: new Date(s.timestamp).getTime(), iso: s.timestamp }));
+
+        // Stream D distinct (ticker, bucket-ts) across window — one indexed query.
+        const dRows = db.prepare(`
+            SELECT DISTINCT ticker, ts FROM coin_metric_history
+            WHERE ts >= ?
+        `).all(sinceMs - tolMs);
+
+        // Lazy-parse scan_results only for scans we actually match (cached per id).
+        const scanCoinCache = new Map();
+        function getScanCoins(scanId) {
+            if (scanCoinCache.has(scanId)) return scanCoinCache.get(scanId);
+            const row = db.prepare('SELECT raw_data FROM scan_results WHERE scan_id = ?').get(scanId);
+            const coins = new Set();
+            if (row) {
+                try {
+                    const p = JSON.parse(row.raw_data);
+                    for (const item of (p.results || [])) {
+                        const c = _syncCleanBase(item.datakey || item.ticker || '');
+                        if (c) coins.add(c);
+                    }
+                } catch { /* malformed blob — empty set */ }
+            }
+            scanCoinCache.set(scanId, coins);
+            return coins;
+        }
+
+        const cycles = bRows.map(b => {
+            const t0 = new Date(b.timestamp).getTime();
+
+            // B coins (already clean "short" base symbols)
+            let bCoins = [];
+            try {
+                const pj = JSON.parse(b.payload_json);
+                bCoins = [...new Set((pj.watchlist_active_snapshot || [])
+                    .map(w => _syncCleanBase(w.short || w.full || ''))
+                    .filter(Boolean))];
+            } catch { /* ignore */ }
+
+            // Nearest Stream A scan within ±tolerance
+            let bestA = null, bestADiff = Infinity;
+            for (const s of aScanTs) {
+                const diff = Math.abs(s.t - t0);
+                if (diff < bestADiff && diff <= tolMs) { bestADiff = diff; bestA = s; }
+            }
+            const aCoins = bestA ? [...getScanCoins(bestA.id)] : [];
+            const aHas   = !!bestA;
+
+            // Stream D buckets within ±tolerance of t0
+            const dSet = new Set();
+            const dBucketTs = new Set();
+            for (const d of dRows) {
+                if (Math.abs(d.ts - t0) <= tolMs) {
+                    const c = _syncCleanBase(d.ticker);
+                    if (c) dSet.add(c);
+                    dBucketTs.add(d.ts);
+                }
+            }
+            const dCoins = [...dSet];
+            const dHas   = dCoins.length > 0;
+
+            const aSetC = new Set(aCoins);
+            const dSetC = new Set(dCoins);
+            const bSetC = new Set(bCoins);
+
+            // Diffs anchored to B's list
+            const missingInA = bCoins.filter(c => !aSetC.has(c));
+            const missingInD = bCoins.filter(c => !dSetC.has(c));
+            // A↔D divergence within B's list (the headline signal)
+            const inAnotD   = bCoins.filter(c => aSetC.has(c) && !dSetC.has(c));
+            const inDnotA   = bCoins.filter(c => dSetC.has(c) && !aSetC.has(c));
+            const inNeither = bCoins.filter(c => !aSetC.has(c) && !dSetC.has(c));
+            // Orphans — present downstream but NOT in B (stale/noise)
+            const extraInA = aCoins.filter(c => !bSetC.has(c));
+            const extraInD = dCoins.filter(c => !bSetC.has(c));
+
+            let status;
+            if (b.watchlist_count === 0 || bCoins.length === 0)            status = 'EMPTY_B';
+            else if (!aHas || !dHas)                                       status = 'STALE';
+            else if (inAnotD.length || inDnotA.length || inNeither.length) status = 'DIVERGED';
+            else                                                           status = 'SYNCED';
+
+            return {
+                cycleId:      b.id,
+                ts:           b.timestamp,
+                bCount:       bCoins.length,
+                bCoins,
+                aTs:          bestA ? bestA.iso : null,
+                aOffsetSec:   bestA ? Math.round((bestA.t - t0) / 1000) : null,
+                aCount:       aCoins.length,
+                aCoins,
+                aHas,
+                dCount:       dCoins.length,
+                dCoins,
+                dHas,
+                dBucketCount: dBucketTs.size,
+                missingInA, missingInD,
+                inAnotD, inDnotA, inNeither,
+                extraInA, extraInD,
+                status,
+            };
+        });
+
+        // Event log — surfaced markers (empty-B snapshots) newest-first
+        const events = [];
+        for (const b of bRows) {
+            if (b.watchlist_count === 0) {
+                events.push({ ts: b.timestamp, type: 'EMPTY_B', message: 'Stream B published 0 coins' });
+            }
+        }
+
+        const payload = {
+            generatedAt:  new Date().toISOString(),
+            windowMin, toleranceMin,
+            cycleCount:   cycles.length,
+            cycles,            // newest-first
+            events:       events.slice(0, 20),
+            summary: {
+                synced:   cycles.filter(c => c.status === 'SYNCED').length,
+                diverged: cycles.filter(c => c.status === 'DIVERGED').length,
+                emptyB:   cycles.filter(c => c.status === 'EMPTY_B').length,
+                stale:    cycles.filter(c => c.status === 'STALE').length,
+            },
+        };
+        _streamSyncCache.set(cacheKey, { ts: Date.now(), payload });
+        res.json(payload);
+    } catch (e) {
+        console.error('[stream-sync]', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // 3C. PARTICIPATION PULSE (Analytics for Scout Screener)
 app.get('/api/analytics/participation-pulse', (req, res) => {
     try {
@@ -2174,7 +2378,27 @@ app.get('/api/analytics/participation-pulse', (req, res) => {
             };
         });
 
-        res.json({ timeline });
+        // ── Forward-fill zero-watchlist data points ───────────────────────────
+        // watchlist_count = 0 means the watchlist DOM wasn't readable at that
+        // snapshot instant (panel closed, race condition). Carrying the last
+        // known good watchlist values forward prevents cliff-drops to zero on
+        // the chart and stops the header pill from falsely showing "0 coins".
+        let lastGoodWl = null;
+        const filledTimeline = timeline.map(p => {
+            if (p.watchlist_count > 0) {
+                lastGoodWl = {
+                    watchlist_count: p.watchlist_count,
+                    wl_bull:         p.wl_bull,
+                    wl_bear:         p.wl_bear,
+                    wl_net:          p.wl_net,
+                };
+                return p;
+            }
+            // 0-count snapshot: substitute carried-forward watchlist state
+            return lastGoodWl ? { ...p, ...lastGoodWl } : p;
+        });
+
+        res.json({ timeline: filledTimeline });
     } catch (e) {
         console.error("Participation Pulse Error:", e);
         res.status(500).json({ error: e.message });
@@ -2345,13 +2569,26 @@ app.get('/api/ghosts/queue', (req, res) => {
         // Re-score all pending ghosts (fast — runs in transaction, typically <5ms)
         GhostScoringEngine.scoreAllGhosts();
 
-        const queue = db.prepare(`
-            SELECT ticker, reason, queued_at, confidence_score, score_breakdown
-            FROM ghost_approval_queue
+        // Proactively evict any whitelisted coins that may have been queued before
+        // the coin was added to the whitelist (defensive cleanup alongside Fix A).
+        db.prepare(`
+            DELETE FROM ghost_approval_queue
             WHERE is_approved = 0
-            ORDER BY confidence_score DESC NULLS LAST, queued_at DESC
+              AND ticker IN (SELECT ticker FROM coin_whitelist)
+        `).run();
+
+        // Fetch remaining queue with a whitelisted flag so the UI can show a
+        // shield badge on any entry that somehow still appears (belt-and-suspenders).
+        const queue = db.prepare(`
+            SELECT g.ticker, g.reason, g.queued_at, g.confidence_score, g.score_breakdown,
+                   CASE WHEN w.ticker IS NOT NULL THEN 1 ELSE 0 END AS is_whitelisted
+            FROM ghost_approval_queue g
+            LEFT JOIN coin_whitelist w ON w.ticker = g.ticker
+            WHERE g.is_approved = 0
+            ORDER BY g.confidence_score DESC NULLS LAST, g.queued_at DESC
         `).all().map(row => ({
             ...row,
+            is_whitelisted:  row.is_whitelisted === 1,
             score_breakdown: row.score_breakdown ? JSON.parse(row.score_breakdown) : null,
         }));
 
@@ -2365,6 +2602,22 @@ app.post('/api/ghosts/approve', (req, res) => {
     try {
         const { ticker } = req.body;
         if (!ticker) return res.status(400).json({ error: "Ticker required" });
+
+        // Block manual prune of whitelisted coins — they are immune to ghost
+        // pruning by design. The UI shields the button; this is the server-side guard.
+        const isWhitelisted = db.prepare(
+            "SELECT 1 FROM coin_whitelist WHERE ticker = ?"
+        ).get(ticker);
+        if (isWhitelisted) {
+            // Clean it up from the queue (shouldn't be there, but fix it now)
+            db.prepare("DELETE FROM ghost_approval_queue WHERE ticker = ?").run(ticker);
+            io.emit('ghost-update', { action: 'whitelist-evict', ticker });
+            return res.status(409).json({
+                error: 'WHITELISTED',
+                message: `${ticker} is on the whitelist and cannot be pruned. Remove it from the whitelist first.`,
+            });
+        }
+
         db.prepare("UPDATE ghost_approval_queue SET is_approved = 1 WHERE ticker = ?").run(ticker);
         io.emit('ghost-update', { action: 'approve', ticker }); // push to all clients
         res.json({ success: true, ticker });
@@ -2375,9 +2628,25 @@ app.post('/api/ghosts/approve', (req, res) => {
 
 app.post('/api/ghosts/approve-all', (req, res) => {
     try {
-        db.prepare("UPDATE ghost_approval_queue SET is_approved = 1 WHERE is_approved = 0").run();
-        io.emit('ghost-update', { action: 'approve-all' }); // push to all clients
-        res.json({ success: true });
+        // Exclude whitelisted coins — approve-all is a bulk prune, but user-pinned
+        // coins must never be removed via a bulk action. Individual approve still
+        // works for them if the user explicitly clicks their row's Prune button.
+        const result = db.prepare(`
+            UPDATE ghost_approval_queue
+            SET is_approved = 1
+            WHERE is_approved = 0
+              AND ticker NOT IN (SELECT ticker FROM coin_whitelist)
+        `).run();
+
+        const skipped = db.prepare(`
+            SELECT COUNT(*) AS cnt
+            FROM ghost_approval_queue
+            WHERE is_approved = 0
+              AND ticker IN (SELECT ticker FROM coin_whitelist)
+        `).get();
+
+        io.emit('ghost-update', { action: 'approve-all' });
+        res.json({ success: true, approved: result.changes, skipped: skipped.cnt });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -2388,8 +2657,28 @@ app.post('/api/ghosts/toggle-auto', (req, res) => {
         const { enabled } = req.body;
         const val = enabled ? '1' : '0';
         db.prepare("INSERT INTO system_settings (key, value) VALUES ('ghost_auto_approve', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(val);
-        io.emit('ghost-update', { action: 'toggle-auto', enabled }); // push to all clients
-        res.json({ success: true, auto_approve: enabled });
+
+        let cleared = 0;
+        if (enabled) {
+            // Auto-Prune was just turned ON — immediately approve every pending
+            // non-whitelisted ghost so the queue drains right away.
+            // Without this, coins queued before the toggle was flipped sit
+            // indefinitely because the scan engine only bypasses queue insertion
+            // for NEW ghosts, never retroactively clears old entries.
+            const result = db.prepare(`
+                UPDATE ghost_approval_queue
+                SET is_approved = 1
+                WHERE is_approved = 0
+                  AND ticker NOT IN (SELECT ticker FROM coin_whitelist)
+            `).run();
+            cleared = result.changes;
+            if (cleared > 0) {
+                console.log(`[GHOST-ENGINE] 🔥 Auto-Prune enabled — bulk-approved ${cleared} pending ghost(s)`);
+            }
+        }
+
+        io.emit('ghost-update', { action: 'toggle-auto', enabled, cleared });
+        res.json({ success: true, auto_approve: enabled, cleared });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -2446,13 +2735,25 @@ app.post('/api/whitelist', (req, res) => {
             ON CONFLICT(ticker) DO UPDATE SET exchange = excluded.exchange
         `).run(ticker, exchange);
 
+        // Immediately evict from ghost queue — a whitelisted coin must never
+        // be prunable, so there's no point keeping it in the approval queue.
+        // The scan engine's isProtected guard also prevents re-addition on the
+        // next cycle, so this cleanup is permanent until the coin is un-whitelisted.
+        const evicted = db.prepare(
+            "DELETE FROM ghost_approval_queue WHERE ticker = ?"
+        ).run(ticker);
+        if (evicted.changes > 0) {
+            console.log(`[WHITELIST] 🛡️  Evicted ${ticker} from ghost queue (whitelisted)`);
+            io.emit('ghost-update', { action: 'whitelist-evict', ticker });
+        }
+
         // Signal the next generateScannerFeedback() call to include
         // action_required: 'UPDATE_WATCHLIST' so Tampermonkey bypasses its
         // 15-min Automa cooldown and pushes the new coin to TV immediately.
         _pendingWhitelistSync = true;
 
         io.emit('whitelist-update', { action: 'add', ticker, exchange });
-        res.json({ success: true, ticker, exchange });
+        res.json({ success: true, ticker, exchange, evicted_from_queue: evicted.changes > 0 });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

@@ -45,6 +45,7 @@ const ATRRaceWidget             = lazy(() => import('./components/AnalyticsWidge
 const SmartMoodChart            = lazy(() => import('./components/AnalyticsWidgets/SmartMoodChart').then(m => ({ default: m.SmartMoodChart })));
 const MomentumPulse             = lazy(() => import('./components/AnalyticsWidgets/MomentumPulse').then(m => ({ default: m.MomentumPulse })));
 const RSIGridWall               = lazy(() => import('./components/AnalyticsWidgets/RSIGridWall').then(m => ({ default: m.RSIGridWall })));
+const StreamSyncDiagnostics     = lazy(() => import('./components/AnalyticsWidgets/StreamSyncDiagnostics').then(m => ({ default: m.StreamSyncDiagnostics })));
 
 // Thin placeholder shown while the timeline is loading — same visual weight
 // as a widget skeleton but without mounting the actual widget (and firing its fetch).
@@ -279,6 +280,15 @@ function App() {
           <section id="section-smart-mood" className={styles.widgetSection}>
             <LazyWidget minHeight={420}>
               <SmartMoodChart />
+            </LazyWidget>
+          </section>
+
+          {/* SECTION: STREAM SYNC DIAGNOSTICS
+              Read-only observability — visualises B→A·D cycle alignment to spot
+              when downstream streams fall out of sync with the Stream B list. */}
+          <section id="section-sync-diag" className={styles.widgetSection}>
+            <LazyWidget minHeight={460}>
+              <StreamSyncDiagnostics />
             </LazyWidget>
           </section>
 

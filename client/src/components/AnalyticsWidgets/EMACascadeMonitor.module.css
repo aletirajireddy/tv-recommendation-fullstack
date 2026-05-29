@@ -387,6 +387,16 @@
 .dotBear    { background: #fc8181; box-shadow: 0 0 4px rgba(252,129,129,0.6); }
 .dotNeutral { background: var(--border); }
 
+/* Whitelist-only entries (no Stream D data) — pin emoji slot */
+.wlPinDot {
+    display: inline-block;
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1;
+    width: 14px;
+    text-align: center;
+}
+
 .coinItemName {
     flex: 1;
     font-weight: 700;

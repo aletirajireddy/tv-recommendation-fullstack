@@ -30,7 +30,7 @@ Editing `scripts/coin_scanner.js`, `scripts/technical_watchlist_coin_scanner.js`
 
 | File | Browser script name | Current version |
 |---|---|---|
-| `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional | **v20.4** |
+| `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional | **v20.6** |
 | `scripts/technical_watchlist_coin_scanner.js` | (Stream D / technical watchlist scanner) | — |
 | `scripts/indicators/tamper_streamA.txt` | Stream A macro scanner | — |
 | `scripts/indicators/tamper_streamB.txt` | Stream B reference | — |
@@ -355,6 +355,7 @@ function _extractStreamDField(data, pattern, resolutionMin) {
 | `/api/level-reactions` | various | Level reaction events |
 | `/api/validator/trials` | various | 3rd Umpire trial list |
 | `/api/validator/stats` | — | Win rate statistics |
+| `/api/stream-sync` | `window_min`, `tolerance_min` | **Read-only** B→A·D cycle alignment diagnostics (no writes) |
 | `/api/calendar/daily` | — | Daily calendar events |
 | `/api/calendar/day/:date` | — | Single-day detail |
 | `/api/coins/age` | — | Coin lifecycle ages |
@@ -445,6 +446,7 @@ function _extractStreamDField(data, pattern, resolutionMin) {
 | RSI Grid Wall | `section-rsi-grid` | `RSIGridWall.jsx` | `rsiGridWall_prefs` | `/api/rsi-grid-wall` |
 | Momentum Pulse | `section-momentum-pulse` | `MomentumPulse.jsx` | `momentumPulse_prefs` | `/api/momentum-pulse` |
 | Smart Mood | `section-smart-mood` | `SmartMoodChart.jsx` | `smartMood_prefs` | `/api/smart-mood-chart` |
+| Stream Sync | `section-sync-diag` | `StreamSyncDiagnostics.jsx` | `streamSync_prefs` | `/api/stream-sync` |
 | Daily Calendar | `section-calendar` | `DailyCalendarWidget.jsx` | `dailyCalendar_prefs` | `/api/calendar/daily` |
 | Ghost Coins | live-only, no anchor | `GhostCoinWidget.jsx` | — | `/api/ghosts/queue` |
 | Coin Age | `section-coin-age` (live-only) | `CoinAgeWidget.jsx` | — | `/api/coins/age` |
