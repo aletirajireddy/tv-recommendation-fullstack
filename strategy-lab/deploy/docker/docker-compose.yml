@@ -1,0 +1,33 @@
+# Docker Compose for VM2 / Coolify. Runs the archiver continuously, isolated.
+#
+# IMPORTANT:
+#   • The live DB is mounted READ-ONLY (:ro) — the container physically cannot
+#     write to your live data.
+#   • The archive is stored in a named volume so it survives container restarts.
+#   • Set LIVE_DB_PATH on the host to point at your live dashboard_v3.db (or a copy).
+#
+# Usage (from strategy-lab root):
+#   LIVE_DB=/abs/path/to/dashboard_v3.db docker compose -f deploy/docker/docker-compose.yml up -d --build
+#
+# In Coolify: point it at this compose file; set the LIVE_DB bind path + env.
+
+services:
+  archiver:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: strategy-lab
+    restart: unless-stopped
+    environment:
+      LIVE_DB_PATH: /live/dashboard_v3.db
+      ARCHIVE_DB_PATH: /app/data/analytics_archive.db
+      ARCHIVE_ENABLED: "true"
+      ARCHIVE_INTERVAL_SEC: "120"
+      ARCHIVE_INCREMENTAL_TABLES: "coin_metric_history,market_context_logs"
+      ARCHIVE_SNAPSHOT_TABLES: "validation_trials,validation_state_log,pattern_statistics"
+    volumes:
+      - ${LIVE_DB:-../../../dashboard_v3.db}:/live/dashboard_v3.db:ro
+      - strategy_lab_data:/app/data
+
+volumes:
+  strategy_lab_data:

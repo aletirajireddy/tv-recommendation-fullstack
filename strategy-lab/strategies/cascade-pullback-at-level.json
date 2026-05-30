@@ -1,0 +1,16 @@
+{
+  "name": "cascade-pullback-at-level",
+  "description": "Long when 1h+15m EMA cascade is bullish and HELD for 3 buckets, RSI(15m) pulls back into 45-55, and price sits within 0.5% of a daily key level while ATR(15m) is calm. The knobs below are exactly what the self-learning loop will tune later.",
+  "entry": {
+    "emaCascade":  { "tfs": ["h1", "m15"], "dir": "bull", "holdBuckets": 3 },
+    "rsiPullback": { "tf": "m15", "zone": [45, 55] },
+    "atLevel":     { "source": "daily", "maxDistPct": 0.5 },
+    "atrCeiling":  { "tf": "m15", "maxPct": 2.5 }
+  },
+  "exit": {
+    "takeProfitPct": 1.5,
+    "stopLossPct":   0.8,
+    "cascadeFlip":   true,
+    "maxHoldMin":    240
+  }
+}

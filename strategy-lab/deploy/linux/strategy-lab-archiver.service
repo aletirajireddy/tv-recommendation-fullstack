@@ -1,0 +1,18 @@
+# systemd one-shot unit — runs a single archive pass.
+# Paired with strategy-lab-archiver.timer for scheduling.
+# Install: see deploy/linux/install-systemd.sh
+#
+# Edit WorkingDirectory + ExecStart paths to match your deployment, OR let
+# install-systemd.sh substitute them automatically.
+
+[Unit]
+Description=strategy-lab archiver (single pass)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__ROOT__
+ExecStart=__NODE__ src/archive/runArchiver.js --once
+# .env in WorkingDirectory supplies ARCHIVE_ENABLED, LIVE_DB_PATH, etc.
+Nice=10

@@ -1,0 +1,8 @@
+# Alternative to systemd: a plain cron entry (every 2 minutes).
+# Edit paths, then:  crontab -e  and paste the line below.
+#
+# Each run is independent and incremental, so cron is naturally crash-resilient.
+# Note: cron does NOT catch up runs missed while the machine was off — systemd
+# (Persistent=true) does. For an always-on VM either is fine.
+
+*/2 * * * * cd /opt/strategy-lab && /usr/bin/node src/archive/runArchiver.js --once >> /var/log/strategy-lab-archiver.log 2>&1

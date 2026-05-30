@@ -1,0 +1,9 @@
+{
+  "_comment": "Defaults are overridden by environment variables (.env). See src/util/config.js for precedence.",
+  "liveDbPath": "../dashboard_v3.db",
+  "archiveDbPath": "./data/analytics_archive.db",
+  "archiveIntervalSec": 120,
+  "incrementalTables": ["coin_metric_history", "market_context_logs"],
+  "snapshotTables": ["validation_trials", "validation_state_log", "pattern_statistics"],
+  "archiveEnabled": false
+}

@@ -1,0 +1,22 @@
+{
+  "name": "strategy-lab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-contained, plug-and-play strategy backtest + parallel self-learning lab. Reads a live trading DB READ-ONLY, writes only to its own analytics_archive.db. Nothing here touches the source project.",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "archive:once": "node src/archive/runArchiver.js --once",
+    "archive:loop": "node src/archive/runArchiver.js",
+    "backtest": "node src/backtest/runBacktest.js",
+    "doctor": "node src/doctor.js",
+    "health": "node src/health.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

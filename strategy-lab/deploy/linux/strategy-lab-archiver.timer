@@ -1,0 +1,18 @@
+# systemd timer — fires the archiver every 2 minutes.
+# Persistent=true means: if the machine was OFF, run once immediately on boot to
+# catch up (the archiver is incremental, so one catch-up run grabs everything
+# still present in the live DB).
+#
+# Install: see deploy/linux/install-systemd.sh
+
+[Unit]
+Description=Run strategy-lab archiver every 2 minutes
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=120
+Persistent=true
+AccuracySec=10
+
+[Install]
+WantedBy=timers.target
