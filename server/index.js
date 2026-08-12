@@ -4309,6 +4309,34 @@ app.get('/api/analytics/alpha-squad', (req, res) => {
 // ============================================================================
 // STREAM C - SMART LEVELS WEBHOOK
 // ============================================================================
+// Liveness probe for the Stream C webhook.
+//
+// The ingestion route below is POST-only, so ANY GET — a browser address bar, a
+// curl sanity check, or TradingView's own webhook-URL validator — returns 404
+// and reads as "endpoint not reachable" even when POST ingestion is working
+// perfectly. This sibling route answers GET with a 200 and useful diagnostics so
+// the URL can be verified from anywhere without sending a fake alert.
+app.get('/api/webhook/smart-levels', (req, res) => {
+    try {
+        const last = db.prepare(
+            'SELECT ticker, timestamp FROM smart_level_events ORDER BY id DESC LIMIT 1'
+        ).get();
+        const ageMin = last
+            ? Math.round((Date.now() - new Date(last.timestamp).getTime()) / 60000)
+            : null;
+        res.json({
+            ok: true,
+            endpoint: '/api/webhook/smart-levels',
+            accepts: 'POST application/json',
+            note: 'Endpoint is live. Stream C alerts are event-driven — a quiet period is normal.',
+            last_event: last ? { ticker: last.ticker, timestamp: last.timestamp, age_min: ageMin } : null,
+            server_time: new Date().toISOString(),
+        });
+    } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
 app.post('/api/webhook/smart-levels', (req, res) => {
     try {
         const payload = req.body;

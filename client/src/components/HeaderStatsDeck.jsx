@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useMemo } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
-import { TrendingUp, TrendingDown, Minus, Activity, Wifi } from 'lucide-react';
+import { usePolledFetch } from '../hooks/usePolledFetch';
+import { TrendingUp, TrendingDown, Minus, Activity, Wifi, AlertTriangle } from 'lucide-react';
 import GenieSmart from '../services/GenieSmart';
 import TimeService from '../services/TimeService';
 import styles from './HeaderStatsDeck.module.css';
@@ -64,6 +65,60 @@ export function HeaderStatsDeck() {
             <SystemHealthGrid />
             <div className={styles.divider} />
             <SystemTimeCard />
+        </div>
+    );
+}
+
+/**
+ * Watchlist sync alarm — EXCEPTION ONLY, renders nothing when healthy.
+ *
+ * The A/B/C/D indicators above measure stream FRESHNESS ("is data arriving"),
+ * which cannot detect a broken write path. During the 76 days PUMP was missing
+ * from the TradingView watchlist every one of those dots was green — data was
+ * flowing perfectly, the backend just couldn't get its targets INTO TradingView.
+ *
+ * This surfaces the other question: "does the watchlist actually contain what
+ * we asked for?" It stays invisible while healthy so it never becomes noise —
+ * if you can see it, something needs attention.
+ */
+function WatchlistSyncAlarm() {
+    const { data } = usePolledFetch(() => '/api/watchlist/sync-status', { intervalMs: 60_000 });
+
+    if (!data || data.healthy) return null;   // silent unless something is wrong
+
+    const wipe        = data.active_wipe;
+    const outstanding = data.outstanding || [];
+
+    const isWipe = !!wipe;
+    const color  = isWipe ? '#EF4444' : '#F59E0B';
+    const label  = isWipe ? 'WATCHLIST WIPED' : 'SYNC PENDING';
+
+    const detail = isWipe
+        ? `Automa cleared ${wipe.prev_count ?? '?'} coins and hasn't restored them — ${wipe.restore_attempts} restore attempt(s)`
+        : `${outstanding.length} target(s) not in watchlist: ` +
+          outstanding.slice(0, 3).map(o => o.ticker.replace(/^[A-Z]+:/, '').replace(/USDT\.P$/, '')).join(', ') +
+          (outstanding.length > 3 ? `+${outstanding.length - 3}` : '');
+
+    return (
+        <div
+            title={detail}
+            style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                marginTop: 4, padding: '2px 6px',
+                borderRadius: 4,
+                background: `${color}1A`,
+                border: `1px solid ${color}55`,
+                color,
+                fontSize: 10, fontWeight: 700,
+                letterSpacing: '0.02em',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}
+        >
+            <AlertTriangle size={10} style={{ flexShrink: 0 }} />
+            <span>{label}</span>
+            <span style={{ fontWeight: 500, opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {isWipe ? `· ${wipe.restore_attempts} retry` : `· ${outstanding.length}`}
+            </span>
         </div>
     );
 }
@@ -140,6 +195,9 @@ function SystemHealthGrid() {
                     </div>
                 ))}
             </div>
+
+            {/* Write-path alarm — invisible unless the watchlist is out of sync */}
+            <WatchlistSyncAlarm />
         </div>
     );
 }
