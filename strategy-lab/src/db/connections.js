@@ -21,6 +21,12 @@ function openArchive(archiveDbPath) {
     const db = new Database(archiveDbPath);
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
+    // The archive is a warehouse copy, not a transactional store. Enforcing FKs
+    // here would impose a table ordering (children after parents) that the
+    // incremental/snapshot split doesn't guarantee — e.g. validation_state_log
+    // is copied before validation_trials. Referential integrity is already
+    // guaranteed by the live DB we copy from.
+    db.pragma('foreign_keys = OFF');
     return db;
 }
 

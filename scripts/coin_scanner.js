@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Institutional Conviction Engine - Bidirectional v20.6 (Watchlist Refresh Guard)
+// @name         Institutional Conviction Engine - Bidirectional v20.7 (Automa Verify & Self-Heal)
 // @namespace    http://tampermonkey.net/
-// @version      20.6
-// @description  v20.6: REFRESH_WATCHLIST signal — when backend detects >5m of zero watchlist, immediately re-read panel + re-send telemetry (no wait for next 5-min poll). v20.5: screener snap cached by monitor(), absolute-index column mapping (no hardcoded class names or column order). v20.4: full-format diff, cross-exchange guard, always-fresh telemetry.
+// @version      20.7
+// @description  v20.7: post-Automa verification — after firing Automa the script re-reads the watchlist and detects WIPE (cleared but not re-added) or PARTIAL ADD, then auto-retries with backoff; REFRESH_WATCHLIST recursion guard stops the telemetry storm. v20.6: REFRESH_WATCHLIST signal. v20.5: screener snap cached by monitor(), absolute-index column mapping. v20.4: full-format diff, cross-exchange guard, always-fresh telemetry.
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
@@ -22,6 +22,30 @@
         GHOST_GRACE_MINUTES: 15,
         GRADUATION_LOCK_MINUTES: 30,
         AUTOMA_COOLDOWN_MINUTES: 15,
+        // ── v20.7: Automa verification ──────────────────────────────────────
+        // Automa's watchlist update is DESTRUCTIVE and NON-ATOMIC: it clears the
+        // TradingView watchlist, then types the new comma-separated list. When the
+        // second half fails (observed: the Enter keystroke doesn't land) the
+        // watchlist is left EMPTY and the engine goes blind. Historical evidence:
+        // 24/24 zero-count runs began from a populated watchlist, including one
+        // 33 -> 0 -> 15 partial add and a 179-minute blackout.
+        // We cannot make Automa atomic, so instead we CHECK ITS WORK and retry.
+        // Timing note: Automa does NOT start until the opened tab has fully loaded,
+        // then works like a human — locating each DOM node, pausing, clicking. A
+        // clear + re-add of a large list therefore takes far longer than a single
+        // fixed delay can predict. So we do not check once; we POLL, starting only
+        // after the tab has had time to load and Automa to boot, and we keep waiting
+        // while it is plainly mid-run (the watchlist is EMPTY between the clear and
+        // the add — checking during that gap would false-alarm a wipe).
+        AUTOMA_VERIFY_START_MS: 45000,   // don't even look before this (page load + Automa boot)
+        AUTOMA_VERIFY_POLL_MS: 10000,    // re-check cadence once we start looking
+        AUTOMA_VERIFY_MAX_MS: 240000,    // ceiling; +1s per coin is added on top
+        AUTOMA_MAX_RETRIES: 3,           // give up after this many, let backend take over
+        AUTOMA_PARTIAL_RATIO: 0.7,       // <70% of expected coins = partial-add failure
+        // Guard against the v20.6 REFRESH_WATCHLIST feedback loop: that handler
+        // calls sendTelemetry(), whose response can request another refresh —
+        // unbounded recursion (observed: 74 empty snapshots in 13 minutes).
+        REFRESH_MIN_INTERVAL_MS: 60000,
         BACKEND_URL: "http://localhost:3000/qualified-pick",
         FIELDS: {
             SYMBOL: "TickerUniversal",
@@ -48,6 +72,13 @@
     // cache ensures the last-known screener state is always included in telemetry.
     let lastScreenerSnap  = [];
     let colMap = {};
+
+    // ── v20.7 Automa verification state ─────────────────────────────────────
+    let automaVerifyTimer   = null;  // pending verification poll
+    let automaRetryTimer    = null;  // pending re-push after a failed verification
+    let automaAttempt       = 0;     // consecutive failed pushes for the current target set
+    let automaExpectedList  = [];    // what we last asked Automa to install
+    let lastRefreshAt       = 0;     // REFRESH_WATCHLIST recursion guard
 
     // =========================================================================
     // 🗂️ PRECISION AUDIT LOGGER
@@ -150,6 +181,153 @@
         });
     }
 
+    // =========================================================================
+    // 🚑 v20.7 — AUTOMA PUSH + VERIFICATION
+    // =========================================================================
+    // Single entry point for triggering Automa. Every push now schedules a
+    // verification pass so a silent failure can never go unnoticed again.
+
+    function fireAutoma(targets, note) {
+        if (!Array.isArray(targets) || targets.length === 0) {
+            auditLog("AUTOMA_SKIPPED", null, "Refusing to push an EMPTY target list (would wipe the watchlist).", "PRUNE");
+            return;
+        }
+        // Cancel any queued retry. The backend can issue an UPDATE_WATCHLIST while
+        // a script-side retry is still counting down; without this, two Automa tabs
+        // fire moments apart and their clear/add sequences interleave — which can
+        // produce exactly the wipe we're trying to prevent.
+        if (automaRetryTimer)  { clearTimeout(automaRetryTimer);  automaRetryTimer  = null; }
+        if (automaVerifyTimer) { clearTimeout(automaVerifyTimer); automaVerifyTimer = null; }
+
+        GM_setClipboard(targets.join(','));
+        auditLog("AUTOMA_TRIGGERED", null, `Copied ${targets.length} coins. Firing new tab.${note || ''}`, "SYNC");
+        GM_openInTab("https://www.tradingview.com/cex-screener/lEINSjG1/", { active: false, insert: true, setParent: true });
+
+        window.lastAutomaTriggerMs = Date.now();
+        automaExpectedList = targets.slice();
+        saveState();
+        scheduleAutomaVerify();
+    }
+
+    // TradingView may render a watchlist row with or without the exchange prefix
+    // ("BINANCE:BTCUSDT.P" vs "BTCUSDT.P"), and master_targets is always fully
+    // qualified. Comparing raw strings would report every coin as missing, so all
+    // comparisons run on the BASE symbol. Counting rows instead would be worse
+    // still — 30 rows of the WRONG coins would pass a count check.
+    function _baseSymbol(full) {
+        if (!full) return '';
+        const s = String(full).trim();
+        return (s.includes(':') ? s.split(':')[1] : s).toUpperCase();
+    }
+
+    /** Compare the live watchlist against what we asked Automa to install. */
+    function _automaMatchState() {
+        updateArea2Watchlist();
+        const expectedBases = new Set(automaExpectedList.map(_baseSymbol).filter(Boolean));
+        // watchlistBaseSet is populated by updateArea2Watchlist() and is already
+        // exchange-stripped; fall back to deriving it if it's somehow empty.
+        const actualBases = watchlistBaseSet.size
+            ? new Set(Array.from(watchlistBaseSet).map(b => String(b).toUpperCase()))
+            : new Set(Array.from(area2WatchlistSet).map(_baseSymbol));
+
+        const missing = Array.from(expectedBases).filter(b => !actualBases.has(b));
+        const matched = expectedBases.size - missing.length;
+        return {
+            expected: expectedBases.size,
+            present:  actualBases.size,
+            matched,
+            missing,
+            ratio: expectedBases.size ? matched / expectedBases.size : 1,
+        };
+    }
+
+    function scheduleAutomaVerify() {
+        if (automaVerifyTimer) clearTimeout(automaVerifyTimer);
+        // Extra headroom per coin — Automa clicks through the list at human pace.
+        const budgetMs = CONFIG.AUTOMA_VERIFY_MAX_MS + automaExpectedList.length * 1000;
+        const deadline = Date.now() + budgetMs;
+        auditLog(
+            "AUTOMA_VERIFY",
+            null,
+            `Verification starts in ${CONFIG.AUTOMA_VERIFY_START_MS / 1000}s, then every ` +
+            `${CONFIG.AUTOMA_VERIFY_POLL_MS / 1000}s (budget ${(budgetMs / 1000).toFixed(0)}s for ` +
+            `${automaExpectedList.length} coins).`,
+            "BUFFER"
+        );
+        automaVerifyTimer = setTimeout(() => pollAutomaResult(deadline), CONFIG.AUTOMA_VERIFY_START_MS);
+    }
+
+    /**
+     * Poll rather than single-shot check. Automa is mid-run for an unpredictable
+     * span and the watchlist is legitimately EMPTY between its clear and its add,
+     * so we keep waiting until the list looks right or the budget is exhausted.
+     */
+    async function pollAutomaResult(deadline) {
+        automaVerifyTimer = null;
+        if (automaExpectedList.length === 0) return;
+
+        await ensureWatchlistPanelOpen();
+        const st = _automaMatchState();
+
+        // ── SUCCESS — stop early, no need to burn the whole budget ───────────
+        if (st.ratio >= CONFIG.AUTOMA_PARTIAL_RATIO) {
+            if (automaAttempt > 0) {
+                auditLog("AUTOMA_RECOVERED", null, `Watchlist restored: ${st.matched}/${st.expected} coins after ${automaAttempt} retry(s).`, "QUALIFIED");
+            } else {
+                auditLog("AUTOMA_VERIFIED", null, `Watchlist OK: ${st.matched}/${st.expected} coins present.`, "SYSTEM");
+            }
+            automaAttempt = 0;
+            return;
+        }
+
+        // ── STILL WORKING — keep waiting while budget remains ────────────────
+        if (Date.now() < deadline) {
+            const leftS = ((deadline - Date.now()) / 1000).toFixed(0);
+            auditLog(
+                "AUTOMA_WAITING",
+                null,
+                `${st.matched}/${st.expected} present` +
+                (st.present === 0 ? ' (watchlist empty — Automa likely between clear and add)' : '') +
+                `. Re-checking in ${CONFIG.AUTOMA_VERIFY_POLL_MS / 1000}s, ${leftS}s budget left.`,
+                "BUFFER"
+            );
+            automaVerifyTimer = setTimeout(() => pollAutomaResult(deadline), CONFIG.AUTOMA_VERIFY_POLL_MS);
+            return;
+        }
+
+        // ── FAILURE — budget exhausted ───────────────────────────────────────
+        const mode = st.present === 0 ? "WIPE" : "PARTIAL_ADD";
+        automaAttempt++;
+        auditLog(
+            `AUTOMA_${mode}`,
+            null,
+            `Expected ${st.expected} coins, matched ${st.matched} (watchlist holds ${st.present}). ` +
+            `Missing: [${st.missing.slice(0, 10).join(', ')}${st.missing.length > 10 ? '…' : ''}]. ` +
+            `Attempt ${automaAttempt}/${CONFIG.AUTOMA_MAX_RETRIES}.`,
+            "ORPHAN"
+        );
+
+        if (automaAttempt < CONFIG.AUTOMA_MAX_RETRIES) {
+            const backoff = CONFIG.AUTOMA_VERIFY_POLL_MS * automaAttempt;
+            auditLog("AUTOMA_RETRY", null, `Re-pushing ${automaExpectedList.length} coins in ${backoff / 1000}s.`, "BUFFER");
+            const attemptNo = automaAttempt;
+            automaRetryTimer = setTimeout(() => {
+                automaRetryTimer = null;
+                // fireAutoma() resets the counter for backend-driven pushes, so
+                // restore it here — this is a continuation of the same failure run.
+                const carried = attemptNo;
+                fireAutoma(automaExpectedList, ` [RETRY ${attemptNo}]`);
+                automaAttempt = carried;
+            }, backoff);
+        } else {
+            // Out of retries. Tell the backend the truth NOW rather than waiting
+            // for the next 5-min poll — its wipe-guard takes over from here.
+            auditLog("AUTOMA_GAVE_UP", null, `Automa failed ${automaAttempt}x. Reporting watchlist state to backend for recovery.`, "ORPHAN");
+            automaAttempt = 0;
+            sendTelemetry();
+        }
+    }
+
     function processSyncPayload(serverInfo, triggerTicker = "HEARTBEAT") {
         auditLog("BACKEND_SYNC", null, `Trigger: ${triggerTicker} | AI Suggestion: ${serverInfo.ai_suggestion || 'None'}`, "SYNC");
 
@@ -171,11 +349,21 @@
         // panel immediately and fire a fresh telemetry snapshot — don't wait for
         // the next 5-min POLL_MS cycle.
         if (actionRequired === 'REFRESH_WATCHLIST') {
-            auditLog("WATCHLIST_REFRESH", null, "Backend: zero watchlist extended. Forcing immediate re-read + re-send.", "SYNC");
-            ensureWatchlistPanelOpen().then(() => {
-                updateArea2Watchlist();
-                sendTelemetry();
-            });
+            // v20.7 recursion guard. This handler calls sendTelemetry(), and the
+            // response to THAT can request another refresh — an unbounded loop
+            // (observed: 74 empty snapshots in 13 minutes). Rate-limit it.
+            const nowMs = Date.now();
+            if (nowMs - lastRefreshAt < CONFIG.REFRESH_MIN_INTERVAL_MS) {
+                const waitS = ((CONFIG.REFRESH_MIN_INTERVAL_MS - (nowMs - lastRefreshAt)) / 1000).toFixed(0);
+                auditLog("WATCHLIST_REFRESH", null, `Suppressed — refreshed ${((nowMs - lastRefreshAt) / 1000).toFixed(0)}s ago. Next allowed in ${waitS}s.`, "BUFFER");
+            } else {
+                lastRefreshAt = nowMs;
+                auditLog("WATCHLIST_REFRESH", null, "Backend: zero watchlist extended. Forcing immediate re-read + re-send.", "SYNC");
+                ensureWatchlistPanelOpen().then(() => {
+                    updateArea2Watchlist();
+                    sendTelemetry();
+                });
+            }
             // Fall through — still process prune/target lists from this response
         }
 
@@ -240,8 +428,6 @@
             if (diffCount > 0) {
                 auditLog("DIFF_DETECTED", null, `+ Adding: [${additions.join(', ')}] | - Removing: [${removals.join(', ')}]`, "BUFFER");
 
-                // We join the ORIGINAL master targets for the clipboard so TradingView gets the exact format it needs
-                const clipboardString = [...serverInfo.master_targets].join(',');
                 const now = Date.now();
                 const COOLDOWN_MS = CONFIG.AUTOMA_COOLDOWN_MINUTES * 60 * 1000;
                 const cooldownExpired = !window.lastAutomaTriggerMs || (now - window.lastAutomaTriggerMs > COOLDOWN_MS);
@@ -250,13 +436,11 @@
                 // Without this, exchange-dupe cleanup waits up to 15 min before
                 // applying — which is exactly the lockin the user has been seeing.
                 if (cooldownExpired || isForcedUpdate) {
-                    GM_setClipboard(clipboardString);
+                    // v20.7: routed through fireAutoma() so every push is verified
+                    // ~25s later and auto-retried if Automa wiped or half-filled it.
                     const bypassNote = (!cooldownExpired && isForcedUpdate) ? ` [COOLDOWN BYPASSED — ${actionRequired}]` : '';
-                    auditLog("AUTOMA_TRIGGERED", null, `Copied ${serverInfo.master_targets.length} coins. Firing new tab.${bypassNote}`, "SYNC");
-                    GM_openInTab("https://www.tradingview.com/cex-screener/lEINSjG1/", { active: false, insert: true, setParent: true });
-
-                    window.lastAutomaTriggerMs = now;
-                    saveState();
+                    automaAttempt = 0;   // fresh target set — reset the retry counter
+                    fireAutoma(serverInfo.master_targets, bypassNote);
                 } else {
                     const elapsed = now - window.lastAutomaTriggerMs;
                     const minLeft = ((COOLDOWN_MS - elapsed) / 60000).toFixed(1);

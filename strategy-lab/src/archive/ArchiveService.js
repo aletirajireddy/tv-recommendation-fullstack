@@ -31,14 +31,30 @@ function columnsOf(db, table) {
     return db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
 }
 
-/** Copy only rows newer than what's already archived, keyed on watermarkCol. */
-function mirrorIncremental(live, archive, table, watermarkCol = 'id') {
+/**
+ * Pick a monotonic watermark column for incremental copying.
+ * Prefers an INTEGER PRIMARY KEY (rowid alias) of any name — tables here use
+ * `id`, `log_id`, `snapshot_id`, etc. Falls back to a literal `id` column.
+ * Returns null when no suitable column exists (caller then does a full snapshot).
+ */
+function pickWatermark(db, table, preferred) {
+    const info = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (preferred && info.some(c => c.name === preferred)) return preferred;
+    const intPk = info.find(c => c.pk === 1 && /INT/i.test(c.type || ''));
+    if (intPk) return intPk.name;
+    const plainId = info.find(c => c.name === 'id');
+    return plainId ? 'id' : null;
+}
+
+/** Copy only rows newer than what's already archived, keyed on a watermark column. */
+function mirrorIncremental(live, archive, table, watermarkCol = null) {
     if (!tableExists(live, table)) { log.warn(`skip ${table} (not in live db)`); return 0; }
     if (!ensureArchiveTable(live, archive, table)) return 0;
 
     const cols = columnsOf(live, table);
-    if (!cols.includes(watermarkCol)) {
-        log.warn(`${table}: no '${watermarkCol}' column — falling back to full snapshot`);
+    watermarkCol = pickWatermark(live, table, watermarkCol);
+    if (!watermarkCol) {
+        log.warn(`${table}: no monotonic key — falling back to full snapshot`);
         return snapshotFull(live, archive, table);
     }
 
@@ -102,7 +118,7 @@ function runOnce(config) {
 
     try {
         for (const t of config.incrementalTables) {
-            const n = mirrorIncremental(live, archive, t, 'id');
+            const n = mirrorIncremental(live, archive, t);
             summary[t] = { mode: 'incremental', rows: n };
             recordRun.run(ranAt, t, 'incremental', n);
         }

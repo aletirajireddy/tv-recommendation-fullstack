@@ -431,10 +431,272 @@ db.prepare(`
         added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     )
 `).run();
+
+// ── Watchlist Sync Audit ─────────────────────────────────────────────────────
+// Closed-loop verification that the TV watchlist actually received what the
+// backend asked for. There is no way to confirm an Automa run succeeded from
+// the browser side, so we verify from the DATA instead: after we publish
+// master_targets, every subsequent Stream B snapshot tells us what TradingView
+// really contains. A target that stays missing across cycles means the Automa
+// push silently failed — we then escalate with action_required=UPDATE_WATCHLIST.
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS watchlist_sync_audit (
+        ticker               TEXT PRIMARY KEY,
+        first_missing_at     TEXT NOT NULL,
+        last_missing_at      TEXT NOT NULL,
+        consecutive_misses   INTEGER NOT NULL DEFAULT 1,
+        escalations          INTEGER NOT NULL DEFAULT 0,
+        last_escalated_at    TEXT,
+        last_resolved_at     TEXT,
+        resolve_count        INTEGER NOT NULL DEFAULT 0
+    )
+`).run();
+
+// ── Watchlist Wipe Events ────────────────────────────────────────────────────
+// Automa's update is DESTRUCTIVE and NON-ATOMIC: it clears the TradingView
+// watchlist first, then types the new list. If the second step fails (observed
+// directly — the "enter" keystroke doesn't land), the watchlist is left EMPTY
+// and the system goes blind until something restores it.
+//
+// Evidence from market_context_logs: 24 of 24 zero-count runs began from a
+// NON-EMPTY watchlist, including 33→0→15 (half the list lost) and one 179-minute
+// blackout. Zero-count is therefore a WIPE signature, not a read failure.
+//
+// Each wipe is recorded here so downtime is measurable rather than invisible.
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS watchlist_wipe_events (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        detected_at       TEXT NOT NULL,
+        prev_count        INTEGER,
+        restore_attempts  INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at   TEXT,
+        recovered_at      TEXT,
+        recovered_count   INTEGER,
+        downtime_sec      INTEGER
+    )
+`).run();
 // Migration: add exchange column to existing installs that only have ticker + added_at
 try {
     db.prepare("ALTER TABLE coin_whitelist ADD COLUMN exchange TEXT NOT NULL DEFAULT 'BINANCE'").run();
 } catch (_) { /* column already exists — fine */ }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * WATCHLIST SYNC RECONCILIATION
+ *
+ * Problem: when the backend publishes master_targets, the Tampermonkey script
+ * copies them to the clipboard and opens the Automa tab — then assumes success.
+ * If Automa is disabled, its workflow broke, or the tab never ran, the coins
+ * never reach TradingView and NOTHING reports the failure. Whitelisted coins
+ * (and even BTC/ETH) can stay missing for months, which is exactly what
+ * happened to PUMP.
+ *
+ * Fix: verify from the data. Every Stream B snapshot reports what TradingView
+ * ACTUALLY contains. Compare that against what we asked for:
+ *   • target present      → resolved (clear any outstanding miss)
+ *   • target still absent → increment consecutive_misses
+ *   • misses >= threshold → escalate with action_required=UPDATE_WATCHLIST,
+ *                           which sets isForcedUpdate in the script and
+ *                           bypasses its 15-min Automa cooldown.
+ *
+ * Only evaluated on VALID snapshots (uniqueCount > 0). A zero-count read means
+ * the panel wasn't readable — that's a scraper problem, not an Automa failure,
+ * and judging it would produce false escalations.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+// Escalate once a target has been missing this many consecutive valid snapshots.
+// 2 gives Automa a full cycle (~5-10 min) to land before we re-fire.
+const _SYNC_ESCALATE_AFTER_MISSES = 2;
+// Minimum gap between escalations for the same ticker — stops a broken Automa
+// from being re-triggered on every single snapshot.
+const _SYNC_ESCALATE_COOLDOWN_MS = 10 * 60 * 1000;
+
+/** Persistent replacement for the old in-memory `_pendingWhitelistSync` flag.
+ *  An in-memory boolean is lost on every restart, so a coin whitelisted before
+ *  a restart never got its one-shot UPDATE_WATCHLIST. Backed by system_settings
+ *  so the intent survives restarts. */
+function _setWhitelistSyncPending(val) {
+    db.prepare(
+        "INSERT INTO system_settings (key, value) VALUES ('whitelist_sync_pending', ?) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    ).run(val ? '1' : '0');
+}
+function _consumeWhitelistSyncPending() {
+    const row = db.prepare("SELECT value FROM system_settings WHERE key = 'whitelist_sync_pending'").get();
+    const pending = row?.value === '1';
+    if (pending) _setWhitelistSyncPending(false);
+    return pending;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * WATCHLIST WIPE RECOVERY
+ *
+ * Automa clears the TV watchlist before writing the new one. When the write
+ * half fails, the watchlist is left empty. The correct response is to RESTORE
+ * (re-push the list), not to re-read an empty panel.
+ *
+ * Escalation ladder — deliberately tries the SAFE action first, because every
+ * Automa run is itself destructive and can fail the same way:
+ *   1st empty snapshot   → REFRESH_WATCHLIST  (cheap, non-destructive re-read;
+ *                          fixes the case where the panel merely wasn't rendered)
+ *   2nd+ empty snapshot  → UPDATE_WATCHLIST   (accept the Automa risk — the list
+ *                          is genuinely gone and must be rebuilt)
+ *
+ * Restores are rate-limited so a failing Automa is retried steadily rather than
+ * hammered once per snapshot (yesterday: 74 empty snapshots in 13 minutes).
+ * ────────────────────────────────────────────────────────────────────────── */
+const _WIPE_RESTORE_COOLDOWN_MS = 90 * 1000; // give Automa time to finish a run
+
+/** Open (or create) the wipe event for an ongoing blackout. */
+function _openWipeEvent(nowISO) {
+    const open = db.prepare(
+        'SELECT * FROM watchlist_wipe_events WHERE recovered_at IS NULL ORDER BY id DESC LIMIT 1'
+    ).get();
+    if (open) return open;
+
+    // prev_count = the last non-empty snapshot before this blackout
+    const prev = db.prepare(
+        'SELECT watchlist_count FROM market_context_logs WHERE watchlist_count > 0 ORDER BY id DESC LIMIT 1'
+    ).get();
+    const info = db.prepare(
+        'INSERT INTO watchlist_wipe_events (detected_at, prev_count) VALUES (?, ?)'
+    ).run(nowISO, prev?.watchlist_count ?? null);
+    console.warn(
+        `[WIPE-GUARD] 🧨 Watchlist EMPTIED (was ${prev?.watchlist_count ?? '?'} coins) — ` +
+        `Automa clear/add failure suspected. Starting recovery.`
+    );
+    return db.prepare('SELECT * FROM watchlist_wipe_events WHERE id = ?').get(info.lastInsertRowid);
+}
+
+/** Close any open wipe event once the watchlist is populated again. */
+function _closeWipeEvent(nowISO, count) {
+    const open = db.prepare(
+        'SELECT * FROM watchlist_wipe_events WHERE recovered_at IS NULL ORDER BY id DESC LIMIT 1'
+    ).get();
+    if (!open) return;
+    const downtimeSec = Math.round((new Date(nowISO) - new Date(open.detected_at)) / 1000);
+    db.prepare(
+        `UPDATE watchlist_wipe_events
+         SET recovered_at = ?, recovered_count = ?, downtime_sec = ?
+         WHERE id = ?`
+    ).run(nowISO, count, downtimeSec, open.id);
+    const lost = open.prev_count != null ? open.prev_count - count : null;
+    console.log(
+        `[WIPE-GUARD] ✅ Watchlist recovered: ${count} coins after ${(downtimeSec / 60).toFixed(1)}m ` +
+        `(${open.restore_attempts} restore attempt(s))` +
+        (lost > 0 ? ` — ⚠️ ${lost} coin(s) did NOT come back` : '')
+    );
+}
+
+/**
+ * Decide how to respond to an empty watchlist snapshot.
+ * @returns {'REFRESH_WATCHLIST'|'UPDATE_WATCHLIST'|null}
+ */
+function handleWatchlistWipe(nowISO) {
+    const evt = _openWipeEvent(nowISO);
+    const nowMs = Date.now();
+    const lastMs = evt.last_attempt_at ? new Date(evt.last_attempt_at).getTime() : 0;
+
+    // First detection → try the cheap, non-destructive re-read.
+    if (evt.restore_attempts === 0) {
+        db.prepare(
+            'UPDATE watchlist_wipe_events SET restore_attempts = 1, last_attempt_at = ? WHERE id = ?'
+        ).run(nowISO, evt.id);
+        console.warn('[WIPE-GUARD] 🔄 Attempt 1: REFRESH_WATCHLIST (safe re-read before rebuilding)');
+        return 'REFRESH_WATCHLIST';
+    }
+
+    // Still empty → the list is really gone. Rebuild it, rate-limited.
+    if (nowMs - lastMs < _WIPE_RESTORE_COOLDOWN_MS) return null;
+
+    db.prepare(
+        'UPDATE watchlist_wipe_events SET restore_attempts = restore_attempts + 1, last_attempt_at = ? WHERE id = ?'
+    ).run(nowISO, evt.id);
+    console.warn(
+        `[WIPE-GUARD] 🚑 Attempt ${evt.restore_attempts + 1}: UPDATE_WATCHLIST — ` +
+        `re-pushing rehydrated targets to rebuild the wiped list.`
+    );
+    return 'UPDATE_WATCHLIST';
+}
+
+/**
+ * Reconcile requested targets against what TradingView actually reports.
+ * @param {string[]} masterTargets  full EXCHANGE:TICKER.P strings we asked for
+ * @param {string[]} observed       full tickers actually present in the snapshot
+ * @returns {{escalate: boolean, missing: string[], escalated: string[], recovered: string[]}}
+ */
+function reconcileWatchlistSync(masterTargets, observed) {
+    const now = new Date().toISOString();
+    const nowMs = Date.now();
+    const observedSet = new Set(observed);
+    const missing = (masterTargets || []).filter(t => !observedSet.has(t));
+    const missingSet = new Set(missing);
+
+    const escalated = [];
+    const recovered = [];
+
+    // 1. Clear entries that have now arrived (Automa worked, or user added manually).
+    //    Only rows still marked outstanding are considered — otherwise every
+    //    already-resolved ticker would be "recovered" again on every single
+    //    snapshot, spamming the log and inflating resolve_count forever.
+    for (const row of db.prepare('SELECT ticker FROM watchlist_sync_audit WHERE consecutive_misses > 0').all()) {
+        if (!missingSet.has(row.ticker)) {
+            db.prepare(
+                `UPDATE watchlist_sync_audit
+                 SET consecutive_misses = 0, last_resolved_at = ?, resolve_count = resolve_count + 1
+                 WHERE ticker = ?`
+            ).run(now, row.ticker);
+            recovered.push(row.ticker);
+        }
+    }
+
+    // 2. Record / advance current misses
+    const upsert = db.prepare(`
+        INSERT INTO watchlist_sync_audit (ticker, first_missing_at, last_missing_at, consecutive_misses)
+        VALUES (?, ?, ?, 1)
+        ON CONFLICT(ticker) DO UPDATE SET
+            last_missing_at    = excluded.last_missing_at,
+            consecutive_misses = watchlist_sync_audit.consecutive_misses + 1,
+            first_missing_at   = CASE WHEN watchlist_sync_audit.consecutive_misses = 0
+                                      THEN excluded.first_missing_at
+                                      ELSE watchlist_sync_audit.first_missing_at END
+    `);
+    for (const t of missing) upsert.run(t, now, now);
+
+    // 3. Decide escalation — any ticker past threshold and out of cooldown
+    if (missing.length) {
+        const rows = db.prepare(
+            `SELECT ticker, consecutive_misses, last_escalated_at
+             FROM watchlist_sync_audit
+             WHERE consecutive_misses >= ?`
+        ).all(_SYNC_ESCALATE_AFTER_MISSES);
+
+        for (const r of rows) {
+            if (!missingSet.has(r.ticker)) continue;
+            const lastMs = r.last_escalated_at ? new Date(r.last_escalated_at).getTime() : 0;
+            if (nowMs - lastMs < _SYNC_ESCALATE_COOLDOWN_MS) continue;
+            db.prepare(
+                `UPDATE watchlist_sync_audit
+                 SET escalations = escalations + 1, last_escalated_at = ?
+                 WHERE ticker = ?`
+            ).run(now, r.ticker);
+            escalated.push(r.ticker);
+        }
+    }
+
+    if (recovered.length) {
+        console.log(`[SYNC-VERIFY] ✅ Landed in watchlist: ${recovered.join(', ')}`);
+    }
+    if (escalated.length) {
+        console.warn(
+            `[SYNC-VERIFY] 🚨 Automa appears to have FAILED for ${escalated.length} target(s): ` +
+            `${escalated.join(', ')} — forcing UPDATE_WATCHLIST (cooldown bypass).`
+        );
+    } else if (missing.length) {
+        console.log(`[SYNC-VERIFY] ⏳ Awaiting Automa for: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? '…' : ''}`);
+    }
+
+    return { escalate: escalated.length > 0, missing, escalated, recovered };
+}
 
 /**
  * 🦅 PROACTIVE AI STRATEGY ENGINE
@@ -541,8 +803,10 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     // included in master_targets so the TV watchlist always contains them.
     // We also consume the pending-sync flag here so the next response to the
     // Tampermonkey script includes action_required: 'UPDATE_WATCHLIST' exactly once.
-    const hasWhitelistPending = _pendingWhitelistSync;
-    if (hasWhitelistPending) _pendingWhitelistSync = false;
+    // Persisted in system_settings — an in-memory flag was silently lost on every
+    // backend restart, so coins whitelisted before a restart never received their
+    // one-shot UPDATE_WATCHLIST (this is why PUMP never reached the watchlist).
+    const hasWhitelistPending = _consumeWhitelistSyncPending();
 
     const whitelistRows    = db.prepare("SELECT ticker, exchange FROM coin_whitelist").all();
     const whitelistTickers = new Set(whitelistRows.map(r => r.ticker));
@@ -967,11 +1231,13 @@ app.post('/qualified-pick', (req, res) => {
 // Exchange preference order for deduplication: higher index = lower priority.
 // When two entries share the same base ticker, we keep the one from the
 // highest-priority exchange so the stored ticker has no exchange prefix.
-// One-shot flag: set when a coin is added to the whitelist via POST /api/whitelist.
-// Consumed (and cleared) inside the next generateScannerFeedback() call so the
-// Tampermonkey script receives action_required: 'UPDATE_WATCHLIST' exactly once,
-// bypassing the 15-min Automa cooldown to push the new coin to TV immediately.
-let _pendingWhitelistSync = false;
+// NOTE: the whitelist one-shot flag now lives in system_settings — see
+// _setWhitelistSyncPending() / _consumeWhitelistSyncPending() above. It used to
+// be an in-memory boolean here, which was lost on every backend restart.
+
+// NOTE: zero-count throttling now lives in handleWatchlistWipe(), keyed off the
+// persistent watchlist_wipe_events row rather than an in-memory timestamp, so
+// recovery state survives restarts mid-blackout.
 
 const _B_EXCHANGE_PRIORITY = [
     'BINANCE', 'OKX', 'BYBIT', 'BITGET', 'BINGX', 'GATE', 'KUCOIN',
@@ -1228,21 +1494,43 @@ app.post('/api/market-context', (req, res) => {
         const _forcedTargets = [...new Set([...(feedback.master_targets || []), ...cleanWatchlist])]
             .filter(t => !_rejectedSet.has(t));
 
-        // ── Determine action_required ─────────────────────────────────────────
-        // Priority: dedup-triggered UPDATE_WATCHLIST > REFRESH_WATCHLIST > null
-        // REFRESH_WATCHLIST fires when the watchlist snapshot has been empty for
-        // ≥5 minutes — signals Tampermonkey to immediately re-read the panel and
-        // re-send a fresh snapshot rather than waiting for the next POLL_MS cycle.
-        let _actionRequired = (dedupApplied || feedback.action_required) ? 'UPDATE_WATCHLIST' : null;
-        if (uniqueCount === 0 && !_actionRequired) {
-            const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-            const zeroCheck = db.prepare(
-                `SELECT COUNT(*) AS cnt FROM market_context_logs WHERE timestamp > ? AND watchlist_count = 0`
-            ).get(fiveMinAgo);
-            if (zeroCheck.cnt >= 2) {
-                _actionRequired = 'REFRESH_WATCHLIST';
-                console.warn(`[WATCHLIST-ENGINE] 🔄 REFRESH_WATCHLIST — ${zeroCheck.cnt} consecutive zero-count snapshots in last 5m`);
+        // ── Closed-loop Automa verification ───────────────────────────────────
+        // Only meaningful on a VALID snapshot. A zero-count read means the panel
+        // wasn't readable (scraper problem) — judging Automa on that would raise
+        // false failures, so we skip reconciliation entirely in that case.
+        let _syncReport = null;
+        if (uniqueCount > 0) {
+            try {
+                _syncReport = reconcileWatchlistSync(_forcedTargets, cleanWatchlist);
+                // Watchlist is populated again — close any open wipe blackout and
+                // report how many coins failed to come back (partial-add failures
+                // like the observed 33 → 0 → 15 are invisible otherwise).
+                _closeWipeEvent(now, uniqueCount);
+            } catch (e) {
+                console.error('[SYNC-VERIFY] reconciliation error:', e.message);
             }
+        }
+
+        // ── Determine action_required ─────────────────────────────────────────
+        // Priority: UPDATE_WATCHLIST (dedup / whitelist / failed-Automa escalation)
+        //           > REFRESH_WATCHLIST (panel unreadable) > null
+        //
+        // NOTE: REFRESH_WATCHLIST is now evaluated independently of the
+        // UPDATE_WATCHLIST branch. The previous `!_actionRequired` guard meant a
+        // zero-count snapshot was silently ignored whenever any other action was
+        // pending — i.e. it was suppressed in exactly the situation it exists for.
+        let _actionRequired = null;
+
+        if (uniqueCount === 0) {
+            // An empty watchlist is an Automa wipe until proven otherwise (24/24
+            // historical zero-runs began from a populated watchlist). Recovery
+            // ladder: safe re-read first, then rebuild. Internally rate-limited.
+            _actionRequired = handleWatchlistWipe(now);
+        }
+
+        // UPDATE_WATCHLIST outranks REFRESH — it carries an actual list to apply.
+        if (dedupApplied || feedback.action_required || _syncReport?.escalate) {
+            _actionRequired = 'UPDATE_WATCHLIST';
         }
 
         res.json({
@@ -1258,6 +1546,13 @@ app.post('/api/market-context', (req, res) => {
             prune_list:       combinedForcePrune, // rejected dupes forced into prune list
             force_prune:      [...new Set([...rejectedTickers, ...(feedback.force_prune || [])])], // explicit field for scanners that key on it
             new_graduates:    feedback.new_graduates,
+            // Closed-loop verification result — lets the scanner (and the
+            // dashboard) see which targets TradingView has not accepted yet.
+            sync_status: _syncReport ? {
+                missing:   _syncReport.missing,
+                escalated: _syncReport.escalated,
+                recovered: _syncReport.recovered,
+            } : null,
         });
     } catch (e) {
         console.error('Market Context Error:', e);
@@ -2702,6 +2997,64 @@ function normaliseWhitelistTicker(raw) {
     return s || null;
 }
 
+// Watchlist sync health — which targets TradingView has not accepted, how long
+// they've been outstanding, and how many times we've re-fired Automa for them.
+// A non-empty `stuck` list means the Automa push path is broken.
+app.get('/api/watchlist/sync-status', (req, res) => {
+    try {
+        const rows = db.prepare(`
+            SELECT ticker, first_missing_at, last_missing_at, consecutive_misses,
+                   escalations, last_escalated_at, last_resolved_at, resolve_count
+            FROM watchlist_sync_audit
+            ORDER BY consecutive_misses DESC, first_missing_at ASC
+        `).all();
+
+        const now = Date.now();
+        const outstanding = rows.filter(r => r.consecutive_misses > 0).map(r => ({
+            ...r,
+            missing_for_min: Math.round((now - new Date(r.first_missing_at).getTime()) / 60000),
+        }));
+        // "Stuck" = escalated at least once and still missing → Automa isn't working.
+        const stuck = outstanding.filter(r => r.escalations > 0);
+
+        // Automa wipe history — destructive clear/add failures and their downtime.
+        const wipes = db.prepare(`
+            SELECT id, detected_at, prev_count, restore_attempts, recovered_at,
+                   recovered_count, downtime_sec
+            FROM watchlist_wipe_events
+            ORDER BY id DESC LIMIT 20
+        `).all().map(w => ({
+            ...w,
+            // Coins that never came back after the wipe (partial-add failure)
+            coins_lost: (w.prev_count != null && w.recovered_count != null)
+                ? Math.max(0, w.prev_count - w.recovered_count)
+                : null,
+        }));
+        const activeWipe = wipes.find(w => !w.recovered_at) || null;
+        const dayAgo = new Date(now - 24 * 3600 * 1000).toISOString();
+        const wipes24h = db.prepare(
+            'SELECT COUNT(*) c FROM watchlist_wipe_events WHERE detected_at > ?'
+        ).get(dayAgo).c;
+
+        res.json({
+            generatedAt:  new Date().toISOString(),
+            healthy:      outstanding.length === 0 && !activeWipe,
+            outstanding,
+            stuck,
+            resolved_recently: rows
+                .filter(r => r.consecutive_misses === 0 && r.last_resolved_at)
+                .slice(0, 20),
+            // Wipe = Automa cleared the list and failed to re-add it
+            active_wipe:   activeWipe,
+            wipes_24h:     wipes24h,
+            recent_wipes:  wipes,
+        });
+    } catch (e) {
+        console.error('[sync-status]', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/whitelist', (req, res) => {
     try {
         const rows = db.prepare(
@@ -2750,7 +3103,8 @@ app.post('/api/whitelist', (req, res) => {
         // Signal the next generateScannerFeedback() call to include
         // action_required: 'UPDATE_WATCHLIST' so Tampermonkey bypasses its
         // 15-min Automa cooldown and pushes the new coin to TV immediately.
-        _pendingWhitelistSync = true;
+        // Persisted (not in-memory) so a restart can't swallow the intent.
+        _setWhitelistSyncPending(true);
 
         io.emit('whitelist-update', { action: 'add', ticker, exchange });
         res.json({ success: true, ticker, exchange, evicted_from_queue: evicted.changes > 0 });
