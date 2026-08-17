@@ -592,6 +592,152 @@ RSI cascade is INDEPENDENT from EMA cascade. It measures RSI zone alignment acro
 
 ---
 
+## Watchdog Confidence Clock (2026-08-18)
+
+> Governs when a coin is old enough to be judged for removal, and how long a
+> flagged coin gets before a long-quiet coin is treated as truly dead. This is
+> a core pillar of the ghost/prune pipeline — read this before touching
+> `generateScannerFeedback()`, the Ghost Coin widget, or `coin_lifecycles`.
+
+### Why this exists
+
+Two incidents drove this design, both worth knowing before changing it:
+
+1. **PUMP was whitelisted 2026-05-28 but never reached TradingView until
+   2026-08-17** — a 76-day gap caused by an in-memory sync flag that didn't
+   survive backend restarts (see "Watchlist Sync Reconciliation" below).
+   Fixing that surfaced a second, related problem while investigating it.
+2. **The "Monday-morning cliff"** — after any multi-hour/day system gap (laptop
+   closed, browser tab not open), the old grace-period mechanisms (8h graduate
+   grace, ~4h low-score lookback pardon) had *already silently expired* by the
+   time monitoring resumed. The instant scanning restarted, a month-old coin
+   could be pruned on its very first post-restart reading — no worse than a
+   coin born five minutes ago, because nothing distinguished "genuinely new"
+   from "old coin whose protective memory just got wiped by an outage."
+
+### The core idea — one clock, two checkpoints
+
+Every tracked coin has **one confidence clock**
+(`coin_lifecycles.clock_start_at`), which resets to `now()` on exactly three
+events:
+
+| Reset trigger | Scope | Where it happens |
+|---|---|---|
+| Coin's first-ever birth | per-coin | `generateScannerFeedback()`, on INSERT |
+| System-wide monitoring gap detected | **all** tracked coins at once | `_checkMonitoringGap()` |
+| Ghost-queue revival (real momentum returns) | per-coin | Momentum Rescue branch |
+
+That clock gates two checkpoints, at two different durations:
+
+| Setting | Default | What it gates |
+|---|---|---|
+| **`watchdog_settle_hours`** | 12h | Below this age, a coin is **never evaluated** for pruning at all — the frozen/score/volume checks are skipped entirely, same treatment as a protected coin, just for a different reason (not enough continuous data yet). |
+| **`watchdog_ghost_hours`** | 36h | **Manual mode only** (`ghost_auto_approve` OFF). While a flagged coin sits in the queue, this is how long it's given to show momentum before being force-reset regardless of outcome. |
+| **`watchdog_gap_tolerance_min`** | 15min | A scan gap bigger than this counts as "the system was offline" and triggers the system-wide reset above. |
+
+All three are adjustable at runtime — see "Settings API" below. No deploy needed to change them.
+
+### How a coin's life actually plays out
+
+**At the settle mark (12h), first-ever judgment happens.** What happens next depends entirely on `ghost_auto_approve`:
+
+```
+                    ┌─ Auto-approve ON ──────────────────────────────┐
+                    │  Bad coin → pruned from watchlist IMMEDIATELY.  │
+                    │  Exactly like today. No queue entry (widget     │
+   settle_hours     │  stays invisible, same as always). No memory    │
+   clears, coin     │  carried forward — next appearance = brand new, │
+   is judged        │  fresh clock, from zero.                        │
+   for the first    └──────────────────────────────────────────────────┘
+   time
+                    ┌─ Auto-approve OFF (manual) ─────────────────────┐
+                    │  Bad coin → listed in Ghost Coin widget, STAYS   │
+                    │  on the actual TV watchlist (not removed) while  │
+                    │  awaiting your decision. ghost_hours clock       │
+                    │  starts now.                                     │
+                    │                                                   │
+                    │  ├─ Momentum returns before ghost_hours          │
+                    │  │  → immediately revived: pulled from queue,    │
+                    │  │    clock resets to 0, re-earns everything     │
+                    │  │    from scratch (existing "Momentum Rescue"   │
+                    │  │    behaviour, now also resetting the clock).  │
+                    │  │                                                │
+                    │  └─ No momentum by ghost_hours                   │
+                    │     → force-reset anyway. NOT held forever —     │
+                    │       just recycled to a clean slate. Removed    │
+                    │       from queue, clock restarts, stays on the   │
+                    │       watchlist the whole time (manual mode never │
+                    │       auto-removes it).                          │
+                    └───────────────────────────────────────────────────┘
+```
+
+**Auto-approve ON is your default operating mode**, so in practice: this
+feature's day-to-day effect is a single sentence — *"a coin now needs 12
+continuous hours of history before it can be silently pruned."* The
+`ghost_hours`/manual-queue machinery only becomes relevant if you switch to
+manual review.
+
+### Why BTC/ETH and whitelisted coins are unaffected
+
+`PERMANENT_MAJORS` (BTC/ETH) and `coin_whitelist` entries bypass the entire
+prune-evaluation block before the settle-gate is even checked — same as
+always. The confidence clock only governs coins that are subject to
+evaluation in the first place.
+
+### What this replaced — don't go looking for the old logic
+
+Three previously-overlapping, differently-scoped grace windows were removed
+in favour of the single clock above:
+
+| Removed | Was | Superseded by |
+|---|---|---|
+| 8-Hour Graduate Grace Period | Any coin that graduated (STABLE/ORPHANED_STABLE_RETRY) in the last 8h was fully immune to all prune reasons | settle-gate — graduation no longer grants a separate immunity window; a graduated coin is judged on the same clock as everything else |
+| ~4-Hour Low-Score Lookback Pardon | Re-scanned the last 240 `scan_results` blobs looking for any score>30 to excuse a current low reading | settle-gate — nothing is judged before 12h anyway, so there's no more need to look backward for a pardon at judgment time |
+| Absolute 12h staleness cutoff on that lookback | "[PHASE 43] Offline Gap Flush" — discarded lookback data older than 12h | `_checkMonitoringGap()` — a proper gap *detector* (compares consecutive scan timestamps), not just an absolute-age cutoff |
+
+**Not touched by this change** (still exist exactly as before):
+- `isStable` (100+ scans in trailing 8h) — still gates the Ghost-Volume rule specifically. This is a *system-wide data-density* check (is the cohort average-volume baseline trustworthy), a different concern from any individual coin's confidence clock.
+- Top-5 "protected altcoins" (momentary rank-based protection) — **has a known bug**: it doesn't check `freeze` status, so a frozen coin can be shielded from the Frozen-prune rule purely by momentary score rank. Diagnosed 2026-08-17, not yet fixed. Do not confuse this with the confidence-clock settle-gate — different mechanism, different bug, tracked separately.
+- The browser-side orphan-recovery split (`AUTOMA_SYNC_FAILED` should restore a coin directly into `graduatedSet` without resetting its pipeline timer; `BACKEND_REJECTED` should still reset). Agreed but **not yet implemented** — requires a Tampermonkey script change, separate from everything in this section.
+
+### Settings API
+
+```
+GET  /api/ghosts/watchdog-settings
+     → { settleHours, ghostHours, gapToleranceMin }
+
+POST /api/ghosts/watchdog-settings
+     body: { settleHours?, ghostHours?, gapToleranceMin? }  (any subset)
+     Clamped server-side: settleHours 0–72, ghostHours 1–336, gapToleranceMin 1–120.
+```
+
+Exposed in the Ghost Coin widget via a ⚙ button next to the Auto-Prune toggle
+— three number inputs, saved on blur. Backed by `system_settings` keys
+`watchdog_settle_hours`, `watchdog_ghost_hours`, `watchdog_gap_tolerance_min`.
+
+### Schema
+
+```sql
+-- coin_lifecycles gained one column (migration in database.js, safe/idempotent):
+clock_start_at TEXT   -- confidence-clock start; defaults to born_at on migration
+```
+
+No new tables. `ghost_approval_queue.queued_at` (already existed) is reused
+directly for the ghost_hours expiry check — no new column needed there.
+
+### Rollout — this feature is entirely backend
+
+Tracing through the design confirmed the browser needs **no changes** for
+this specific feature:
+- Auto-approve ON: a pruned coin is simply gone — no cross-cycle memory needed, nothing for the script to track.
+- Manual mode: a queued coin **never leaves the watchlist** while awaiting review, and the script already suppresses its own GATE_8/20 timer for any coin currently present in the watchlist. Nothing new for it to know.
+
+So this shipped as a `pm2 restart tv-backend` + a client rebuild for the
+widget UI — **no Tampermonkey paste required.** (The separate orphan-recovery
+fix noted above does still need one, whenever it's built.)
+
+---
+
 ## Widget Persistence Pattern
 
 Every widget saves user selections to localStorage and restores on reload.

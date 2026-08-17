@@ -782,6 +782,81 @@ function analyzeProactiveStrategies(payload) {
 /**
  * 🦅 Phase 39: Intelligent Watchlist & Prune Engine (The "5+2" Rule)
  */
+/* ─────────────────────────────────────────────────────────────────────────────
+ * WATCHDOG CONFIDENCE CLOCK (2026-08-18)
+ *
+ * Replaces three previously-overlapping, differently-scoped grace windows
+ * (8h graduate-grace, ~4h low-score lookback pardon, absolute 12h staleness
+ * cutoff) with ONE clock per coin and two checkpoints on it. See CLAUDE.md
+ * "Watchdog Confidence Clock" for the full design writeup.
+ *
+ * The clock (coin_lifecycles.clock_start_at) resets to now() on exactly three
+ * events: a coin's first-ever birth, a detected system-wide monitoring gap
+ * (the whole point: a multi-day outage shouldn't let a month-old coin get
+ * judged on its very first post-restart reading), or a ghost-queue revival.
+ *
+ *   settle_hours (default 12) — a coin younger than this is NEVER evaluated
+ *     for pruning at all (frozen/score/volume checks are skipped entirely,
+ *     same as a protected coin). At the settle mark, first-ever judgment runs.
+ *   ghost_hours  (default 36) — MANUAL-MODE ONLY (auto-approve OFF). While a
+ *     flagged coin sits in the queue, it's re-checked every cycle; the moment
+ *     it stops matching the prune condition it's revived (existing "Momentum
+ *     Rescue" behaviour, now additionally resetting the clock). If NO
+ *     momentum ever returns by ghost_hours, it's force-reset anyway — not
+ *     held forever, just recycled to a clean slate.
+ *   With auto-approve ON, ghost_hours is irrelevant: a bad coin is pruned the
+ *     instant it clears settle_hours, exactly like today, and carries no
+ *     memory forward if it reappears later.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+function _getWatchdogSettings() {
+    const num = (key, def) => {
+        const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key);
+        const v = row ? parseFloat(row.value) : NaN;
+        return (isFinite(v) && v >= 0) ? v : def;
+    };
+    return {
+        settleHours:     num('watchdog_settle_hours', 12),
+        ghostHours:      num('watchdog_ghost_hours', 36),
+        gapToleranceMin: num('watchdog_gap_tolerance_min', 15),
+    };
+}
+
+function _setWatchdogSetting(key, value) {
+    db.prepare(
+        "INSERT INTO system_settings (key, value) VALUES (?, ?) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    ).run(key, String(value));
+}
+
+/**
+ * Detects a system-wide monitoring gap (browser closed, laptop off, etc.) by
+ * comparing "now" to the last time this function ran. If the gap exceeds
+ * gapToleranceMin, EVERY tracked coin's confidence clock is reset in one bulk
+ * update — a coin's individual age no longer matters once continuity broke;
+ * everyone restarts the settle/ghost clock together, same as a fresh boot.
+ * Cheap (one bulk UPDATE on a small table) — safe to call every request.
+ */
+function _checkMonitoringGap(gapToleranceMin) {
+    const nowMs  = Date.now();
+    const nowISO = new Date(nowMs).toISOString();
+    const lastSeenRow = db.prepare("SELECT value FROM system_settings WHERE key = 'watchdog_last_scan_seen_at'").get();
+
+    if (lastSeenRow?.value) {
+        const gapMin = (nowMs - new Date(lastSeenRow.value).getTime()) / 60000;
+        if (gapMin > gapToleranceMin) {
+            const result = db.prepare('UPDATE coin_lifecycles SET clock_start_at = ?').run(nowISO);
+            console.warn(
+                `[WATCHDOG-CLOCK] 🕳️  Monitoring gap detected: ${gapMin.toFixed(1)}m since last scan ` +
+                `(tolerance ${gapToleranceMin}m). Reset confidence clock for ${result.changes} tracked coin(s) — ` +
+                `every coin re-earns its settle window from here.`
+            );
+            _setWatchdogSetting('watchdog_monitoring_continuous_since', nowISO);
+        }
+    }
+    _setWatchdogSetting('watchdog_last_scan_seen_at', nowISO);
+}
+
 function generateScannerFeedback(clientWatchlistCount = -1) {
     let activeList = [];
     let pruneList = [];
@@ -813,13 +888,22 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     // Full EXCHANGE:TICKER.P format — these will be force-added to finalSet below.
     const whitelistFullSet = new Set(whitelistRows.map(r => `${r.exchange}:${r.ticker}`));
 
-    // --- 1. THE 8-HOUR STABILITY GUARD ---
+    // --- 1. THE 8-HOUR STABILITY GUARD (Ghost-Volume rule only) ---
+    // Distinct from the per-coin confidence clock below — this tests whether
+    // the SYSTEM has enough scan density to trust the cohort average-volume
+    // baseline (ghostThreshold), not whether any individual coin is settled.
     const stabilityCheck = db.prepare(`
-        SELECT COUNT(*) as count, MIN(timestamp) as oldest 
-        FROM scans 
+        SELECT COUNT(*) as count, MIN(timestamp) as oldest
+        FROM scans
         WHERE timestamp > ?
     `).get(eightHoursAgo);
     const isStable = stabilityCheck && stabilityCheck.count > 100;
+
+    // --- 1.5 WATCHDOG CONFIDENCE CLOCK — settings + gap detection ---
+    const watchdogSettings = _getWatchdogSettings();
+    _checkMonitoringGap(watchdogSettings.gapToleranceMin);
+    const settleMs = watchdogSettings.settleHours * 3600000;
+    const ghostMs  = watchdogSettings.ghostHours * 3600000;
 
     // --- 2. ZERO-STATE REHYDRATION ---
     if (clientWatchlistCount === 0) {
@@ -905,34 +989,11 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const avgVolume = volCount > 0 ? (totalVol / volCount) : 0;
     const ghostThreshold = avgVolume * 0.15; // Ghost = trades < 15% of cohort average
 
-    // --- 4.5 HISTORICAL SUSTAINABILITY CHECK (The 4-Hour Guard) ---
-    // Fetch last 240 active scans (approx 4 hours of strict runtime data)
-    const historicalScans = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 240').all();
-    const historicalMaxScore = {};
-    
-    // [PHASE 43] Offline Gap Flush: If the system was offline, do NOT use stale history 
-    // (> 12 hours old) to pardon current ghost coins.
-    const staleGapMs = Date.now() - 12 * 60 * 60 * 1000;
-
-    historicalScans.forEach(row => {
-        try {
-            const scanData = JSON.parse(row.raw_data);
-            const scanMs = scanData.timestamp ? new Date(scanData.timestamp).getTime() : Date.now();
-            
-            if (scanMs > staleGapMs) {
-                if (scanData.results) {
-                    scanData.results.forEach(item => {
-                        const d = item.data || item;
-                        const cleanTicker = item.ticker;
-                        const score = d.score || 0;
-                        if (historicalMaxScore[cleanTicker] === undefined || score > historicalMaxScore[cleanTicker]) {
-                            historicalMaxScore[cleanTicker] = score;
-                        }
-                    });
-                }
-            }
-        } catch(e) {}
-    });
+    // --- 4.5 [SUPERSEDED 2026-08-18] ---
+    // The old "4-hour sustainability guard" (re-scan last 240 scan_results blobs
+    // looking for any score>30 to pardon a current low reading) is replaced by
+    // the settle-window check below: nothing is judged before settle_hours
+    // clears, so there's no more need for a look-back pardon at judgment time.
 
     // --- 5. EXTRACT MACRO SCAN ---
     const latestScan = db.prepare('SELECT raw_data FROM scan_results ORDER BY rowid DESC LIMIT 1').get();
@@ -967,18 +1028,14 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const PERMANENT_MAJORS = ['BINANCE:BTCUSDT.P', 'BINANCE:ETHUSDT.P'];
     const protectedAltcoins = new Set();
 
-    // [PHASE 42] The 8-Hour Graduate Grace Period (Includes Orphan Retries)
-    const gracePeriodPicks = db.prepare(`
-        SELECT DISTINCT exchange, ticker
-        FROM area1_scout_logs
-        WHERE type IN ('STABLE', 'ORPHANED_STABLE_RETRY') AND timestamp > ?
-    `).all(eightHoursAgo);
+    // [SUPERSEDED 2026-08-18] The old "8-Hour Graduate Grace Period" (protect
+    // anything that graduated via STABLE/ORPHANED_STABLE_RETRY in the last 8h,
+    // regardless of coin age) is replaced by the settle-window check below —
+    // graduation no longer grants a separate immunity window; a graduated coin
+    // is judged by the same confidence clock as everything else.
 
-    gracePeriodPicks.forEach(p => {
-        protectedAltcoins.add(`${p.exchange}:${p.ticker}`);
-    });
-
-    // Identify Top 5 Altcoins to protect
+    // Identify Top 5 Altcoins to protect (unchanged — separate mechanism, has
+    // a known freeze-check gap tracked separately, not touched in this pass)
     let altCount = 0;
     for (const r of scanResults) {
         const fullTicker = _canonicalFullTicker(r);
@@ -999,14 +1056,27 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
 
         activeList.push(fullTicker);
 
+        // [WATCHDOG CLOCK] Read the coin's current clock BEFORE upserting —
+        // a brand-new coin has no row yet, so its clock starts now (settle
+        // window begins at birth, same instant as today's born_at).
+        const nowISO = new Date().toISOString();
+        const existingLifecycle = db.prepare(
+            'SELECT clock_start_at, born_at FROM coin_lifecycles WHERE ticker = ?'
+        ).get(cleanTicker);
+        const clockStartAt = existingLifecycle?.clock_start_at || existingLifecycle?.born_at || nowISO;
+        const isSettled = (now - new Date(clockStartAt).getTime()) >= settleMs;
+
         // [LIFECYCLE TRACKING - Update Last Seen & Ensure Exists]
+        // clock_start_at is intentionally NOT touched here on the UPDATE path —
+        // it only resets via _checkMonitoringGap() (system-wide) or the ghost
+        // revival / auto-reset branches below (per-coin).
         db.prepare(`
-            INSERT INTO coin_lifecycles (ticker, born_at, last_seen_at, status) 
-            VALUES (?, ?, ?, 'ACTIVE') 
-            ON CONFLICT(ticker) DO UPDATE SET 
-                last_seen_at = excluded.last_seen_at, 
+            INSERT INTO coin_lifecycles (ticker, born_at, last_seen_at, status, clock_start_at)
+            VALUES (?, ?, ?, 'ACTIVE', ?)
+            ON CONFLICT(ticker) DO UPDATE SET
+                last_seen_at = excluded.last_seen_at,
                 status = CASE WHEN status = 'DEAD' THEN 'ACTIVE' ELSE status END
-        `).run(cleanTicker, new Date().toISOString(), new Date().toISOString());
+        `).run(cleanTicker, nowISO, nowISO, nowISO);
 
         const isProtected = PERMANENT_MAJORS.includes(fullTicker)
             || protectedAltcoins.has(fullTicker)
@@ -1014,21 +1084,16 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
 
         let shouldPrune = false;
         let pruneReason = "";
-        if (!isProtected) {
-            const maxHistoricalScore = historicalMaxScore[cleanTicker];
-
-            // Core logic
+        // [WATCHDOG CLOCK] A coin younger than settle_hours is never judged —
+        // same treatment as a protected coin, but for a different reason (not
+        // enough continuous data yet, not "this coin is special").
+        if (!isProtected && isSettled) {
             if (d.freeze === 1) {
                 shouldPrune = true;
                 pruneReason = "Frozen";
             } else if (d.score <= 30) {
-                if (maxHistoricalScore !== undefined && maxHistoricalScore > 30) {
-                    // PARDON: Coin had a good score within the last 4 active hours.
-                    // It is just experiencing a temporary dip; do not execute prune.
-                } else {
-                    shouldPrune = true;
-                    pruneReason = "Sustained Low Score (<4h)";
-                }
+                shouldPrune = true;
+                pruneReason = "Sustained Low Score";
             }
 
             // Intelligent Volume Pruning
@@ -1055,10 +1120,22 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
             }
 
             if (bypassQueue) {
+                // Auto-approve mode: pruned immediately, exactly like today.
+                // No ghost_hours tracking applies here — the coin carries no
+                // memory forward; its next appearance starts a clean slate.
                 pruneList.push(fullTicker);
                 ghostList.push({ ticker: cleanTicker, reason: pruneReason, state: 'PRUNING' });
-                // [LIFECYCLE TRACKING - Mark DEAD]
-                db.prepare("UPDATE coin_lifecycles SET status = 'DEAD', death_at = ? WHERE ticker = ?").run(new Date().toISOString(), cleanTicker);
+                db.prepare("UPDATE coin_lifecycles SET status = 'DEAD', death_at = ? WHERE ticker = ?").run(nowISO, cleanTicker);
+            } else if (queuedGhost && (now - new Date(queuedGhost.queued_at).getTime()) >= ghostMs) {
+                // [WATCHDOG CLOCK] Manual mode only — this coin has sat in the
+                // ghost queue for the full ghost_hours window with no momentum
+                // ever returning. Not held indefinitely: force-reset to a clean
+                // slate now, same as a fresh coin. It stays on the watchlist
+                // throughout (manual mode never auto-removes it); only the
+                // queue entry and its confidence clock reset.
+                db.prepare("DELETE FROM ghost_approval_queue WHERE ticker = ?").run(cleanTicker);
+                db.prepare("UPDATE coin_lifecycles SET clock_start_at = ?, status = 'ACTIVE' WHERE ticker = ?").run(nowISO, cleanTicker);
+                console.log(`[GHOST-ENGINE] 🔄 ${cleanTicker} ghost window (${watchdogSettings.ghostHours}h) expired with no momentum — reset to fresh, clock restarted.`);
             } else {
                 // Upsert into queue if not already there
                 if (!queuedGhost) {
@@ -1066,7 +1143,7 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
                         INSERT INTO ghost_approval_queue (ticker, reason, queued_at, is_approved)
                         VALUES (?, ?, ?, 0)
                         ON CONFLICT(ticker) DO UPDATE SET reason = excluded.reason
-                    `).run(cleanTicker, pruneReason, new Date().toISOString());
+                    `).run(cleanTicker, pruneReason, nowISO);
 
                     // 📣 Telegram: ghost queued — new coin needs approval (Phase 1 gap fix)
                     setImmediate(() => {
@@ -1083,8 +1160,11 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
             // If it's no longer a ghost but was sitting in the queue, violently rescue it.
             if (ghostQueueMap[cleanTicker]) {
                 db.prepare("DELETE FROM ghost_approval_queue WHERE ticker = ?").run(cleanTicker);
-                db.prepare("UPDATE coin_lifecycles SET status = 'ACTIVE' WHERE ticker = ?").run(cleanTicker);
-                console.log(`[GHOST-ENGINE] 🛟 Rescued ${cleanTicker} from Ghost Queue (Re-qualified or Momentum Recovered)`);
+                // [WATCHDOG CLOCK] Real momentum returned — reset the clock too,
+                // not just the queue/status. It re-earns settle_hours from zero,
+                // same as any coin proving itself for the first time.
+                db.prepare("UPDATE coin_lifecycles SET status = 'ACTIVE', clock_start_at = ? WHERE ticker = ?").run(nowISO, cleanTicker);
+                console.log(`[GHOST-ENGINE] 🛟 Rescued ${cleanTicker} from Ghost Queue (Re-qualified or Momentum Recovered) — clock reset.`);
             }
         }
     });
@@ -2974,6 +3054,47 @@ app.post('/api/ghosts/toggle-auto', (req, res) => {
 
         io.emit('ghost-update', { action: 'toggle-auto', enabled, cleared });
         res.json({ success: true, auto_approve: enabled, cleared });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Watchdog Confidence Clock settings — settle_hours, ghost_hours, gap_tolerance_min.
+// See generateScannerFeedback()'s "WATCHDOG CONFIDENCE CLOCK" block for how these
+// are used. All three are plain hour/minute counts, adjustable without a deploy.
+app.get('/api/ghosts/watchdog-settings', (req, res) => {
+    try {
+        res.json({ success: true, ...(_getWatchdogSettings()) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ghosts/watchdog-settings', (req, res) => {
+    try {
+        const { settleHours, ghostHours, gapToleranceMin } = req.body || {};
+        const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+
+        if (settleHours !== undefined) {
+            const v = parseFloat(settleHours);
+            if (!isFinite(v)) return res.status(400).json({ error: 'settleHours must be a number' });
+            _setWatchdogSetting('watchdog_settle_hours', clamp(v, 0, 72));
+        }
+        if (ghostHours !== undefined) {
+            const v = parseFloat(ghostHours);
+            if (!isFinite(v)) return res.status(400).json({ error: 'ghostHours must be a number' });
+            _setWatchdogSetting('watchdog_ghost_hours', clamp(v, 1, 336)); // up to 14 days
+        }
+        if (gapToleranceMin !== undefined) {
+            const v = parseFloat(gapToleranceMin);
+            if (!isFinite(v)) return res.status(400).json({ error: 'gapToleranceMin must be a number' });
+            _setWatchdogSetting('watchdog_gap_tolerance_min', clamp(v, 1, 120));
+        }
+
+        const updated = _getWatchdogSettings();
+        console.log(`[WATCHDOG-CLOCK] ⚙️  Settings updated: settle=${updated.settleHours}h ghost=${updated.ghostHours}h gapTolerance=${updated.gapToleranceMin}m`);
+        io.emit('ghost-update', { action: 'watchdog-settings', ...updated });
+        res.json({ success: true, ...updated });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

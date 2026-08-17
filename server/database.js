@@ -344,6 +344,14 @@ _safeAddColumn('ghost_approval_queue', 'confidence_score REAL', 'confidence_scor
 _safeAddColumn('ghost_approval_queue', 'score_breakdown TEXT', 'score_breakdown');
 _safeAddColumn('ghost_approval_queue', 'scored_at TEXT', 'scored_at');
 
+// Watchdog Settle/Ghost Window (2026-08-18) — see CLAUDE.md "Watchdog Confidence
+// Clock" section. clock_start_at is the per-coin confidence-clock start: reset
+// on first birth, on a detected system-wide monitoring gap, or on ghost revival.
+// Defaults to born_at for existing rows so nothing is instantly "settled" on
+// migration — every coin re-earns its settle window once this ships.
+_safeAddColumn('coin_lifecycles', 'clock_start_at TEXT', 'clock_start_at');
+db.exec(`UPDATE coin_lifecycles SET clock_start_at = born_at WHERE clock_start_at IS NULL`);
+
 // Unique indexes on payload_hash (where present). NULLs allowed — legacy rows skipped.
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_smart_level_payload_hash ON smart_level_events(payload_hash) WHERE payload_hash IS NOT NULL;`);
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inst_interest_payload_hash ON institutional_interest_events(payload_hash) WHERE payload_hash IS NOT NULL;`);

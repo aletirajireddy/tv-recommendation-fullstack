@@ -16,6 +16,15 @@ function GhostQueue({ containerRef }) {
     const [pruningSet, setPruningSet]   = useState(() => new Set());
     const [approvingAll, setApprovingAll] = useState(false);
 
+    // Watchdog Confidence Clock settings — see CLAUDE.md "Watchdog Confidence
+    // Clock". Draft values are edited locally, saved on blur/Enter, so typing
+    // a new number doesn't fire a request per keystroke.
+    const [settleHours, setSettleHours]           = useState(12);
+    const [ghostHours, setGhostHours]              = useState(36);
+    const [gapToleranceMin, setGapToleranceMin]   = useState(15);
+    const [settingsOpen, setSettingsOpen]          = useState(false);
+    const [savingSettings, setSavingSettings]      = useState(false);
+
     const fetchQueue = useCallback(async () => {
         try {
             const res = await fetch('/api/ghosts/queue');
@@ -29,11 +38,35 @@ function GhostQueue({ containerRef }) {
         finally { setLoading(false); }
     }, []);
 
+    const fetchWatchdogSettings = useCallback(async () => {
+        try {
+            const res = await fetch('/api/ghosts/watchdog-settings');
+            if (res.ok) {
+                const data = await res.json();
+                setSettleHours(data.settleHours);
+                setGhostHours(data.ghostHours);
+                setGapToleranceMin(data.gapToleranceMin);
+            }
+        } catch (e) { console.error('Watchdog settings fetch failed', e); }
+    }, []);
+
+    const saveWatchdogSetting = useCallback(async (key, value) => {
+        setSavingSettings(true);
+        try {
+            await fetch('/api/ghosts/watchdog-settings', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [key]: value }),
+            });
+        } catch (e) { console.error('Watchdog settings save failed', e); }
+        finally { setSavingSettings(false); }
+    }, []);
+
     useEffect(() => {
         fetchQueue();
+        fetchWatchdogSettings();
         const interval = setInterval(fetchQueue, 30_000);
         return () => clearInterval(interval);
-    }, [fetchQueue]);
+    }, [fetchQueue, fetchWatchdogSettings]);
 
     useDataInvalidation(containerRef, fetchQueue, lastDataPush);
 
@@ -110,6 +143,18 @@ function GhostQueue({ containerRef }) {
                     <FreshnessChip ts={lastFetchedAt} title="Ghost queue last fetched" />
                 </div>
                 <div className={styles.sectionActions}>
+                    <button
+                        onClick={() => setSettingsOpen(o => !o)}
+                        title="Watchdog confidence clock settings"
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            width: 22, height: 22, borderRadius: 4,
+                            border: '1px solid var(--border)',
+                            background: settingsOpen ? 'rgba(99,179,237,0.15)' : 'rgba(255,255,255,0.03)',
+                            color: settingsOpen ? '#63b3ed' : 'var(--text-muted)',
+                            cursor: 'pointer', fontSize: 12,
+                        }}
+                    >⚙</button>
                     <span className={styles.toggleLabel}>Auto-Prune</span>
                     <label className={styles.switch}>
                         <input type="checkbox" checked={autoApprove} onChange={toggleAutoApprove} />
@@ -136,6 +181,47 @@ function GhostQueue({ containerRef }) {
                     })()}
                 </div>
             </div>
+
+            {settingsOpen && (
+                <div style={{
+                    display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'flex-end',
+                    padding: '8px 10px', margin: '0 0 8px', borderRadius: 5,
+                    background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)',
+                    fontSize: 11,
+                }}>
+                    {[
+                        { key: 'settleHours', label: 'Settle hours', value: settleHours, setValue: setSettleHours, min: 0, max: 72, step: 1,
+                          hint: 'A coin younger than this is never judged for pruning at all.' },
+                        { key: 'ghostHours', label: 'Ghost hours', value: ghostHours, setValue: setGhostHours, min: 1, max: 336, step: 1,
+                          hint: 'Manual mode only — how long a flagged coin waits for momentum before auto-reset.' },
+                        { key: 'gapToleranceMin', label: 'Gap tolerance (min)', value: gapToleranceMin, setValue: setGapToleranceMin, min: 1, max: 120, step: 1,
+                          hint: 'A scan gap bigger than this resets every coin’s confidence clock (system was offline).' },
+                    ].map(f => (
+                        <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }} title={f.hint}>
+                            <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.03em' }}>{f.label}</span>
+                            <input
+                                type="number"
+                                min={f.min} max={f.max} step={f.step}
+                                value={f.value}
+                                onChange={e => f.setValue(e.target.value === '' ? '' : Number(e.target.value))}
+                                onBlur={() => {
+                                    const v = Number(f.value);
+                                    if (isFinite(v)) saveWatchdogSetting(f.key, v);
+                                }}
+                                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                                style={{
+                                    width: 70, padding: '3px 6px', borderRadius: 4,
+                                    border: '1px solid var(--border)', background: 'var(--bg-app)',
+                                    color: 'var(--text-main)', fontSize: 12,
+                                }}
+                            />
+                        </div>
+                    ))}
+                    <span style={{ color: 'var(--text-muted)', fontSize: 10, opacity: savingSettings ? 1 : 0, transition: 'opacity 0.2s' }}>
+                        saving…
+                    </span>
+                </div>
+            )}
 
             {/* Queue list */}
             {queue.length === 0 ? (
