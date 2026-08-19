@@ -1,7 +1,7 @@
 # TV Recommendation Dashboard — Architecture & Design Reference
 
 > Living document. Update whenever a design decision changes. Claude Code loads this automatically.
-> Last major update: 2026-05-28 (two-process architecture: backend port 3000, frontend vite preview port 5173 with proxy; Tailscale confirmed working; dev instance documented)
+> Last major update: 2026-08-20 (Momentum Watcher, Fresh Session manual reset, gated master_targets addition, Fresh Session veto mode — see "Momentum Watcher, Fresh Session & Gated Addition")
 
 ---
 
@@ -30,7 +30,7 @@ Editing `scripts/coin_scanner.js`, `scripts/technical_watchlist_coin_scanner.js`
 
 | File | Browser script name | Current version |
 |---|---|---|
-| `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional | **v20.6** |
+| `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional | **v20.13** |
 | `scripts/technical_watchlist_coin_scanner.js` | (Stream D / technical watchlist scanner) | — |
 | `scripts/indicators/tamper_streamA.txt` | Stream A macro scanner | — |
 | `scripts/indicators/tamper_streamB.txt` | Stream B reference | — |
@@ -735,6 +735,197 @@ this specific feature:
 So this shipped as a `pm2 restart tv-backend` + a client rebuild for the
 widget UI — **no Tampermonkey paste required.** (The separate orphan-recovery
 fix noted above does still need one, whenever it's built.)
+
+---
+
+## Momentum Watcher, Fresh Session & Gated Addition (2026-08-19/20)
+
+> Three related changes shipped together because tracing the first ("why does
+> the watchlist keep regrowing?") led straight into the other two. Read this
+> before touching `generateScannerFeedback()`'s `master_targets` computation,
+> the Fresh Session endpoints, or `coin_scanner.js`'s VETO_PRUNE block.
+
+### 1. Momentum Watcher — replaces the blind 2h graduate-retention window
+
+Previously, any coin that graduated (STABLE/ORPHANED_STABLE_RETRY) was force-
+included in `master_targets` for a flat, unverified 2h window — no check that
+it was actually *doing* anything, just that it had recently graduated.
+
+Now graduation starts a real, resolvable trial per coin
+(`coin_lifecycles.momentum_watch_started_at`), governed by
+**`watchdog_momentum_hours`** (default 2h, adjustable — see Settings API
+below):
+
+- **While the window is open** — the coin is protected (`stillWatchingMomentum`
+  in `generateScannerFeedback()`), same as any other protected coin.
+- **Real momentum appears** (`score > 30` or `breakout === 1`) — flips
+  `momentum_proven = 1` immediately, doesn't wait for the deadline.
+- **At the deadline** — resolves once:
+  - Proven at any point during the window → `momentum_verified = 1`,
+    `momentum_watch_started_at` cleared. **Skips `settle_hours` from here on**
+    — a verified coin never has to re-earn the settle window.
+  - Never proven → pruned via the normal pipeline, reason `"No Momentum (Xh)"`,
+    subject to `ghost_auto_approve` and VETO_PRUNE like any other prune.
+
+Also fixed a real bug found while tracing this: the old query pulled every
+distinct `(exchange, ticker)` pair ever logged, so a coin graduated under two
+exchanges (observed: SNXX via both OKX and BITGET) fed both into
+`master_targets` every cycle — a likely contributor to the earlier Automa
+storm. The new query keys off the *latest* logged exchange only.
+
+### 2. Fresh Session — manual, explicit, two-step "burn it down" reset
+
+A dashboard-triggered hard reset for when accumulated history has gone bad
+(spammed watchlist, stuck sync targets, etc.). **Never auto-triggered.**
+
+**Two-step confirm in the widget** (arm → 6s window → confirm) posts
+`POST /api/watchlist/fresh-session { confirm: true }`, which:
+1. Deletes rows from `coin_lifecycles`, `ghost_approval_queue`,
+   `area1_scout_logs`, `watchlist_sync_audit`, `watchlist_wipe_events`,
+   `market_context_logs` (whitelist and settings are preserved).
+2. Inserts a `fresh_session_events` row (`status: PENDING`) recording the
+   expected minimal baseline (majors + whitelist).
+3. Arms a one-shot flag (`system_settings.fresh_session_pending`) that the
+   *next* `generateScannerFeedback()` call consumes — that response carries
+   `action_required: "FRESH_SESSION"` and `master_targets` = majors +
+   whitelist only, nothing else.
+
+**Round-trip is proven, not assumed.** A POST only proves intent — it doesn't
+prove Automa actually cleared the live TV watchlist. So the event stays
+`AWAITING_CONFIRMATION` until a *real* subsequent watchlist snapshot
+(`market_context_logs`) is compared against the expected baseline
+(`_checkFreshSessionConfirmation()`): zero extras → `CONFIRMED`; still extras
+after 15 min (`FRESH_SESSION_CONFIRM_TIMEOUT_MIN`) → `TIMED_OUT`. The widget
+shows a live "waiting to hear back from the browser (Ns)…" state and a
+capped/scrollable, newest-first log of past attempts
+(`GET /api/watchlist/fresh-session-status`) — it does not just declare
+success on POST.
+
+**Browser side** (v20.10): on receiving `action_required: "FRESH_SESSION"`,
+`coin_scanner.js` clears `activeMasterSet`, `pipelineRegistry`,
+`graduatedSet`, `serverTargetSet` and resets `automaAttempt` — every coin's
+GATE_8/GATE_20 timer restarts from zero, no half-finished cycles carry
+forward. Falls through to the normal `master_targets` diff, which computes a
+big removals list and fires Automa.
+
+### 3. Gated addition — closed the real root cause of "it keeps regrowing"
+
+Diagnosed live (2026-08-19/20) via a Fresh Session that dropped the watchlist
+30→19 and then stalled, and separately via a report of "19 items on the
+screener but more than that on the watchlist." Root cause, confirmed with
+timestamped DB evidence:
+
+- **Addition was completely unconditional.** `generateScannerFeedback()`'s
+  per-coin loop pushed *every* coin the raw Stream A macro scan currently
+  matched (`activeList`) straight into `master_targets` — the value Automa
+  actually pastes into the TV watchlist — with zero gating from the FE
+  8/20min pipeline, settle_hours, or momentum_hours. Those mechanisms only
+  ever governed *removal* timing, never addition.
+- **Fix:** `master_targets` is now built only from
+  `historicalTargetSet` — coins that logged a real `STABLE`/
+  `ORPHANED_STABLE_RETRY` graduation to `area1_scout_logs` via
+  `/qualified-pick` (i.e., actually survived the FE 8/20min gate) and are
+  still within momentum-watch or already verified — plus
+  `PERMANENT_MAJORS` and whitelist pins. Raw screener matches (`activeList`)
+  are kept only for the informational `active_list` response field (not
+  consumed by the browser) and no longer feed `master_targets`.
+- Also stopped the top-5-by-raw-score "protected altcoins" mechanism from
+  force-adding itself to `master_targets` — it still protects an
+  *already-graduated* coin from prune checks (`isProtected`), it just no
+  longer jumps the gate for a coin that hasn't graduated yet.
+
+**Why this matters for Fresh Session specifically:** without this fix, the
+very next scan cycle after a reset would re-add anything currently matching
+the raw screener, defeating the reset within minutes. With it, the watchlist
+stays at majors+whitelist until a coin genuinely re-earns graduation.
+
+### 4. Fresh Session veto mode — the other half of "why doesn't it reach baseline"
+
+Even with gated addition fixed, Fresh Session still couldn't reach its
+majors+whitelist target: `coin_scanner.js`'s **VETO_PRUNE** check (protects
+any coin still visible on the live DOM screener from removal — correct for
+*normal* prune cycles) was also blocking the reset's removals, so it stalled
+at "whatever the screener currently shows" instead of a true clean slate.
+
+This is now a backend-controlled setting, not a hardcoded script rule —
+**`fresh_session_veto_mode`**:
+
+| Value | Behavior |
+|---|---|
+| `bypass` (default) | Fresh Session force-removes everything down to majors+whitelist regardless of live screener visibility. A legitimately-active coin isn't lost — it re-earns its spot through a fresh 8/20min cycle. |
+| `smart` | Fresh Session still wipes all backend history/clocks, but the browser keeps protecting a coin that's genuinely still on-screener — same behavior VETO_PRUNE already applies to normal prune cycles. |
+
+The backend includes `veto_mode` in every response that can carry a
+`FRESH_SESSION` action (both `/api/market-context` and `/qualified-pick`
+response paths — the browser may receive the order via either endpoint,
+whichever the script happens to call next). The script reads
+`serverInfo.veto_mode` at removal-diff time instead of hardcoding the
+bypass — flipping the setting takes effect on the *next* Fresh Session with
+no script edit.
+
+### Settings API
+
+```
+GET  /api/ghosts/watchdog-settings
+     → { settleHours, ghostHours, gapToleranceMin, momentumHours, freshSessionVetoMode }
+
+POST /api/ghosts/watchdog-settings
+     body: { settleHours?, ghostHours?, gapToleranceMin?, momentumHours?, freshSessionVetoMode? }
+     Clamped server-side: settleHours 0–72, ghostHours 1–336, gapToleranceMin 1–120,
+     momentumHours 0.25–24. freshSessionVetoMode must be 'bypass' | 'smart'.
+
+POST /api/watchlist/fresh-session
+     body: { confirm: true }   (400 without it)
+
+GET  /api/watchlist/fresh-session-status?limit=N
+     → { events: [{ requestedAt, consumedAt, confirmedAt, status,
+                     requestToConsumeSec, consumeToConfirmSec, totalRoundTripSec, ... }] }
+```
+
+All exposed in the Ghost Coin / Ghost Management widget: momentum hours
+alongside the other watchdog number fields, Fresh Session veto mode as a
+dropdown, and the Fresh Session button + scrollable round-trip log.
+
+### Schema
+
+```sql
+-- coin_lifecycles gained (database.js, safe/idempotent):
+clock_start_at             TEXT
+momentum_watch_started_at  TEXT
+momentum_proven            INTEGER DEFAULT 0
+momentum_verified          INTEGER DEFAULT 0
+
+-- new table:
+CREATE TABLE fresh_session_events (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    requested_at     TEXT NOT NULL,
+    expected_targets TEXT,       -- JSON array, the majors+whitelist baseline
+    consumed_at      TEXT,       -- when generateScannerFeedback() delivered FRESH_SESSION
+    confirmed_at     TEXT,       -- when a real watchlist snapshot matched the baseline
+    status           TEXT,       -- PENDING | AWAITING_CONFIRMATION | CONFIRMED | TIMED_OUT
+    last_checked_at  TEXT,
+    last_extra_count INTEGER,
+    cleared_counts   TEXT        -- JSON, rows deleted per table at wipe time
+);
+```
+
+### Rollout
+
+Momentum Watcher and gated-addition are backend-only + client rebuild for the
+widget (momentum hours field). Fresh Session is backend + client rebuild
+(button/log/veto-mode UI), **and it does require a script change**
+(`coin_scanner.js` v20.10 for the clear-and-fall-through handler, v20.13 for
+veto-mode awareness) — this is the one that needs the Tampermonkey paste +
+confirmation step per the workflow rule at the top of this file.
+
+### Known open question — not yet decided
+
+Addition is now gated by *momentum-watch membership*, but a coin still only
+enters `historicalTargetSet` once it's logged a STABLE pick — i.e., once it
+survives the full FE 8/20min gate. Whether *that* gate itself should also
+factor in settle/ghost state (vs. today's "any coin the browser reports as
+graduated gets tracked") hasn't come up as a live problem yet — flagged here
+in case it does.
 
 ---
 
