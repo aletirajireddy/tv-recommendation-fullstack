@@ -475,6 +475,26 @@ db.prepare(`
         downtime_sec      INTEGER
     )
 `).run();
+
+// Fresh Session round-trip audit — a click on the widget only PROVES intent
+// (the DB history was wiped); it does not prove Automa actually cleared the
+// live watchlist. This table tracks the full lifecycle so the widget can show
+// "waiting to hear back" honestly instead of declaring success on request alone.
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS fresh_session_events (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        requested_at      TEXT NOT NULL,
+        expected_targets  TEXT NOT NULL,   -- JSON array, captured at request time
+        consumed_at       TEXT,            -- browser's next check-in received the signal
+        confirmed_at      TEXT,            -- watchlist verified matching (no foreign coins left)
+        status            TEXT NOT NULL DEFAULT 'PENDING',
+        -- PENDING (armed, not yet seen by browser) -> AWAITING_CONFIRMATION
+        -- (browser consumed it) -> CONFIRMED (verified) | TIMED_OUT (gave up waiting)
+        last_checked_at   TEXT,
+        last_extra_count  INTEGER,
+        cleared_counts    TEXT             -- JSON of the DB row-clear counts
+    )
+`).run();
 // Migration: add exchange column to existing installs that only have ticker + added_at
 try {
     db.prepare("ALTER TABLE coin_whitelist ADD COLUMN exchange TEXT NOT NULL DEFAULT 'BINANCE'").run();
@@ -525,6 +545,116 @@ function _consumeWhitelistSyncPending() {
     const pending = row?.value === '1';
     if (pending) _setWhitelistSyncPending(false);
     return pending;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * FRESH SESSION RESET (2026-08-19)
+ *
+ * Manual escape hatch: "the watchlist got spammed with junk, wipe everything
+ * and start clean, trusting only what the browser can currently, freshly see."
+ *
+ * Triggered by the dashboard (POST /api/watchlist/fresh-session), never
+ * automatically. Wipes every table that ACCUMULATES history driving
+ * master_targets composition — coin_lifecycles (settle/momentum clocks),
+ * ghost_approval_queue, area1_scout_logs (the graduation records that force
+ * old coins back into master_targets via the momentum-watch join), the sync/
+ * wipe audit tables, and market_context_logs (so a later zero-count event
+ * can't REHYDRATE the very spam this reset is trying to escape).
+ *
+ * Deliberately preserved: coin_whitelist (user-curated, not noise) and every
+ * system_settings key except the one-shot flag this function itself manages.
+ * ────────────────────────────────────────────────────────────────────────── */
+function _setFreshSessionPending(val) {
+    db.prepare(
+        "INSERT INTO system_settings (key, value) VALUES ('fresh_session_pending', ?) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    ).run(val ? '1' : '0');
+}
+function _consumeFreshSessionPending() {
+    const row = db.prepare("SELECT value FROM system_settings WHERE key = 'fresh_session_pending'").get();
+    const pending = row?.value === '1';
+    if (pending) _setFreshSessionPending(false);
+    return pending;
+}
+
+/** Wipes accumulated history. Returns row counts removed, for the confirmation response. */
+// Confirmation must arrive within this window of the browser consuming the
+// signal, or the event is marked TIMED_OUT — surfacing an Automa failure
+// instead of silently leaving the widget stuck on "waiting" forever.
+const FRESH_SESSION_CONFIRM_TIMEOUT_MIN = 15;
+
+function performFreshSessionReset() {
+    const counts = {};
+    const nowISO = new Date().toISOString();
+    const PERMANENT_MAJORS_FS = ['BINANCE:BTCUSDT.P', 'BINANCE:ETHUSDT.P'];
+    const whitelistPins = db.prepare('SELECT ticker, exchange FROM coin_whitelist').all()
+        .map(r => `${r.exchange}:${r.ticker}`);
+    const expectedTargets = _dedupeFullTickers([...PERMANENT_MAJORS_FS, ...whitelistPins]);
+
+    let eventId;
+    const tx = db.transaction(() => {
+        counts.coin_lifecycles       = db.prepare('DELETE FROM coin_lifecycles').run().changes;
+        counts.ghost_approval_queue  = db.prepare('DELETE FROM ghost_approval_queue').run().changes;
+        counts.area1_scout_logs      = db.prepare('DELETE FROM area1_scout_logs').run().changes;
+        counts.watchlist_sync_audit  = db.prepare('DELETE FROM watchlist_sync_audit').run().changes;
+        counts.watchlist_wipe_events = db.prepare('DELETE FROM watchlist_wipe_events').run().changes;
+        counts.market_context_logs   = db.prepare('DELETE FROM market_context_logs').run().changes;
+        eventId = db.prepare(`
+            INSERT INTO fresh_session_events (requested_at, expected_targets, status, cleared_counts)
+            VALUES (?, ?, 'PENDING', ?)
+        `).run(nowISO, JSON.stringify(expectedTargets), JSON.stringify(counts)).lastInsertRowid;
+    });
+    tx();
+    _setFreshSessionPending(true);
+    console.warn(
+        `[FRESH-SESSION] 🔥 Reset requested (event #${eventId}) — cleared ${counts.coin_lifecycles} lifecycles, ` +
+        `${counts.ghost_approval_queue} ghost entries, ${counts.area1_scout_logs} scout logs, ` +
+        `${counts.watchlist_sync_audit} sync-audit rows, ${counts.watchlist_wipe_events} wipe-events, ` +
+        `${counts.market_context_logs} watchlist snapshots. Whitelist and settings preserved. ` +
+        `Armed FRESH_SESSION for the browser's next check-in — awaiting round-trip confirmation.`
+    );
+    return { counts, eventId };
+}
+
+/** Marks the most recent PENDING fresh-session event as consumed by the browser. */
+function _markFreshSessionConsumed() {
+    const open = db.prepare("SELECT id FROM fresh_session_events WHERE status = 'PENDING' ORDER BY id DESC LIMIT 1").get();
+    if (!open) return;
+    db.prepare("UPDATE fresh_session_events SET consumed_at = ?, status = 'AWAITING_CONFIRMATION' WHERE id = ?")
+        .run(new Date().toISOString(), open.id);
+    console.log(`[FRESH-SESSION] 📡 Event #${open.id} consumed by browser — now awaiting confirmation from the next real watchlist snapshot.`);
+}
+
+/**
+ * Called on every valid (non-zero) Stream B snapshot. If a fresh-session event
+ * is awaiting confirmation, checks whether the ACTUAL watchlist now has zero
+ * coins outside the expected baseline — that's the proof Automa really ran.
+ */
+function _checkFreshSessionConfirmation(cleanWatchlist) {
+    const open = db.prepare("SELECT * FROM fresh_session_events WHERE status = 'AWAITING_CONFIRMATION' ORDER BY id DESC LIMIT 1").get();
+    if (!open) return;
+
+    const expected = new Set(JSON.parse(open.expected_targets));
+    const extras = cleanWatchlist.filter(t => !expected.has(t));
+    const nowISO = new Date().toISOString();
+
+    if (extras.length === 0) {
+        db.prepare("UPDATE fresh_session_events SET confirmed_at = ?, status = 'CONFIRMED', last_checked_at = ?, last_extra_count = 0 WHERE id = ?")
+            .run(nowISO, nowISO, open.id);
+        const roundTripSec = Math.round((Date.now() - new Date(open.consumed_at).getTime()) / 1000);
+        console.log(`[FRESH-SESSION] ✅ Event #${open.id} CONFIRMED — watchlist matches expected baseline (${roundTripSec}s from browser consumption to confirmation).`);
+        return;
+    }
+
+    const elapsedMin = (Date.now() - new Date(open.consumed_at).getTime()) / 60000;
+    if (elapsedMin > FRESH_SESSION_CONFIRM_TIMEOUT_MIN) {
+        db.prepare("UPDATE fresh_session_events SET status = 'TIMED_OUT', last_checked_at = ?, last_extra_count = ? WHERE id = ?")
+            .run(nowISO, extras.length, open.id);
+        console.warn(`[FRESH-SESSION] ⏱️  Event #${open.id} TIMED OUT after ${elapsedMin.toFixed(1)}m — ${extras.length} foreign coin(s) still present. Automa likely did not apply the reset.`);
+    } else {
+        db.prepare("UPDATE fresh_session_events SET last_checked_at = ?, last_extra_count = ? WHERE id = ?")
+            .run(nowISO, extras.length, open.id);
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -815,10 +945,23 @@ function _getWatchdogSettings() {
         const v = row ? parseFloat(row.value) : NaN;
         return (isFinite(v) && v >= 0) ? v : def;
     };
+    const str = (key, def, allowed) => {
+        const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key);
+        return (row?.value && allowed.includes(row.value)) ? row.value : def;
+    };
     return {
         settleHours:     num('watchdog_settle_hours', 12),
         ghostHours:      num('watchdog_ghost_hours', 36),
         gapToleranceMin: num('watchdog_gap_tolerance_min', 15),
+        momentumHours:   num('watchdog_momentum_hours', 2),
+        // 'bypass' = Fresh Session force-removes everything down to majors +
+        //   whitelist regardless of live DOM screener visibility (a coin must
+        //   re-earn its spot via a fresh 8/20min cycle).
+        // 'smart'  = Fresh Session still wipes all backend history/clocks, but
+        //   the browser's VETO_PRUNE keeps protecting any coin still visible
+        //   on the live screener — same "don't remove what's genuinely still
+        //   there" behavior it already applies to normal prune cycles.
+        freshSessionVetoMode: str('fresh_session_veto_mode', 'bypass', ['bypass', 'smart']),
     };
 }
 
@@ -863,7 +1006,6 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     let newGraduates = [];
 
     const now = Date.now();
-    const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString();
     const eightHoursAgo = new Date(now - 8 * 60 * 60 * 1000).toISOString();
 
     // --- 0. FETCH SYSTEM SETTINGS AND GHOST QUEUE ---
@@ -888,6 +1030,38 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     // Full EXCHANGE:TICKER.P format — these will be force-added to finalSet below.
     const whitelistFullSet = new Set(whitelistRows.map(r => `${r.exchange}:${r.ticker}`));
 
+    // --- 0.5 FRESH SESSION — highest priority, overrides even rehydration ---
+    // A manual reset was requested. Don't run the normal per-coin evaluation
+    // at all this call — Stream A's raw scan still has whatever's currently
+    // visible, but flowing that straight into activeList would immediately
+    // refill the watchlist with unearned coins, defeating the entire point
+    // ("only listen to what the browser freshly re-discovers going forward").
+    // Return just the minimal baseline; every other coin has to earn its way
+    // back in through the normal BIRTH -> 8min -> 20min -> momentum-watch path.
+    const hasFreshSessionPending = _consumeFreshSessionPending();
+    if (hasFreshSessionPending) {
+        const PERMANENT_MAJORS_FS = ['BINANCE:BTCUSDT.P', 'BINANCE:ETHUSDT.P'];
+        const whitelistPins = whitelistRows.map(r => `${r.exchange}:${r.ticker}`);
+        const freshTargets = _dedupeFullTickers([...PERMANENT_MAJORS_FS, ...whitelistPins]);
+        const vetoMode = _getWatchdogSettings().freshSessionVetoMode;
+        console.warn(`[FRESH-SESSION] 🧹 Sending minimal baseline (${freshTargets.length} coins: majors + whitelist), veto_mode=${vetoMode} — browser will wipe local state and the TV watchlist to match.`);
+        _markFreshSessionConsumed();
+        return {
+            ai_suggestion: "FRESH_SESSION",
+            active_list: freshTargets,
+            prune_list: [],
+            new_graduates: [],
+            master_targets: freshTargets,
+            action_required: "FRESH_SESSION",
+            // Tells the browser whether this reset should force-remove coins
+            // still visible on the live screener ('bypass', default) or still
+            // respect VETO_PRUNE and only remove what's genuinely off-screener
+            // ('smart'). Adjustable via POST /api/ghosts/watchdog-settings
+            // { freshSessionVetoMode }. See coin_scanner.js v20.13.
+            veto_mode: vetoMode,
+        };
+    }
+
     // --- 1. THE 8-HOUR STABILITY GUARD (Ghost-Volume rule only) ---
     // Distinct from the per-coin confidence clock below — this tests whether
     // the SYSTEM has enough scan density to trust the cohort average-volume
@@ -902,8 +1076,9 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     // --- 1.5 WATCHDOG CONFIDENCE CLOCK — settings + gap detection ---
     const watchdogSettings = _getWatchdogSettings();
     _checkMonitoringGap(watchdogSettings.gapToleranceMin);
-    const settleMs = watchdogSettings.settleHours * 3600000;
-    const ghostMs  = watchdogSettings.ghostHours * 3600000;
+    const settleMs   = watchdogSettings.settleHours * 3600000;
+    const ghostMs    = watchdogSettings.ghostHours * 3600000;
+    const momentumMs = watchdogSettings.momentumHours * 3600000;
 
     // --- 2. ZERO-STATE REHYDRATION ---
     if (clientWatchlistCount === 0) {
@@ -948,13 +1123,31 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
         }
     }
 
-    // --- 3. GET HISTORICAL PICKS (Last 2 Hours) ---
-    // [PHASE 43] Extended to 2 hours to rigidly bridge Automa cooldown UI gaps.
+    // --- 3. GRADUATES CURRENTLY UNDER MOMENTUM WATCH (or already verified) ---
+    // [SUPERSEDED 2026-08-19] Replaces the old blind, unverified "any STABLE
+    // pick in the last 2 hours" window (see CLAUDE.md "Momentum Watcher").
+    // Force-inclusion is now driven by real state on coin_lifecycles, not a
+    // fixed timer — a graduate stays force-included for exactly as long as
+    // its momentum_watch is active, or forever-normal once momentum_verified.
+    //
+    // This also fixes a real bug found while tracing an Automa storm: the OLD
+    // query pulled ALL distinct (exchange,ticker) pairs ever logged for a
+    // ticker, so a coin graduated under two different exchanges (observed:
+    // SNXX via both OKX and BITGET) fed BOTH into the raw target set every
+    // cycle — _dedupeFullTickers then had to strip one out on every single
+    // call, which is very likely why action_required stayed "hot" constantly.
+    // Only the MOST RECENT logged exchange per ticker is used now.
     const historicalPicks = db.prepare(`
-        SELECT DISTINCT exchange, ticker 
-        FROM area1_scout_logs 
-        WHERE type IN ('STABLE', 'ORPHANED_STABLE_RETRY') AND timestamp > ?
-    `).all(twoHoursAgo);
+        SELECT a.exchange, a.ticker
+        FROM area1_scout_logs a
+        JOIN coin_lifecycles c ON c.ticker = a.ticker
+        WHERE a.type IN ('STABLE', 'ORPHANED_STABLE_RETRY')
+          AND (c.momentum_watch_started_at IS NOT NULL OR c.momentum_verified = 1)
+          AND a.timestamp = (
+              SELECT MAX(a2.timestamp) FROM area1_scout_logs a2
+              WHERE a2.ticker = a.ticker AND a2.type IN ('STABLE', 'ORPHANED_STABLE_RETRY')
+          )
+    `).all();
     const historicalTargetSet = new Set(historicalPicks.map(p => `${p.exchange}:${p.ticker}`));
 
     // --- 4. RELATIVE VOLUME CALCULATION ---
@@ -1061,10 +1254,9 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
         // window begins at birth, same instant as today's born_at).
         const nowISO = new Date().toISOString();
         const existingLifecycle = db.prepare(
-            'SELECT clock_start_at, born_at FROM coin_lifecycles WHERE ticker = ?'
+            'SELECT clock_start_at, born_at, momentum_watch_started_at, momentum_proven, momentum_verified FROM coin_lifecycles WHERE ticker = ?'
         ).get(cleanTicker);
         const clockStartAt = existingLifecycle?.clock_start_at || existingLifecycle?.born_at || nowISO;
-        const isSettled = (now - new Date(clockStartAt).getTime()) >= settleMs;
 
         // [LIFECYCLE TRACKING - Update Last Seen & Ensure Exists]
         // clock_start_at is intentionally NOT touched here on the UPDATE path —
@@ -1078,16 +1270,65 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
                 status = CASE WHEN status = 'DEAD' THEN 'ACTIVE' ELSE status END
         `).run(cleanTicker, nowISO, nowISO, nowISO);
 
+        // [MOMENTUM WATCHER] See CLAUDE.md "Momentum Watcher". A coin that
+        // graduated (GATE_20/STABLE) carries momentum_watch_started_at instead
+        // of waiting out settle_hours. While the window is open it's protected
+        // from every normal prune check — the ONLY question that matters is
+        // "did it ever show real momentum." Resolved once, at window-close:
+        // PASS -> becomes a normal coin (momentum_verified=1, bypasses
+        // settle_hours going forward, since it already proved something
+        // stronger). FAIL -> discarded now, not after another 12h/36h wait —
+        // that's the whole point of replacing the old blind 2h window.
+        const underMomentumWatch = !!existingLifecycle?.momentum_watch_started_at;
+        let momentumJustPassed = false;
+        let momentumJustFailed = false;
+
+        if (underMomentumWatch) {
+            const watchElapsedMs = now - new Date(existingLifecycle.momentum_watch_started_at).getTime();
+            const showsMomentumNow = (d.score > 30) || (d.breakout === 1);
+            const provenSoFar = existingLifecycle.momentum_proven === 1 || showsMomentumNow;
+
+            if (watchElapsedMs >= momentumMs) {
+                if (provenSoFar) {
+                    db.prepare(
+                        "UPDATE coin_lifecycles SET momentum_watch_started_at = NULL, momentum_proven = 0, momentum_verified = 1 WHERE ticker = ?"
+                    ).run(cleanTicker);
+                    momentumJustPassed = true;
+                    console.log(`[MOMENTUM-WATCHER] ✅ ${cleanTicker} proved momentum within ${watchdogSettings.momentumHours}h — verified, now a normal tracked coin.`);
+                } else {
+                    db.prepare(
+                        "UPDATE coin_lifecycles SET momentum_watch_started_at = NULL, momentum_proven = 0 WHERE ticker = ?"
+                    ).run(cleanTicker);
+                    momentumJustFailed = true;
+                    console.log(`[MOMENTUM-WATCHER] ❌ ${cleanTicker} showed no momentum in ${watchdogSettings.momentumHours}h — discarding now.`);
+                }
+            } else if (showsMomentumNow && existingLifecycle.momentum_proven !== 1) {
+                db.prepare("UPDATE coin_lifecycles SET momentum_proven = 1 WHERE ticker = ?").run(cleanTicker);
+            }
+        }
+
+        // Still genuinely inside its window (not resolved either way this cycle) —
+        // protected from every normal check below, same as PERMANENT_MAJORS.
+        const stillWatchingMomentum = underMomentumWatch && !momentumJustPassed && !momentumJustFailed;
+
+        const isSettled = momentumJustPassed
+            || existingLifecycle?.momentum_verified === 1
+            || (now - new Date(clockStartAt).getTime()) >= settleMs;
+
         const isProtected = PERMANENT_MAJORS.includes(fullTicker)
             || protectedAltcoins.has(fullTicker)
-            || whitelistTickers.has(cleanTicker); // user whitelist — never ghost
+            || whitelistTickers.has(cleanTicker) // user whitelist — never ghost
+            || stillWatchingMomentum;
 
         let shouldPrune = false;
         let pruneReason = "";
-        // [WATCHDOG CLOCK] A coin younger than settle_hours is never judged —
-        // same treatment as a protected coin, but for a different reason (not
-        // enough continuous data yet, not "this coin is special").
-        if (!isProtected && isSettled) {
+        if (momentumJustFailed) {
+            shouldPrune = true;
+            pruneReason = `No Momentum (${watchdogSettings.momentumHours}h)`;
+        } else if (!isProtected && isSettled) {
+            // [WATCHDOG CLOCK] A coin younger than settle_hours is never judged —
+            // same treatment as a protected coin, but for a different reason (not
+            // enough continuous data yet, not "this coin is special").
             if (d.freeze === 1) {
                 shouldPrune = true;
                 pruneReason = "Frozen";
@@ -1169,14 +1410,30 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
         }
     });
 
-    newGraduates = Array.from(historicalTargetSet).filter(t => !activeList.includes(t));
-    const finalSet = new Set([...activeList, ...newGraduates, ...PERMANENT_MAJORS]);
+    // [2026-08-20] GATED ADDITION — closes the unconditional-add gap.
+    // Previously `activeList` (every coin the raw Stream A macro scan currently
+    // matches, zero gating) was dumped straight into finalSet/master_targets —
+    // the moment a coin flashed on the screener it was pushed onto the real TV
+    // watchlist via Automa, regardless of whether it ever passed the browser's
+    // FE 8/20-min gate. That's why Fresh Session resets never stuck: the very
+    // next scan cycle re-added anything currently matching the screener.
+    // master_targets now comes ONLY from historicalTargetSet — coins that
+    // actually graduated (logged a real STABLE/ORPHANED_STABLE_RETRY pick to
+    // area1_scout_logs via /qualified-pick) and are still within their
+    // momentum-watch window or already momentum_verified. `activeList` is kept
+    // only for the informational `active_list` response field (not consumed by
+    // the browser) — it no longer feeds master_targets.
+    newGraduates = Array.from(historicalTargetSet);
+    const finalSet = new Set([...historicalTargetSet, ...PERMANENT_MAJORS]);
 
     // Exclude prunes
     pruneList.forEach(p => finalSet.delete(p));
     // Super-protect — these are always present regardless of pruning
     PERMANENT_MAJORS.forEach(p => finalSet.add(p));
-    protectedAltcoins.forEach(p => finalSet.add(p));
+    // NOTE: protectedAltcoins (top-5 by raw score) is intentionally NOT added
+    // to finalSet here anymore — it still protects an already-graduated coin
+    // from prune checks (via isProtected below), but no longer force-adds an
+    // ungraduated coin to the watchlist just for ranking high on the raw scan.
     // Whitelist pins — user explicitly chose these coins; always in master_targets.
     // Added AFTER the prune exclusion so they cannot be evicted by pruneList,
     // mirroring the same guarantee as PERMANENT_MAJORS (BTC/ETH).
@@ -1269,6 +1526,14 @@ app.post('/qualified-pick', (req, res) => {
             } else {
                 db.prepare("UPDATE coin_lifecycles SET last_seen_at = ?, status = 'ACTIVE' WHERE ticker = ?").run(now, ticker);
             }
+            // [MOMENTUM WATCHER] A genuine GATE_20 graduation starts (or restarts)
+            // the momentum-watch window — this REPLACES settle_hours for this coin
+            // going forward, not stacks on top of it. Reset momentum_proven/verified
+            // too: passing once does not grandfather a coin forever — a fresh
+            // graduation is a fresh claim that deserves its own fresh verification.
+            db.prepare(
+                "UPDATE coin_lifecycles SET momentum_watch_started_at = ?, momentum_proven = 0, momentum_verified = 0 WHERE ticker = ?"
+            ).run(now, ticker);
         }
 
         // Let the UI know a pick came in
@@ -1298,7 +1563,8 @@ app.post('/qualified-pick', (req, res) => {
             new_graduates: feedback.new_graduates,
             master_targets: feedback.master_targets,
             force_prune: feedback.force_prune,
-            action_required: feedback.action_required
+            action_required: feedback.action_required,
+            veto_mode: feedback.veto_mode
         });
 
     } catch (e) {
@@ -1569,10 +1835,16 @@ app.post('/api/market-context', (req, res) => {
         // master list AND cleanWatchlist, then strip anything we just rejected.
         // This guarantees the scanner cannot keep a duplicate even if the
         // engine's master_targets is stale.
+        //
+        // EXCEPTION — FRESH_SESSION: feedback.master_targets IS the deliberately
+        // minimal majors+whitelist baseline. Merging it with cleanWatchlist here
+        // would immediately pollute it back with whatever's currently sitting on
+        // the (spammed) watchlist — exactly what a fresh session exists to escape.
         const _rejectedSet  = new Set(rejectedTickers);
         const combinedForcePrune = [...new Set([...(feedback.prune_list || []), ...(feedback.force_prune || []), ...rejectedTickers])];
-        const _forcedTargets = [...new Set([...(feedback.master_targets || []), ...cleanWatchlist])]
-            .filter(t => !_rejectedSet.has(t));
+        const _forcedTargets = feedback.action_required === 'FRESH_SESSION'
+            ? feedback.master_targets
+            : [...new Set([...(feedback.master_targets || []), ...cleanWatchlist])].filter(t => !_rejectedSet.has(t));
 
         // ── Closed-loop Automa verification ───────────────────────────────────
         // Only meaningful on a VALID snapshot. A zero-count read means the panel
@@ -1589,10 +1861,16 @@ app.post('/api/market-context', (req, res) => {
             } catch (e) {
                 console.error('[SYNC-VERIFY] reconciliation error:', e.message);
             }
+            // Round-trip proof for the Fresh Session button — a real watchlist
+            // read, not just "we sent the signal." Only meaningful on a valid
+            // snapshot for the same reason the sync report above is gated.
+            try { _checkFreshSessionConfirmation(cleanWatchlist); }
+            catch (e) { console.error('[FRESH-SESSION] confirmation check error:', e.message); }
         }
 
         // ── Determine action_required ─────────────────────────────────────────
-        // Priority: UPDATE_WATCHLIST (dedup / whitelist / failed-Automa escalation)
+        // Priority: FRESH_SESSION (manual reset, absolute top — never downgraded)
+        //           > UPDATE_WATCHLIST (dedup / whitelist / failed-Automa escalation)
         //           > REFRESH_WATCHLIST (panel unreadable) > null
         //
         // NOTE: REFRESH_WATCHLIST is now evaluated independently of the
@@ -1613,6 +1891,12 @@ app.post('/api/market-context', (req, res) => {
             _actionRequired = 'UPDATE_WATCHLIST';
         }
 
+        // FRESH_SESSION outranks everything above — a manual reset must never be
+        // silently rewritten into a generic UPDATE_WATCHLIST by this fallback logic.
+        if (feedback.action_required === 'FRESH_SESSION') {
+            _actionRequired = 'FRESH_SESSION';
+        }
+
         res.json({
             success:          true,
             message:          'Market Context Telemetry Saved',
@@ -1623,6 +1907,7 @@ app.post('/api/market-context', (req, res) => {
             rejected_tickers: rejectedTickers,
             action_required:  _actionRequired,
             master_targets:   _forcedTargets,   // duplicates physically removed
+            veto_mode:        _actionRequired === 'FRESH_SESSION' ? feedback.veto_mode : undefined,
             prune_list:       combinedForcePrune, // rejected dupes forced into prune list
             force_prune:      [...new Set([...rejectedTickers, ...(feedback.force_prune || [])])], // explicit field for scanners that key on it
             new_graduates:    feedback.new_graduates,
@@ -3072,7 +3357,7 @@ app.get('/api/ghosts/watchdog-settings', (req, res) => {
 
 app.post('/api/ghosts/watchdog-settings', (req, res) => {
     try {
-        const { settleHours, ghostHours, gapToleranceMin } = req.body || {};
+        const { settleHours, ghostHours, gapToleranceMin, momentumHours, freshSessionVetoMode } = req.body || {};
         const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
         if (settleHours !== undefined) {
@@ -3090,11 +3375,83 @@ app.post('/api/ghosts/watchdog-settings', (req, res) => {
             if (!isFinite(v)) return res.status(400).json({ error: 'gapToleranceMin must be a number' });
             _setWatchdogSetting('watchdog_gap_tolerance_min', clamp(v, 1, 120));
         }
+        if (momentumHours !== undefined) {
+            const v = parseFloat(momentumHours);
+            if (!isFinite(v)) return res.status(400).json({ error: 'momentumHours must be a number' });
+            _setWatchdogSetting('watchdog_momentum_hours', clamp(v, 0.25, 24));
+        }
+        if (freshSessionVetoMode !== undefined) {
+            if (!['bypass', 'smart'].includes(freshSessionVetoMode)) {
+                return res.status(400).json({ error: "freshSessionVetoMode must be 'bypass' or 'smart'" });
+            }
+            _setWatchdogSetting('fresh_session_veto_mode', freshSessionVetoMode);
+        }
 
         const updated = _getWatchdogSettings();
-        console.log(`[WATCHDOG-CLOCK] ⚙️  Settings updated: settle=${updated.settleHours}h ghost=${updated.ghostHours}h gapTolerance=${updated.gapToleranceMin}m`);
+        console.log(`[WATCHDOG-CLOCK] ⚙️  Settings updated: settle=${updated.settleHours}h ghost=${updated.ghostHours}h gapTolerance=${updated.gapToleranceMin}m momentum=${updated.momentumHours}h`);
         io.emit('ghost-update', { action: 'watchdog-settings', ...updated });
         res.json({ success: true, ...updated });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Fresh Session — manual "burn it down and start over" reset. Requires an
+// explicit confirm flag; this is destructive (clears accumulated graduation/
+// ghost/sync history and the actual TV watchlist down to majors+whitelist)
+// and is never triggered automatically. See performFreshSessionReset() for
+// exactly what is and isn't touched.
+app.post('/api/watchlist/fresh-session', (req, res) => {
+    try {
+        if (req.body?.confirm !== true) {
+            return res.status(400).json({
+                error: 'confirm:true required — this is destructive (clears watchlist history and resets the TV watchlist to majors + whitelist).',
+            });
+        }
+        const { counts, eventId } = performFreshSessionReset();
+        io.emit('ghost-update', { action: 'fresh-session', counts, eventId });
+        io.emit('market-context-update', { timestamp: new Date().toISOString(), counts: { screener: 0, watchlist: 0 }, freshSession: true });
+        res.json({
+            success: true,
+            message: 'Fresh session armed — waiting for the browser to check in and the reset to actually take effect.',
+            cleared: counts,
+            eventId,
+        });
+    } catch (e) {
+        console.error('[FRESH-SESSION] error:', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Round-trip status for the Fresh Session button — lets the widget show an
+// honest "waiting to hear back" state instead of declaring success on request
+// alone, plus a persistent log of recent resets for future reference.
+app.get('/api/watchlist/fresh-session-status', (req, res) => {
+    try {
+        const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 5));
+        const rows = db.prepare(
+            'SELECT * FROM fresh_session_events ORDER BY id DESC LIMIT ?'
+        ).all(limit).map(r => {
+            const requestedMs = new Date(r.requested_at).getTime();
+            const consumedMs  = r.consumed_at  ? new Date(r.consumed_at).getTime()  : null;
+            const confirmedMs = r.confirmed_at ? new Date(r.confirmed_at).getTime() : null;
+            return {
+                id:                r.id,
+                requestedAt:       r.requested_at,
+                consumedAt:        r.consumed_at,
+                confirmedAt:       r.confirmed_at,
+                status:            r.status,
+                lastCheckedAt:     r.last_checked_at,
+                lastExtraCount:    r.last_extra_count,
+                clearedCounts:     r.cleared_counts ? JSON.parse(r.cleared_counts) : null,
+                expectedCount:     r.expected_targets ? JSON.parse(r.expected_targets).length : 0,
+                // Timings, in seconds, for display — null where not yet reached.
+                requestToConsumeSec:  consumedMs  ? Math.round((consumedMs  - requestedMs) / 1000) : null,
+                consumeToConfirmSec:  (consumedMs && confirmedMs) ? Math.round((confirmedMs - consumedMs) / 1000) : null,
+                totalRoundTripSec:    confirmedMs ? Math.round((confirmedMs - requestedMs) / 1000) : null,
+            };
+        });
+        res.json({ success: true, events: rows });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Institutional Conviction Engine - Bidirectional v20.7 (Automa Verify & Self-Heal)
+// @name         Institutional Conviction Engine - Bidirectional v20.13 (Fresh Session Bypasses Veto)
 // @namespace    http://tampermonkey.net/
-// @version      20.7
-// @description  v20.7: post-Automa verification — after firing Automa the script re-reads the watchlist and detects WIPE (cleared but not re-added) or PARTIAL ADD, then auto-retries with backoff; REFRESH_WATCHLIST recursion guard stops the telemetry storm. v20.6: REFRESH_WATCHLIST signal. v20.5: screener snap cached by monitor(), absolute-index column mapping. v20.4: full-format diff, cross-exchange guard, always-fresh telemetry.
+// @version      20.13
+// @description  v20.13: FRESH_SESSION removals now bypass VETO_PRUNE — previously any coin still visible on the live screener at reset time was protected from removal by the same veto that guards normal operation, so a hard reset could never actually reach the majors+whitelist baseline; it just stalled at "whatever the screener currently shows". A reset now forces removal regardless, and a legitimately-active coin simply re-earns its spot through a fresh 8/20min cycle. v20.12: clipboard re-assert (added in v20.11) is now scoped to RETRY attempts only (automaAttempt > 0) — refreshing on every 10s poll during the routine, usually-successful FIRST attempt meant hijacking the user's system clipboard constantly, interfering with their own parallel copy/paste work. Now it only kicks in once Automa has already failed once and we're actively retrying — a rare, already-degraded case where the protection is worth the tradeoff. v20.10: FRESH_SESSION signal — manual dashboard-triggered reset to majors + whitelist. v20.9: master_targets diff checks the live screener before honoring any removal. v20.8: closes the previous Automa tab before opening a new one; hard minimum interval between any two fires. v20.7: post-Automa verification, WIPE/PARTIAL_ADD detection + retry. v20.6: REFRESH_WATCHLIST signal. v20.5: screener snap cached by monitor(), absolute-index column mapping. v20.4: full-format diff, cross-exchange guard, always-fresh telemetry.
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
@@ -42,6 +42,16 @@
         AUTOMA_VERIFY_MAX_MS: 240000,    // ceiling; +1s per coin is added on top
         AUTOMA_MAX_RETRIES: 3,           // give up after this many, let backend take over
         AUTOMA_PARTIAL_RATIO: 0.7,       // <70% of expected coins = partial-add failure
+        // v20.8: hard floor between ANY two fireAutoma() calls, regardless of
+        // trigger source. isForcedUpdate correctly bypasses the 15-min Automa
+        // cooldown so a real fix reaches TV fast — but it was bypassing it with
+        // NO floor at all. Observed: a busy ticker's normal pipeline activity
+        // (qualified-pick every 10-30s) combined with a stuck wipe (action_required
+        // staying UPDATE_WATCHLIST) fired Automa every 10-28 seconds for minutes —
+        // never letting one run finish before the next interrupted it. That is very
+        // likely the actual cause of repeating "element-not-found": Automa was
+        // always mid-load in a brand-new tab when the next fire hit it.
+        AUTOMA_MIN_REFIRE_MS: 60000,
         // Guard against the v20.6 REFRESH_WATCHLIST feedback loop: that handler
         // calls sendTelemetry(), whose response can request another refresh —
         // unbounded recursion (observed: 74 empty snapshots in 13 minutes).
@@ -79,6 +89,14 @@
     let automaAttempt       = 0;     // consecutive failed pushes for the current target set
     let automaExpectedList  = [];    // what we last asked Automa to install
     let lastRefreshAt       = 0;     // REFRESH_WATCHLIST recursion guard
+    // v20.8: handle of the tab opened by the LAST fireAutoma() call. GM_openInTab
+    // never closed prior tabs — every retry (script-side backoff AND backend-driven
+    // UPDATE_WATCHLIST arriving mid-retry) opened ANOTHER tab, none of which were
+    // ever cleaned up. Observed: 6+ tabs accumulated during one unresolved wipe.
+    // Worse than clutter — GM_setClipboard is a single shared resource, so two
+    // overlapping Automa runs can race and paste the wrong/partial list into each
+    // other's run, which can itself be the reason a wipe never resolves.
+    let automaTabHandle     = null;
 
     // =========================================================================
     // 🗂️ PRECISION AUDIT LOGGER
@@ -192,6 +210,24 @@
             auditLog("AUTOMA_SKIPPED", null, "Refusing to push an EMPTY target list (would wipe the watchlist).", "PRUNE");
             return;
         }
+        // v20.8: hard floor — refuse to fire again before the last run has had a
+        // real chance to complete, no matter which caller is asking. isForcedUpdate
+        // bypasses the NORMAL 15-min cooldown by design, but that must never mean
+        // "no floor at all" — a storm of independent triggers (e.g. a busy ticker's
+        // pipeline events arriving every few seconds while action_required stays
+        // hot) was re-launching Automa every 10-28s, so it never finished a single
+        // run before being interrupted by the next.
+        const sinceLastFireMs = window.lastAutomaTriggerMs ? Date.now() - window.lastAutomaTriggerMs : Infinity;
+        if (sinceLastFireMs < CONFIG.AUTOMA_MIN_REFIRE_MS) {
+            auditLog(
+                "AUTOMA_THROTTLED",
+                null,
+                `Suppressed re-fire — last Automa launch was ${(sinceLastFireMs / 1000).toFixed(0)}s ago, ` +
+                `floor is ${CONFIG.AUTOMA_MIN_REFIRE_MS / 1000}s. Letting the in-flight run breathe.`,
+                "BUFFER"
+            );
+            return;
+        }
         // Cancel any queued retry. The backend can issue an UPDATE_WATCHLIST while
         // a script-side retry is still counting down; without this, two Automa tabs
         // fire moments apart and their clear/add sequences interleave — which can
@@ -199,9 +235,19 @@
         if (automaRetryTimer)  { clearTimeout(automaRetryTimer);  automaRetryTimer  = null; }
         if (automaVerifyTimer) { clearTimeout(automaVerifyTimer); automaVerifyTimer = null; }
 
+        // v20.8: close the PREVIOUS Automa tab (if it's still open) before opening
+        // a new one. Cancelling the JS timers above stops US from re-checking a
+        // stale run, but it never closed the actual browser tab — Automa could
+        // still be mid-run in it, racing the new tab we're about to open on the
+        // same shared clipboard.
+        if (automaTabHandle && !automaTabHandle.closed) {
+            try { automaTabHandle.close(); auditLog("AUTOMA_TAB_CLOSED", null, "Closed previous Automa tab before firing a new one.", "SYSTEM"); }
+            catch (e) { /* tab may already be gone — non-fatal */ }
+        }
+
         GM_setClipboard(targets.join(','));
         auditLog("AUTOMA_TRIGGERED", null, `Copied ${targets.length} coins. Firing new tab.${note || ''}`, "SYNC");
-        GM_openInTab("https://www.tradingview.com/cex-screener/lEINSjG1/", { active: false, insert: true, setParent: true });
+        automaTabHandle = GM_openInTab("https://www.tradingview.com/cex-screener/lEINSjG1/", { active: false, insert: true, setParent: true });
 
         window.lastAutomaTriggerMs = Date.now();
         automaExpectedList = targets.slice();
@@ -265,6 +311,20 @@
     async function pollAutomaResult(deadline) {
         automaVerifyTimer = null;
         if (automaExpectedList.length === 0) return;
+
+        // v20.11 (revised): GM_setClipboard writes the REAL system clipboard,
+        // not an isolated one — anything else copying text in the gap between
+        // our copy and Automa's actual paste can silently clobber it. BUT the
+        // fresh/first attempt is the common, usually-successful case, and
+        // refreshing on every 10s poll during it means hijacking the user's
+        // clipboard constantly even when nothing is wrong — real interference
+        // with their own copy/paste work running in parallel. So this ONLY
+        // re-asserts once we're already in a RETRY (automaAttempt > 0) — a
+        // rare, already-degraded situation where the extra protection is
+        // worth it, not the routine case.
+        if (automaAttempt > 0) {
+            GM_setClipboard(automaExpectedList.join(','));
+        }
 
         await ensureWatchlistPanelOpen();
         const st = _automaMatchState();
@@ -341,7 +401,36 @@
         //   corrected immediately (no 15-min wait for dupes to clear).
         const forcePrune     = Array.isArray(serverInfo.force_prune) ? serverInfo.force_prune : [];
         const actionRequired = serverInfo.action_required || null;
-        const isForcedUpdate = actionRequired === 'UPDATE_WATCHLIST' || actionRequired === 'RESET_WATCHLIST';
+        const isForcedUpdate = actionRequired === 'UPDATE_WATCHLIST' || actionRequired === 'RESET_WATCHLIST' || actionRequired === 'FRESH_SESSION';
+
+        // ── v20.10 FRESH_SESSION ─────────────────────────────────────────────────
+        // Manual "burn it down and start over" reset, triggered from the dashboard.
+        // Wipe every piece of local pipeline memory — nothing carries forward, no
+        // half-finished 8/20min timers, no locked graduates, no cached target set.
+        // Falls through to the master_targets diff below, which will now compute
+        // a big "removals" list (everything currently on the watchlist that isn't
+        // in the new minimal majors+whitelist baseline) and fire Automa to match.
+        if (actionRequired === 'FRESH_SESSION') {
+            const clearedCounts = {
+                active: activeMasterSet.size, pipeline: pipelineRegistry.size,
+                graduated: graduatedSet.size, serverTargets: serverTargetSet.size,
+            };
+            activeMasterSet.clear();
+            pipelineRegistry.clear();
+            graduatedSet.clear();
+            serverTargetSet.clear();
+            automaAttempt = 0;
+            auditLog(
+                "FRESH_SESSION", null,
+                `Backend ordered a clean slate. Cleared local state (active:${clearedCounts.active} ` +
+                `pipeline:${clearedCounts.pipeline} graduated:${clearedCounts.graduated} ` +
+                `targets:${clearedCounts.serverTargets}). Watchlist will reset to majors + whitelist.`,
+                "PRUNE"
+            );
+            saveState();
+            // Fall through — the master_targets diff below now fires Automa
+            // against the fresh (empty) local state and the minimal target list.
+        }
 
         // ── 0. REFRESH_WATCHLIST ─────────────────────────────────────────────────
         // Backend detected ≥2 consecutive zero-count snapshots in 5m, meaning the
@@ -385,11 +474,19 @@
             });
         }
 
-        // ── 2. Normal prune list (VETO still applies — coin must be off-screener) ──
-        if (serverInfo.prune_list && Array.isArray(serverInfo.prune_list)) {
-            const liveScreenerKeys = new Set(getMarketSnapshot());
-            const forceSet         = new Set(forcePrune);
+        // Computed once, reused by both the prune_list block below AND the
+        // master_targets diff — the browser's live, right-now view of the raw
+        // screener DOM. Both removal paths must agree on the same snapshot.
+        const liveScreenerKeys = new Set(getMarketSnapshot());
+        const forceSet         = new Set(forcePrune);
 
+        // ── 2. Normal prune list (VETO still applies — coin must be off-screener) ──
+        // NOTE: this block only affects PRE-graduation pipeline bookkeeping
+        // (activeMasterSet/pipelineRegistry). It does NOT protect a coin that
+        // has already graduated and is sitting in the real TV watchlist — that
+        // removal happens via the master_targets diff below, which is where
+        // v20.9 adds the equivalent live-screener check.
+        if (serverInfo.prune_list && Array.isArray(serverInfo.prune_list)) {
             serverInfo.prune_list.forEach(tickerKey => {
                 if (forceSet.has(tickerKey)) return;   // already handled above
                 if (activeMasterSet.has(tickerKey)) {
@@ -418,10 +515,45 @@
             //
             // Full-format comparison: BINANCE:XRPUSDT.P ≠ BYBIT:XRPUSDT.P → diff = 2
             // → Automa fires with the correct BINANCE: version in clipboard.
-            const targetSetCheck  = new Set(serverInfo.master_targets);
             const currentSetCheck = new Set(area2WatchlistSet);  // full EXCHANGE:TICKER.P
+            const rawTargetSet    = new Set(serverInfo.master_targets);
+            const rawRemovals     = Array.from(area2WatchlistSet).filter(x => !rawTargetSet.has(x));
 
-            const additions = serverInfo.master_targets.filter(x => !currentSetCheck.has(x));
+            // v20.9: live-screener veto for THIS removal path. The prune_list
+            // block above only protects pre-graduation pipeline bookkeeping — it
+            // does nothing for a coin that's already graduated and sitting in the
+            // real watchlist, which is removed via this diff instead. Before a
+            // removal here is honored, check whether the browser can still
+            // genuinely see the coin on the raw screener right now; if so, keep
+            // it in what we actually push to Automa instead of silently dropping
+            // a coin the backend's (necessarily slightly stale) data got wrong.
+            // v20.13: during FRESH_SESSION, the backend decides whether the
+            // reset should bypass VETO_PRUNE ('bypass', the default — force
+            // removal down to majors+whitelist regardless of live screener
+            // visibility, so the watchlist doesn't stall at "whatever the
+            // screener currently shows") or still respect it ('smart' — keep
+            // protecting a coin that's genuinely still on-screener, same as
+            // normal operation). Controlled server-side via POST
+            // /api/ghosts/watchdog-settings { freshSessionVetoMode }, carried
+            // down per-response as serverInfo.veto_mode — no script edit
+            // needed to flip this going forward.
+            const freshSessionBypassVeto = actionRequired === 'FRESH_SESSION' && serverInfo.veto_mode !== 'smart';
+            const vetoedRemovals = freshSessionBypassVeto
+                ? []
+                : rawRemovals.filter(x => liveScreenerKeys.has(x));
+            if (freshSessionBypassVeto && rawRemovals.length > 0) {
+                auditLog("FRESH_SESSION", null, `Veto bypassed for reset (mode: ${serverInfo.veto_mode || 'bypass'}) — forcing removal of ${rawRemovals.length} coin(s) still on-screener.`, "PRUNE");
+            }
+            vetoedRemovals.forEach(x => auditLog(
+                "VETO_PRUNE", x,
+                "Ignored backend removal. Coin is still actively visible on screener.", "SYSTEM"
+            ));
+            const effectiveTargets = vetoedRemovals.length > 0
+                ? Array.from(new Set([...serverInfo.master_targets, ...vetoedRemovals]))
+                : serverInfo.master_targets;
+
+            const targetSetCheck = new Set(effectiveTargets);
+            const additions = effectiveTargets.filter(x => !currentSetCheck.has(x));
             const removals  = Array.from(area2WatchlistSet).filter(x => !targetSetCheck.has(x));
             const diffCount = additions.length + removals.length;
 
@@ -440,7 +572,7 @@
                     // ~25s later and auto-retried if Automa wiped or half-filled it.
                     const bypassNote = (!cooldownExpired && isForcedUpdate) ? ` [COOLDOWN BYPASSED — ${actionRequired}]` : '';
                     automaAttempt = 0;   // fresh target set — reset the retry counter
-                    fireAutoma(serverInfo.master_targets, bypassNote);
+                    fireAutoma(effectiveTargets, bypassNote);
                 } else {
                     const elapsed = now - window.lastAutomaTriggerMs;
                     const minLeft = ((COOLDOWN_MS - elapsed) / 60000).toFixed(1);

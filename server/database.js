@@ -352,6 +352,24 @@ _safeAddColumn('ghost_approval_queue', 'scored_at TEXT', 'scored_at');
 _safeAddColumn('coin_lifecycles', 'clock_start_at TEXT', 'clock_start_at');
 db.exec(`UPDATE coin_lifecycles SET clock_start_at = born_at WHERE clock_start_at IS NULL`);
 
+// Momentum Watcher (2026-08-19) — see CLAUDE.md "Momentum Watcher" section.
+// A coin that graduates (GATE_20/STABLE) starts a momentum_watch window
+// instead of waiting out the ordinary settle_hours gate. While
+// momentum_watch_started_at is set, the coin is force-included in
+// master_targets (replacing the old blind, unverified 2h newGraduates
+// window) and its Stream A score/breakout is observed each cycle.
+//   momentum_proven   — has real momentum been seen at any point in the
+//                        CURRENT watch window (reset whenever the window restarts)
+//   momentum_verified — has this coin EVER passed a watch window; once set,
+//                        it bypasses settle_hours going forward (it already
+//                        proved something stronger). A fresh re-graduation
+//                        (dropped off and re-earned GATE_20 later) starts a
+//                        brand new window and resets both fields — passing
+//                        once does not grant permanent lifetime exemption.
+_safeAddColumn('coin_lifecycles', 'momentum_watch_started_at TEXT', 'momentum_watch_started_at');
+_safeAddColumn('coin_lifecycles', 'momentum_proven INTEGER DEFAULT 0', 'momentum_proven');
+_safeAddColumn('coin_lifecycles', 'momentum_verified INTEGER DEFAULT 0', 'momentum_verified');
+
 // Unique indexes on payload_hash (where present). NULLs allowed — legacy rows skipped.
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_smart_level_payload_hash ON smart_level_events(payload_hash) WHERE payload_hash IS NOT NULL;`);
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inst_interest_payload_hash ON institutional_interest_events(payload_hash) WHERE payload_hash IS NOT NULL;`);

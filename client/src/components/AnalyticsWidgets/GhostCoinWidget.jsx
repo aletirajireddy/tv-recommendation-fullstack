@@ -22,8 +22,80 @@ function GhostQueue({ containerRef }) {
     const [settleHours, setSettleHours]           = useState(12);
     const [ghostHours, setGhostHours]              = useState(36);
     const [gapToleranceMin, setGapToleranceMin]   = useState(15);
+    const [momentumHours, setMomentumHours]        = useState(2);
+    // How a Fresh Session reset treats a coin still visible on the live DOM
+    // screener: 'bypass' force-removes it anyway (re-earns via a fresh 8/20min
+    // cycle); 'smart' still protects it via VETO_PRUNE, same as normal prune
+    // cycles. See coin_scanner.js v20.13.
+    const [freshSessionVetoMode, setFreshSessionVetoMode] = useState('bypass');
     const [settingsOpen, setSettingsOpen]          = useState(false);
     const [savingSettings, setSavingSettings]      = useState(false);
+
+    // Fresh Session — manual, destructive reset. Two-step confirm: first click
+    // arms it (shows "Confirm?" for a few seconds), second click within that
+    // window actually fires it. Auto-disarms if you don't confirm in time, so
+    // an accidental second click days later can't trigger it.
+    //
+    // A request only PROVES intent — it does not prove Automa actually cleared
+    // the live watchlist. So we don't declare success on the POST response; we
+    // poll /fresh-session-status until the backend has seen a real watchlist
+    // snapshot confirming (or failing to confirm) the reset actually landed.
+    const [freshSessionArmed, setFreshSessionArmed] = useState(false);
+    const [freshSessionBusy, setFreshSessionBusy]   = useState(false);
+    const [freshSessionEvents, setFreshSessionEvents] = useState([]);
+    const [freshSessionLogOpen, setFreshSessionLogOpen] = useState(false);
+    const freshSessionArmTimer = useRef(null);
+    const freshSessionPollTimer = useRef(null);
+
+    const fetchFreshSessionStatus = useCallback(async () => {
+        try {
+            const res = await fetch('/api/watchlist/fresh-session-status?limit=10');
+            if (res.ok) {
+                const data = await res.json();
+                setFreshSessionEvents(data.events || []);
+                return data.events || [];
+            }
+        } catch (e) { console.error('Fresh session status fetch failed', e); }
+        return [];
+    }, []);
+
+    // Poll every 8s while the latest event is still in flight (PENDING or
+    // AWAITING_CONFIRMATION); stop once it resolves either way.
+    const pollFreshSessionUntilResolved = useCallback(() => {
+        if (freshSessionPollTimer.current) clearInterval(freshSessionPollTimer.current);
+        freshSessionPollTimer.current = setInterval(async () => {
+            const events = await fetchFreshSessionStatus();
+            const latest = events[0];
+            if (!latest || latest.status === 'CONFIRMED' || latest.status === 'TIMED_OUT') {
+                clearInterval(freshSessionPollTimer.current);
+                freshSessionPollTimer.current = null;
+            }
+        }, 8000);
+    }, [fetchFreshSessionStatus]);
+
+    const triggerFreshSession = useCallback(async () => {
+        if (!freshSessionArmed) {
+            setFreshSessionArmed(true);
+            if (freshSessionArmTimer.current) clearTimeout(freshSessionArmTimer.current);
+            freshSessionArmTimer.current = setTimeout(() => setFreshSessionArmed(false), 6000);
+            return;
+        }
+        if (freshSessionArmTimer.current) clearTimeout(freshSessionArmTimer.current);
+        setFreshSessionArmed(false);
+        setFreshSessionBusy(true);
+        try {
+            await fetch('/api/watchlist/fresh-session', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirm: true }),
+            });
+        } catch (e) { console.error('Fresh session trigger failed', e); }
+        finally {
+            setFreshSessionBusy(false);
+            await fetchFreshSessionStatus();
+            pollFreshSessionUntilResolved();
+            setFreshSessionLogOpen(true);
+        }
+    }, [freshSessionArmed, fetchFreshSessionStatus, pollFreshSessionUntilResolved]);
 
     const fetchQueue = useCallback(async () => {
         try {
@@ -46,6 +118,8 @@ function GhostQueue({ containerRef }) {
                 setSettleHours(data.settleHours);
                 setGhostHours(data.ghostHours);
                 setGapToleranceMin(data.gapToleranceMin);
+                setMomentumHours(data.momentumHours);
+                if (data.freshSessionVetoMode) setFreshSessionVetoMode(data.freshSessionVetoMode);
             }
         } catch (e) { console.error('Watchdog settings fetch failed', e); }
     }, []);
@@ -67,6 +141,23 @@ function GhostQueue({ containerRef }) {
         const interval = setInterval(fetchQueue, 30_000);
         return () => clearInterval(interval);
     }, [fetchQueue, fetchWatchdogSettings]);
+
+    // On mount: load recent fresh-session history so the log persists across
+    // reloads. If the LATEST event is still unresolved (e.g. you reloaded the
+    // page mid-wait), resume polling automatically rather than leaving it stuck.
+    useEffect(() => {
+        (async () => {
+            const events = await fetchFreshSessionStatus();
+            const latest = events[0];
+            if (latest && latest.status !== 'CONFIRMED' && latest.status !== 'TIMED_OUT') {
+                pollFreshSessionUntilResolved();
+            }
+        })();
+        return () => {
+            if (freshSessionPollTimer.current) clearInterval(freshSessionPollTimer.current);
+            if (freshSessionArmTimer.current) clearTimeout(freshSessionArmTimer.current);
+        };
+    }, [fetchFreshSessionStatus, pollFreshSessionUntilResolved]);
 
     useDataInvalidation(containerRef, fetchQueue, lastDataPush);
 
@@ -190,8 +281,10 @@ function GhostQueue({ containerRef }) {
                     fontSize: 11,
                 }}>
                     {[
+                        { key: 'momentumHours', label: 'Momentum hours', value: momentumHours, setValue: setMomentumHours, min: 0.25, max: 24, step: 0.25,
+                          hint: 'How long a freshly graduated coin has to prove real momentum (score or breakout). No momentum by then — discarded now, not after another wait. Real momentum — verified, skips settle hours going forward.' },
                         { key: 'settleHours', label: 'Settle hours', value: settleHours, setValue: setSettleHours, min: 0, max: 72, step: 1,
-                          hint: 'A coin younger than this is never judged for pruning at all.' },
+                          hint: 'A coin younger than this is never judged for pruning at all. Coins that already passed momentum-watch skip this.' },
                         { key: 'ghostHours', label: 'Ghost hours', value: ghostHours, setValue: setGhostHours, min: 1, max: 336, step: 1,
                           hint: 'Manual mode only — how long a flagged coin waits for momentum before auto-reset.' },
                         { key: 'gapToleranceMin', label: 'Gap tolerance (min)', value: gapToleranceMin, setValue: setGapToleranceMin, min: 1, max: 120, step: 1,
@@ -217,9 +310,127 @@ function GhostQueue({ containerRef }) {
                             />
                         </div>
                     ))}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}
+                        title="Controls how a Fresh Session reset treats a coin still visible on the live DOM screener. Force: removed anyway, re-earns its spot via a fresh 8/20min cycle. Smart: still protected from removal, same as normal prune cycles.">
+                        <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Fresh session veto</span>
+                        <select
+                            value={freshSessionVetoMode}
+                            onChange={e => {
+                                const v = e.target.value;
+                                setFreshSessionVetoMode(v);
+                                saveWatchdogSetting('freshSessionVetoMode', v);
+                            }}
+                            style={{
+                                width: 130, padding: '3px 6px', borderRadius: 4,
+                                border: '1px solid var(--border)', background: 'var(--bg-app)',
+                                color: 'var(--text-main)', fontSize: 12,
+                            }}
+                        >
+                            <option value="bypass">Force reset (default)</option>
+                            <option value="smart">Smart filter (keep on-screener)</option>
+                        </select>
+                    </div>
+
                     <span style={{ color: 'var(--text-muted)', fontSize: 10, opacity: savingSettings ? 1 : 0, transition: 'opacity 0.2s' }}>
                         saving…
                     </span>
+
+                    {/* Fresh Session — destructive manual reset, two-step confirm */}
+                    {(() => {
+                        const latest = freshSessionEvents[0] || null;
+                        const inFlight = latest && (latest.status === 'PENDING' || latest.status === 'AWAITING_CONFIRMATION');
+                        let statusLine = null;
+                        if (latest) {
+                            if (latest.status === 'PENDING') {
+                                statusLine = { text: '⏳ Waiting for browser check-in…', color: '#f6ad55' };
+                            } else if (latest.status === 'AWAITING_CONFIRMATION') {
+                                const elapsedS = latest.consumedAt ? Math.round((Date.now() - new Date(latest.consumedAt).getTime()) / 1000) : 0;
+                                statusLine = { text: `⏳ Action going on — waiting to hear back from the browser (${elapsedS}s)…`, color: '#f6ad55' };
+                            } else if (latest.status === 'CONFIRMED') {
+                                statusLine = { text: `✅ Confirmed — round trip ${latest.totalRoundTripSec ?? '?'}s`, color: '#68d391' };
+                            } else if (latest.status === 'TIMED_OUT') {
+                                statusLine = { text: `⚠️ Not confirmed after 15m — ${latest.lastExtraCount ?? '?'} coin(s) still on the watchlist. Automa may not have applied it.`, color: '#fc8181' };
+                            }
+                        }
+                        return (
+                            <div style={{
+                                marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 3,
+                                alignItems: 'flex-end', borderLeft: '1px solid var(--border)', paddingLeft: 12, maxWidth: 260,
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <button
+                                        onClick={() => setFreshSessionLogOpen(o => !o)}
+                                        title="Show fresh-session log"
+                                        style={{
+                                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                            width: 18, height: 18, borderRadius: 3, border: '1px solid var(--border)',
+                                            background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)',
+                                            cursor: 'pointer', fontSize: 9,
+                                        }}
+                                    >☰</button>
+                                    <button
+                                        onClick={triggerFreshSession}
+                                        disabled={freshSessionBusy || inFlight}
+                                        title="Wipes graduation/ghost/sync history and resets the TV watchlist to just majors + whitelist. Every coin has to re-earn its way back in from scratch."
+                                        style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: 5,
+                                            padding: '4px 10px', borderRadius: 4, fontSize: 11, fontWeight: 700,
+                                            cursor: (freshSessionBusy || inFlight) ? 'default' : 'pointer',
+                                            border: `1px solid ${freshSessionArmed ? '#fc8181' : 'var(--border)'}`,
+                                            background: freshSessionArmed ? 'rgba(252,129,129,0.18)' : 'rgba(255,255,255,0.03)',
+                                            color: freshSessionArmed ? '#fc8181' : 'var(--text-muted)',
+                                            opacity: (freshSessionBusy || inFlight) ? 0.5 : 1,
+                                        }}
+                                    >
+                                        <AlertTriangle size={11} />
+                                        {freshSessionBusy ? 'Sending…' : freshSessionArmed ? 'Click again to confirm' : inFlight ? 'In progress…' : 'Fresh Session'}
+                                    </button>
+                                </div>
+                                {statusLine && (
+                                    <span style={{ fontSize: 9, color: statusLine.color, textAlign: 'right' }}>
+                                        {statusLine.text}
+                                    </span>
+                                )}
+                                {freshSessionLogOpen && (
+                                    <div style={{
+                                        marginTop: 4, padding: '6px 8px', borderRadius: 4, width: '100%',
+                                        background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)',
+                                    }}>
+                                        <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 4 }}>
+                                            Fresh Session Log
+                                        </div>
+                                        {freshSessionEvents.length === 0 ? (
+                                            <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>No resets yet</div>
+                                        ) : (
+                                            <div style={{
+                                                display: 'flex', flexDirection: 'column', gap: 3,
+                                                maxHeight: 96, overflowY: 'auto', paddingRight: 2,
+                                            }}>
+                                                {/* Newest first — backend returns ORDER BY id DESC, kept as-is here */}
+                                                {freshSessionEvents.map(ev => {
+                                                    const dotColor = ev.status === 'CONFIRMED' ? '#68d391'
+                                                        : ev.status === 'TIMED_OUT' ? '#fc8181' : '#f6ad55';
+                                                    const label = ev.status === 'CONFIRMED' ? `confirmed (${ev.totalRoundTripSec ?? '?'}s)`
+                                                        : ev.status === 'TIMED_OUT' ? 'timed out'
+                                                        : ev.status === 'AWAITING_CONFIRMATION' ? 'awaiting confirmation'
+                                                        : 'pending';
+                                                    return (
+                                                        <div key={ev.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, gap: 6 }}>
+                                                            <span style={{ color: 'var(--text-muted)' }}>
+                                                                {new Date(ev.requestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                                            </span>
+                                                            <span style={{ color: dotColor, textAlign: 'right' }}>● {label}</span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
                 </div>
             )}
 
