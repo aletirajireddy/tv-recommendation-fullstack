@@ -451,6 +451,15 @@ export const useTimeStore = create((set, get) => ({
             // Initial Analytics Fetch
             get().fetchAnalytics();
             get().fetchResearch();
+            // Audit fix: alphaSquad was previously only ever populated by the
+            // 'market-context-update' socket handler or the manual "Refresh Geometry"
+            // button — never fetched on cold load. Unlike cascadeHistory and
+            // participationPulse (whose widgets already self-fetch on mount), no
+            // component calls fetchAlphaSquad() on mount, so on a fresh page load (or
+            // any load before the first live socket push) the Alpha Squad banner /
+            // AlphaScatter widget would show empty until traffic resumed. Fetch it
+            // here too, matching analytics/research.
+            get().fetchAlphaSquad();
 
         } catch (err) {
             console.error('Failed to fetch timeline:', err);

@@ -10,7 +10,21 @@ export function AlphaScatter({ onBannerClose }) {
     const activeScan = useTimeStore(s => s.activeScan);
     const refreshAll = useTimeStore(s => s.refreshAll);
     const alphaSquad = useTimeStore(s => s.alphaSquad);
+    const fetchAlphaSquad = useTimeStore(s => s.fetchAlphaSquad);
     const [isMobile, setIsMobile] = useState(false);
+
+    // Audit fix: alphaSquad was previously refreshed ONLY by the store's
+    // 'market-context-update' socket handler (isLive-gated) or a manual
+    // "Refresh Geometry" click elsewhere — this widget itself never re-fetched.
+    // Per the project's own Rule #18 (keep an interval fallback even for
+    // socket-driven data), a dropped/stalled websocket (a real risk here — see
+    // SocketService, no polling transport fallback) would leave this widget
+    // frozen indefinitely with no recovery path short of a full page reload.
+    // 5-minute safety net, same cadence as FusionDashboard's equivalent guard.
+    useEffect(() => {
+        const id = setInterval(() => fetchAlphaSquad(), 300_000);
+        return () => clearInterval(id);
+    }, [fetchAlphaSquad]);
 
     useEffect(() => {
         const mql = window.matchMedia('(pointer: coarse)');

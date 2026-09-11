@@ -168,6 +168,17 @@ export function ParticipationPulseWidget() {
     useEffect(() => { fetchParticipationPulse(); }, []);
     useDataInvalidation(containerRef, fetchParticipationPulse, lastDataPush);
 
+    // Audit fix: same gap as AlphaScatter/CascadeTrendWidget — this widget only
+    // ever refreshes via socket-driven invalidation (lastDataPush) with no interval
+    // fallback. Per Rule #18, keep a safety-net poll so a stalled/dropped websocket
+    // (SocketService has no polling transport to fall back to) doesn't leave this
+    // chart frozen until a manual page reload. 5-minute cadence, matching
+    // FusionDashboard's equivalent guard.
+    useEffect(() => {
+        const id = setInterval(() => fetchParticipationPulse(), 300_000);
+        return () => clearInterval(id);
+    }, [fetchParticipationPulse]);
+
     const [isPulsing, setIsPulsing] = useState(false);
     useEffect(() => {
         if (participationPulse && participationPulse.length > 0) {

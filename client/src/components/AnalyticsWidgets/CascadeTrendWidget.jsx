@@ -110,6 +110,17 @@ export function CascadeTrendWidget() {
     useEffect(() => { fetchAndStamp(); }, []);
     useDataInvalidation(containerRef, fetchAndStamp, lastDataPush);
 
+    // Audit fix: cascadeHistory otherwise only refreshes via the viewport-priority
+    // invalidation above, which itself only fires on the socket-driven lastDataPush
+    // signal. Per Rule #18, socket-driven refresh should always keep an interval
+    // fallback — a stalled websocket (SocketService has no polling transport to
+    // fall back to) would otherwise leave this chart frozen with no recovery short
+    // of a full page reload. 5-minute safety net, matching FusionDashboard.
+    useEffect(() => {
+        const id = setInterval(() => fetchAndStamp(), 300_000);
+        return () => clearInterval(id);
+    }, [fetchAndStamp]);
+
     // ─── Build timeline + coin series (one pass, multiple data shapes) ──────
     // tickersByChip in each bucket = { longBull: ['BTC',…], longBear:[…], … }
     // so the tooltip can show WHICH coins were in each category at that time.
