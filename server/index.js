@@ -19,6 +19,8 @@ const VolumeEventService = require('./services/VolumeEventService');
 const smartAlertsService   = require('./services/smartAlerts/service');
 const smartAlertsEvaluator = require('./services/smartAlerts/evaluator');
 const smartAlertsRouter    = require('./routes/smartAlerts');
+const telegramWatchlistRouter = require('./routes/telegramWatchlist');
+const telegramCategorySettings = require('./services/telegramSettingsManager');
 
 const app = express();
 const server = http.createServer(app);
@@ -63,6 +65,35 @@ app.use(compression({
 // Smart Alerts (EMA200-based smart alert system, ATR-normalised triggers)
 app.use('/api/smart-alerts', smartAlertsRouter);
 smartAlertsEvaluator.init({ io, db });
+
+// Telegram Coins of Interest (elevated breakout/institutional/rvol alerts for hand-picked tickers)
+app.use('/api/telegram/watchlist', telegramWatchlistRouter);
+telegramCategorySettings.seedDefaults();
+
+// GET /api/telegram/settings — per-category Telegram alert toggles
+app.get('/api/telegram/settings', (req, res) => {
+    try {
+        res.json(telegramCategorySettings.getAll());
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /api/telegram/settings — body { "telegram.category.xxx": true|false, ... }
+app.post('/api/telegram/settings', (req, res) => {
+    try {
+        const updated = {};
+        for (const [key, value] of Object.entries(req.body || {})) {
+            if (key.startsWith('telegram.category.')) {
+                telegramCategorySettings.writeKey(key, value);
+                updated[key] = value;
+            }
+        }
+        res.json({ success: true, updated });
+    } catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
 
 // ─── Price parsing helper ────────────────────────────────────────────────────
 // TradingView screeners and Tampermonkey sometimes send prices as formatted
@@ -215,6 +246,7 @@ app.get('/api/system/health', (req, res) => {
 app.post('/scan-report', (req, res) => {
     const payload = req.body;
     // console.log(`[MACRO] 📡 Incoming Scan: ${payload.results.length} results`);
+    _recordScriptVersion('A', payload.script_version);
 
     try {
         // --- V3 WRITE PATH ---
@@ -373,7 +405,7 @@ app.post('/scan-report', (req, res) => {
             try { umpire.onStreamA(payload); } catch (err) { console.error('Umpire onStreamA error:', err); }
         });
 
-        res.json({ success: true, id: payload.id });
+        res.json({ success: true, id: payload.id, activate_tab_workflow_id: _getCoordinatedActivationTarget('A') });
 
     } catch (e) {
         console.error("V3 Ingest Error:", e);
@@ -393,6 +425,19 @@ db.prepare(`
         level TEXT DEFAULT 'INFO',
         message TEXT,
         meta_json TEXT
+    )
+`).run();
+
+// Tampermonkey version tracking — each stream's script self-reports its
+// SCRIPT_VERSION constant in every payload; this is the only source of truth
+// for "is the browser actually running what we think it's running" (scripts/
+// files in this repo are just references per CLAUDE.md — never live until
+// manually pasted). One row per stream, overwritten on every ingest.
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS script_version_reports (
+        stream TEXT PRIMARY KEY,
+        reported_version TEXT,
+        last_seen_at TEXT NOT NULL
     )
 `).run();
 
@@ -429,6 +474,20 @@ db.prepare(`
         ticker   TEXT PRIMARY KEY,
         exchange TEXT NOT NULL DEFAULT 'BINANCE',
         added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    )
+`).run();
+
+// Telegram "Coins of Interest" — user-curated tickers that get elevated
+// breakout/institutional/rvol alerts on a lower bar than the general noise
+// thresholds. Independent of coin_whitelist (ghost-pruning immunity) and
+// Smart Alerts (explicit price/RSI/EMA conditions).
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS telegram_watchlist (
+        ticker        TEXT PRIMARY KEY,
+        breakout      INTEGER NOT NULL DEFAULT 1,
+        institutional INTEGER NOT NULL DEFAULT 1,
+        volume_spike  INTEGER NOT NULL DEFAULT 1,
+        added_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     )
 `).run();
 
@@ -852,6 +911,23 @@ function analyzeProactiveStrategies(payload) {
             description: `Detected ${breakouts.length} coins attempting to break key structures.`,
             tickers: breakouts
         });
+
+        // Coins of Interest — elevated alert for hand-picked tickers breaking out,
+        // independent of the rate-limited syncStrategies() eye-catcher pulse below.
+        setImmediate(() => {
+            try {
+                for (const b of breakouts) {
+                    const norm = normaliseWhitelistTicker(b.ticker);
+                    if (!norm) continue;
+                    const watched = db.prepare(
+                        'SELECT * FROM telegram_watchlist WHERE ticker = ? AND breakout = 1'
+                    ).get(norm);
+                    if (watched) {
+                        TelegramService.onWatchedSignal({ ticker: b.ticker, signalType: 'BREAKOUT' });
+                    }
+                }
+            } catch (e) { console.error('[Watchlist] Breakout hook error:', e.message); }
+        });
     }
 
     // 2. MOMENTUM STARS (High Mom + Vol Spike)
@@ -949,6 +1025,17 @@ function _getWatchdogSettings() {
         const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key);
         return (row?.value && allowed.includes(row.value)) ? row.value : def;
     };
+    const bool = (key, def) => {
+        const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key);
+        return row?.value === 'true' ? true : row?.value === 'false' ? false : def;
+    };
+    // Free-form string, no allowlist — for values like an Automa workflow ID
+    // that aren't a fixed enum. Trimmed; falls back to def on empty/missing.
+    const rawStr = (key, def) => {
+        const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key);
+        const v = row?.value?.trim();
+        return v ? v : def;
+    };
     return {
         settleHours:     num('watchdog_settle_hours', 12),
         ghostHours:      num('watchdog_ghost_hours', 36),
@@ -962,6 +1049,43 @@ function _getWatchdogSettings() {
         //   on the live screener — same "don't remove what's genuinely still
         //   there" behavior it already applies to normal prune cycles.
         freshSessionVetoMode: str('fresh_session_veto_mode', 'bypass', ['bypass', 'smart']),
+        // When true, coin_scanner.js (Stream B) checks a specific DOM element
+        // that only exists when the watchlist panel's "screened" filter pill
+        // is actively applied before treating a telemetry cycle as trustworthy.
+        // If it's missing — meaning the watchlist may be showing an unfiltered,
+        // wrong universe of symbols instead of your curated screened set — the
+        // script reloads the page (bounded retries) instead of silently
+        // sending unscreened data. Off by default: opt-in per 2026-09-01 design.
+        strictScreenedCoin: bool('strict_screened_coin', true),
+        // Max coins allowed in the real TV watchlist. Majors (BTC/ETH) and
+        // whitelist pins always count, never evicted. Beyond that, if the
+        // graduated coin list exceeds this cap, the LOWEST current-volume
+        // coins are dropped first — highest volume survives.
+        watchlistMaxCoins: num('watchlist_max_coins', 35),
+        // 2026-09-09/11: Automa workflow ID + staleness threshold per stream,
+        // consumed by the unified coordinator (see _getCoordinatedActivationTarget()).
+        // Editable at runtime — no redeploy needed if a workflow ID changes on
+        // the Automa side.
+        tabActivateWorkflowIdB: rawStr('automa_tab_activate_workflow_id_b', '3lt4ZkHylt3L0uQlo05iH'),
+        tabActivateThresholdMinB: num('tab_activate_threshold_min_b', 6),
+        // Stream A/D's IDs, same pattern. See CLAUDE.md's Automa Workflow ID Registry.
+        streamAInitialSetupWorkflowId: rawStr('automa_stream_a_initial_setup_workflow_id', '3lcKzNfE_GyXzpUMKxwVi'),
+        tabActivateWorkflowIdA: rawStr('automa_tab_activate_workflow_id_a', '9NoMligzmg3VE9SJMC942'),
+        tabActivateThresholdMinA: num('tab_activate_threshold_min_a', 6),
+        tabActivateWorkflowIdD: rawStr('automa_tab_activate_workflow_id_d', 'h3ixjpLixrztE_ZzhLWtk'),
+        tabActivateThresholdMinD: num('tab_activate_threshold_min_d', 6),
+        // 2026-09-11: watchlist sync fallback. Confirmed live that the normal
+        // retry path (reconcileWatchlistSync()'s escalation -> forced
+        // UPDATE_WATCHLIST) can fail silently and repeat forever for a
+        // specific ticker (BCH/ETHFI stuck 15h+, 297 consecutive misses, 75
+        // escalations, never landing) — the same clipboard-paste approach
+        // just keeps not working for it. This is a different, heavier
+        // recovery action: an Automa workflow that opens a fresh tab and
+        // redoes the copy+paste from scratch, for when the normal in-place
+        // retry has clearly stopped working.
+        watchlistSyncFallbackWorkflowId: rawStr('automa_watchlist_sync_fallback_workflow_id', '4mxKJE8VxWpqztNVK5Wn_'),
+        watchlistSyncFallbackEscalationThreshold: num('watchlist_sync_fallback_escalation_threshold', 5),
+        watchlistSyncFallbackCooldownMin: num('watchlist_sync_fallback_cooldown_min', 15),
     };
 }
 
@@ -970,6 +1094,262 @@ function _setWatchdogSetting(key, value) {
         "INSERT INTO system_settings (key, value) VALUES (?, ?) " +
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
     ).run(key, String(value));
+}
+
+// v20.26: is Stream A actively ingesting data right now? Used to gate whether
+// coin_scanner.js (Stream B) honors an automatic UPDATE_WATCHLIST/RESET_WATCHLIST
+// cooldown-bypass — see coin_scanner.js's isForcedUpdate for the full rationale.
+// Threshold is generous relative to Stream A's own ~3min cadence so normal
+// jitter never trips it; only genuine silence (tab closed/backgrounded, script
+// not running) should.
+// v20.27: current trading volume for a coin, used to rank which coins
+// survive the watchlist max-coins cap when there's more than room for.
+// Priority: Stream B's live screener snapshot (screener_visible_snapshot,
+// coin_scanner.js v20.27+) — the user added a real "Vol in USD 24h" column
+// there, which is the most direct 24h-volume signal available. Found by
+// FIELD-NAME PATTERN (anything containing "vol"), not a hardcoded key —
+// TradingView's internal data-field name for that column isn't something we
+// control or want to hardcode; whatever it's actually called, this finds it.
+// Falls back to the pre-existing Stream C today_volume / Stream B vol_raw
+// chain if the screener snapshot doesn't have a matching field for this coin.
+// Unknown volume ranks lowest (0), never crashes the cap logic.
+function _getCurrentVolume(fullTicker) {
+    const parts = String(fullTicker).split(':');
+    const baseTicker = parts.length > 1 ? parts[1] : fullTicker;
+
+    try {
+        const bScreenerRow = db.prepare(`SELECT payload_json FROM market_context_logs ORDER BY timestamp DESC LIMIT 1`).get();
+        if (bScreenerRow) {
+            const p = JSON.parse(bScreenerRow.payload_json);
+            const snap = (p.screener_visible_snapshot || []).find(x =>
+                x.full === fullTicker || (x.full && x.full.split(':')[1] === baseTicker) || x.short === baseTicker
+            );
+            if (snap) {
+                for (const [key, val] of Object.entries(snap)) {
+                    // Exclude "Rel vol"-style fields (relative volume — a small ratio like
+                    // 0.31×, not a dollar amount) which also match /vol/i and would silently
+                    // corrupt the ranking if picked up here. A real 24h USD volume figure
+                    // for any actively-traded coin is comfortably in the thousands+ — that
+                    // magnitude check is a second, independent guard beyond the name filter.
+                    if (/vol/i.test(key) && !/rel/i.test(key) && typeof val === 'number' && isFinite(val) && val > 1000) {
+                        return val;
+                    }
+                }
+            }
+        }
+    } catch { /* fall through to the existing chain below */ }
+
+    try {
+        const row = db.prepare(
+            `SELECT stream_c_state FROM master_coin_store WHERE ticker = ? AND stream_c_state IS NOT NULL ORDER BY timestamp DESC LIMIT 1`
+        ).get(baseTicker);
+        if (row) {
+            const state = JSON.parse(row.stream_c_state);
+            const v = parseFloat(state.today_volume);
+            if (isFinite(v)) return v;
+        }
+    } catch { /* fall through to Stream B */ }
+
+    try {
+        const bRow = db.prepare(`SELECT payload_json FROM market_context_logs ORDER BY timestamp DESC LIMIT 1`).get();
+        if (bRow) {
+            const p = JSON.parse(bRow.payload_json);
+            const w = (p.watchlist_active_snapshot || []).find(x =>
+                x.full === fullTicker || (x.full && x.full.split(':')[1] === baseTicker) || x.short === baseTicker
+            );
+            if (w && w.vol_raw != null) {
+                const v = parseFloat(w.vol_raw);
+                if (isFinite(v)) return v;
+            }
+        }
+    } catch { /* unknown volume — ranks lowest below */ }
+
+    return 0;
+}
+
+const STREAM_A_FRESH_THRESHOLD_MIN = 15;
+function _isStreamAFresh() {
+    const row = db.prepare('SELECT timestamp FROM scans ORDER BY timestamp DESC LIMIT 1').get();
+    if (!row) return false; // never scanned at all — definitely not fresh
+    const ageMin = (Date.now() - new Date(row.timestamp).getTime()) / 60000;
+    return ageMin <= STREAM_A_FRESH_THRESHOLD_MIN;
+}
+
+// 2026-09-11: unified activation coordinator — replaces the three separate
+// per-stream signal functions (_getTabActivateSignal/_getStreamAActivateSignal/
+// _getStreamDActivateSignal) that each independently asked "am I stale? if so,
+// tell myself to activate." That was structurally broken: a stream stale
+// enough to need activating is, by definition, no longer polling — it can
+// never receive an instruction to activate itself, because it never asks.
+//
+// Confirmed live (2026-09-10/11, user's own Automa inspection): each "make
+// tab active" workflow activates its OWN named tab, forces 2 manual scans on
+// it, then auto-advances Automa's own focus to the next tab in a fixed
+// B->D->A->B rotation — but does nothing further once there (no forced scan,
+// no further auto-advance; that next tab just sits foregrounded until its
+// own script's normal cycle or another dispatch does something with it).
+//
+// The fix: only whichever stream IS currently polling (the "asking" stream,
+// passed in as `askingStream`) can meaningfully carry an instruction — and
+// that instruction must target one of the OTHER two streams, never itself.
+// This looks at the other two streams' staleness, picks whichever is most
+// overdue, and returns ITS workflow ID directly — activating it immediately
+// rather than relying on the rotation to eventually walk there. A single
+// GLOBAL cooldown (not per-stream) prevents three independent callers from
+// each firing their own redundant dispatch every few minutes.
+//
+// No script changes needed for this — A/B/D's scripts already just dispatch
+// whatever ID arrives in `activate_tab_workflow_id`, regardless of source.
+const STREAM_LAST_WRITE_QUERIES = {
+    A: () => db.prepare('SELECT timestamp FROM scans ORDER BY timestamp DESC LIMIT 1').get()?.timestamp,
+    B: () => db.prepare('SELECT timestamp FROM market_context_logs ORDER BY timestamp DESC LIMIT 1').get()?.timestamp,
+    D: () => {
+        const r = db.prepare('SELECT MAX(ts) as ts FROM coin_metric_history').get();
+        return r && r.ts ? new Date(r.ts).toISOString() : null;
+    },
+};
+
+function _getStreamAgeMin(stream) {
+    const raw = STREAM_LAST_WRITE_QUERIES[stream]();
+    if (!raw) return Infinity; // never written at all — maximally stale
+    return (Date.now() - new Date(raw).getTime()) / 60000;
+}
+
+// 2026-09-11: wait-and-listen handshake + failure backoff, per user's
+// explicit design. Firing dispatches "too aggressively" (one per asking
+// stream, every few minutes, with no confirmation) creates real Automa
+// overhead — repeated tab switches/clicks piling up before a prior one has
+// even had a chance to land. Instead: after dispatching a target, wait and
+// LISTEN for that target's own data to actually resume before considering it
+// done or trying anything else. If it doesn't resume within a generous
+// window, that specific workflow is suspected broken (not just "stream
+// busy") — back it off and prefer a DIFFERENT stale stream next, rather than
+// hammering the same one over and over.
+const TAB_ACTIVATE_COORDINATOR_COOLDOWN_MIN = 3;   // floor between any two dispatches, even across different targets
+const TAB_ACTIVATE_HANDSHAKE_WINDOW_MIN = 8;        // generous: 2 scans @ 2min + ~1min handoff + buffer
+const TAB_ACTIVATE_MAX_CONSECUTIVE_FAILS = 2;       // this many failed handshakes in a row -> suspect the workflow itself
+const TAB_ACTIVATE_BACKOFF_MIN = 30;                // how long to deprioritize a repeatedly-failing target
+
+function _getPendingActivation() {
+    const target = db.prepare("SELECT value FROM system_settings WHERE key = 'tab_activate_pending_target'").get()?.value;
+    const dispatchedAt = db.prepare("SELECT value FROM system_settings WHERE key = 'tab_activate_pending_dispatched_at'").get()?.value;
+    if (!target || !dispatchedAt) return null;
+    return { target, dispatchedAt };
+}
+function _clearPendingActivation() {
+    _setWatchdogSetting('tab_activate_pending_target', '');
+    _setWatchdogSetting('tab_activate_pending_dispatched_at', '');
+}
+function _getFailCount(stream) {
+    const v = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(`tab_activate_fail_count_${stream}`)?.value;
+    return v ? parseInt(v, 10) || 0 : 0;
+}
+function _getBackoffUntilMs(stream) {
+    const v = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(`tab_activate_backoff_until_${stream}`)?.value;
+    return v ? new Date(v).getTime() : 0;
+}
+
+function _getCoordinatedActivationTarget(askingStream) {
+    try {
+        const settings = _getWatchdogSettings();
+        const workflowIds = { A: settings.tabActivateWorkflowIdA, B: settings.tabActivateWorkflowIdB, D: settings.tabActivateWorkflowIdD };
+        const thresholds  = { A: settings.tabActivateThresholdMinA, B: settings.tabActivateThresholdMinB, D: settings.tabActivateThresholdMinD };
+
+        // ── Step 1: resolve any outstanding handshake before considering anything new ──
+        const pending = _getPendingActivation();
+        if (pending) {
+            const dispatchedAtMs = new Date(pending.dispatchedAt).getTime();
+            const writeTs = STREAM_LAST_WRITE_QUERIES[pending.target]();
+            const resolved = writeTs && new Date(writeTs).getTime() > dispatchedAtMs;
+
+            if (resolved) {
+                console.log(`[TAB-ACTIVATE] ✅ Handshake succeeded — ${pending.target} resumed sending data after activation. Automa is working for it.`);
+                _clearPendingActivation();
+                _setWatchdogSetting(`tab_activate_fail_count_${pending.target}`, 0);
+                // fall through — allow a fresh decision this same call, now that the slot is free
+            } else {
+                const elapsedMin = (Date.now() - dispatchedAtMs) / 60000;
+                if (elapsedMin < TAB_ACTIVATE_HANDSHAKE_WINDOW_MIN) {
+                    // Still listening — give it breathing room, don't fire anything else yet.
+                    return null;
+                }
+                const fails = _getFailCount(pending.target) + 1;
+                _setWatchdogSetting(`tab_activate_fail_count_${pending.target}`, fails);
+                console.warn(`[TAB-ACTIVATE] ⚠️ Handshake FAILED — ${pending.target} did not resume within ${TAB_ACTIVATE_HANDSHAKE_WINDOW_MIN}min of dispatching ${pending.target === 'A' ? workflowIds.A : pending.target === 'B' ? workflowIds.B : workflowIds.D}. Consecutive fails: ${fails}.`);
+                if (fails >= TAB_ACTIVATE_MAX_CONSECUTIVE_FAILS) {
+                    _setWatchdogSetting(`tab_activate_backoff_until_${pending.target}`, new Date(Date.now() + TAB_ACTIVATE_BACKOFF_MIN * 60000).toISOString());
+                    console.warn(`[TAB-ACTIVATE] 🚫 ${pending.target}'s workflow has failed ${fails}x in a row — suspecting it's broken on the Automa side. Backing off ${TAB_ACTIVATE_BACKOFF_MIN}min, preferring other stale streams meanwhile.`);
+                }
+                _clearPendingActivation();
+                // fall through — try a different candidate this same call, rotating away from the failing one
+            }
+        }
+
+        // ── Step 2: pick the next candidate, excluding the asker and (where possible) backed-off targets ──
+        const candidates = ['A', 'B', 'D']
+            .filter(s => s !== askingStream)
+            .map(s => ({ stream: s, ageMin: _getStreamAgeMin(s), threshold: thresholds[s], backoffUntilMs: _getBackoffUntilMs(s) }))
+            .filter(c => c.ageMin > c.threshold);
+
+        if (candidates.length === 0) return null;
+
+        const now = Date.now();
+        const notBackedOff = candidates.filter(c => now > c.backoffUntilMs);
+        // If every stale candidate is currently backed off, still try eventually
+        // rather than never — better an occasional wasted attempt than
+        // permanently giving up on a stream.
+        const pool = notBackedOff.length > 0 ? notBackedOff : candidates;
+
+        pool.sort((a, b) => b.ageMin - a.ageMin);
+        const target = pool[0];
+
+        const lastRow = db.prepare("SELECT value FROM system_settings WHERE key = 'tab_activate_coordinator_last_dispatch_at'").get();
+        const lastDispatchAt = lastRow ? new Date(lastRow.value).getTime() : 0;
+        if (now - lastDispatchAt < TAB_ACTIVATE_COORDINATOR_COOLDOWN_MIN * 60000) {
+            return null; // something was already dispatched recently — give it time to land
+        }
+
+        _setWatchdogSetting('tab_activate_coordinator_last_dispatch_at', new Date().toISOString());
+        _setWatchdogSetting('tab_activate_pending_target', target.stream);
+        _setWatchdogSetting('tab_activate_pending_dispatched_at', new Date().toISOString());
+        console.log(`[TAB-ACTIVATE] 🔔 ${askingStream} is asking, ${target.stream} is most overdue (${target.ageMin.toFixed(1)}m, threshold ${target.threshold}m) — dispatching ${workflowIds[target.stream]}. Listening for up to ${TAB_ACTIVATE_HANDSHAKE_WINDOW_MIN}min for it to resume.`);
+        return workflowIds[target.stream];
+    } catch {
+        return null;
+    }
+}
+
+// 2026-09-11: watchlist sync fallback. Confirmed live: watchlist_sync_audit
+// can show a ticker with 297 consecutive misses and 75 escalations (BCH/ETHFI,
+// stuck 15h+) where the normal in-place retry (reconcileWatchlistSync()'s
+// escalation -> forced UPDATE_WATCHLIST, same clipboard-paste approach every
+// time) has clearly stopped working — every other historical entry in that
+// table resolved within 1-2 cycles, so this is a genuine stuck case, not
+// routine flakiness. Past a configurable escalation count, dispatch a
+// heavier recovery workflow (opens a fresh tab, redoes copy+paste from
+// scratch) instead of continuing to retry the same failing approach forever.
+// Own cooldown, separate from the tab-activation coordinator's — these are
+// unrelated recovery actions and shouldn't compete for the same dispatch slot.
+function _getWatchlistSyncFallbackSignal() {
+    try {
+        const settings = _getWatchdogSettings();
+        const stuck = db.prepare(
+            'SELECT ticker, escalations FROM watchlist_sync_audit WHERE consecutive_misses > 0 AND escalations >= ? ORDER BY escalations DESC LIMIT 1'
+        ).get(settings.watchlistSyncFallbackEscalationThreshold);
+        if (!stuck) return null;
+
+        const lastRow = db.prepare("SELECT value FROM system_settings WHERE key = 'watchlist_sync_fallback_last_dispatch_at'").get();
+        const lastDispatchAt = lastRow ? new Date(lastRow.value).getTime() : 0;
+        if (Date.now() - lastDispatchAt < settings.watchlistSyncFallbackCooldownMin * 60000) {
+            return null; // fired recently — give it time to land before trying again
+        }
+
+        _setWatchdogSetting('watchlist_sync_fallback_last_dispatch_at', new Date().toISOString());
+        console.log(`[WATCHLIST-SYNC-FALLBACK] 🆘 ${stuck.ticker} has failed ${stuck.escalations} escalations (>= threshold ${settings.watchlistSyncFallbackEscalationThreshold}) — normal retry isn't working. Dispatching fallback workflow ${settings.watchlistSyncFallbackWorkflowId}.`);
+        return settings.watchlistSyncFallbackWorkflowId;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -1059,6 +1439,8 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
             // ('smart'). Adjustable via POST /api/ghosts/watchdog-settings
             // { freshSessionVetoMode }. See coin_scanner.js v20.13.
             veto_mode: vetoMode,
+            strict_screened_coin: _getWatchdogSettings().strictScreenedCoin,
+            stream_a_fresh: _isStreamAFresh(),
         };
     }
 
@@ -1446,12 +1828,40 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
     const dedupedSet = new Set(dedupedMasterTargets);
     const droppedDuplicates = rawMasterTargets.filter(t => !dedupedSet.has(t));
 
+    // ── Watchlist max-coins cap (2026-09-02) ──────────────────────────────────
+    // Majors (BTC/ETH) and whitelist pins are never evicted — they bypass the
+    // cap entirely, same guarantee they already have elsewhere. Beyond that,
+    // if the graduated list exceeds the configured max, rank the REST by
+    // current trading volume (highest first) and keep only enough to fill the
+    // remaining slots. Coins that lose the cut are force-pruned (bypasses
+    // VETO_PRUNE, same as an exchange-duplicate removal) so they actually
+    // leave the real TV watchlist, not just future target computation.
+    const watchlistMaxCoins = _getWatchdogSettings().watchlistMaxCoins;
+    const alwaysKeepSet = new Set([...PERMANENT_MAJORS, ...whitelistFullSet]);
+    let finalMasterTargets = dedupedMasterTargets;
+    let cappedOverflow = [];
+    if (dedupedMasterTargets.length > watchlistMaxCoins) {
+        const protectedTargets = dedupedMasterTargets.filter(t => alwaysKeepSet.has(t));
+        const rankable = dedupedMasterTargets.filter(t => !alwaysKeepSet.has(t));
+        const remainingSlots = Math.max(0, watchlistMaxCoins - protectedTargets.length);
+        const ranked = rankable
+            .map(t => ({ t, vol: _getCurrentVolume(t) }))
+            .sort((a, b) => b.vol - a.vol);
+        const kept = ranked.slice(0, remainingSlots).map(r => r.t);
+        cappedOverflow = ranked.slice(remainingSlots).map(r => r.t);
+        finalMasterTargets = [...protectedTargets, ...kept];
+        if (cappedOverflow.length > 0) {
+            console.log(`[WATCHLIST-CAP] ✂️ Over max (${dedupedMasterTargets.length}/${watchlistMaxCoins}) — dropping ${cappedOverflow.length} lowest-volume coin(s): ${cappedOverflow.join(', ')}`);
+        }
+    }
+
     // action_required is set when:
     //  a) the dedup pass found exchange duplicates to force-prune, OR
-    //  b) a coin was just added to the whitelist (one-shot — clears after this call).
-    //     This bypasses the Tampermonkey 15-min Automa cooldown so the new coin
+    //  b) a coin was just added to the whitelist (one-shot — clears after this call), OR
+    //  c) the max-coins cap just evicted one or more low-volume coins.
+    //     This bypasses the Tampermonkey 15-min Automa cooldown so the change
     //     reaches the TV watchlist on the very next processSyncPayload, not 15 min later.
-    const actionRequired = (droppedDuplicates.length > 0 || hasWhitelistPending)
+    const actionRequired = (droppedDuplicates.length > 0 || hasWhitelistPending || cappedOverflow.length > 0)
         ? "UPDATE_WATCHLIST"
         : null;
 
@@ -1465,9 +1875,13 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
         prune_list:     _dedupeFullTickers([...new Set(pruneList)]),
         ghost_list:     ghostList,
         new_graduates:  _dedupeFullTickers(newGraduates),
-        master_targets: dedupedMasterTargets,
-        force_prune:    droppedDuplicates,
+        master_targets: finalMasterTargets,
+        force_prune:    [...droppedDuplicates, ...cappedOverflow],
         action_required: actionRequired,
+        strict_screened_coin: _getWatchdogSettings().strictScreenedCoin,
+        stream_a_fresh: _isStreamAFresh(),
+        watchlist_max_coins: watchlistMaxCoins,
+        activate_tab_workflow_id: _getCoordinatedActivationTarget('B'),
     };
 }
 
@@ -1564,7 +1978,11 @@ app.post('/qualified-pick', (req, res) => {
             master_targets: feedback.master_targets,
             force_prune: feedback.force_prune,
             action_required: feedback.action_required,
-            veto_mode: feedback.veto_mode
+            veto_mode: feedback.veto_mode,
+            strict_screened_coin: feedback.strict_screened_coin,
+            stream_a_fresh: feedback.stream_a_fresh,
+            activate_tab_workflow_id: feedback.activate_tab_workflow_id,
+            watchlist_sync_fallback_workflow_id: _getWatchlistSyncFallbackSignal()
         });
 
     } catch (e) {
@@ -1709,6 +2127,7 @@ app.post('/api/market-context', (req, res) => {
     try {
         const payload = req.body;
         const now = new Date().toISOString();
+        _recordScriptVersion('B', payload.script_version);
 
         // ── Step 1: Deduplicate & filter raw snapshot ──────────────────────────
         const rawSnaps     = payload.watchlist_active_snapshot || [];
@@ -1908,6 +2327,10 @@ app.post('/api/market-context', (req, res) => {
             action_required:  _actionRequired,
             master_targets:   _forcedTargets,   // duplicates physically removed
             veto_mode:        _actionRequired === 'FRESH_SESSION' ? feedback.veto_mode : undefined,
+            strict_screened_coin: feedback.strict_screened_coin,
+            stream_a_fresh: feedback.stream_a_fresh,
+            activate_tab_workflow_id: feedback.activate_tab_workflow_id,
+            watchlist_sync_fallback_workflow_id: _getWatchlistSyncFallbackSignal(),
             prune_list:       combinedForcePrune, // rejected dupes forced into prune list
             force_prune:      [...new Set([...rejectedTickers, ...(feedback.force_prune || [])])], // explicit field for scanners that key on it
             new_graduates:    feedback.new_graduates,
@@ -1934,6 +2357,7 @@ app.post('/api/stream-d/technicals', (req, res) => {
     try {
         const payload = req.body;
         const timestamp = payload.timestamp || new Date().toISOString();
+        _recordScriptVersion('D', payload.script_version);
 
         if (!payload.results || !Array.isArray(payload.results)) {
             return res.status(400).json({ error: 'results array required' });
@@ -1978,7 +2402,7 @@ app.post('/api/stream-d/technicals', (req, res) => {
             });
         });
 
-        res.json({ success: true, accepted: payload.results.length });
+        res.json({ success: true, accepted: payload.results.length, activate_tab_workflow_id: _getCoordinatedActivationTarget('D') });
     } catch (e) {
         console.error('[Stream D] Ingest Error:', e);
         res.status(500).json({ error: e.message });
@@ -2940,6 +3364,252 @@ app.get('/api/stream-sync', (req, res) => {
     }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// DATA FEED HEALTH — frozen-DOM detection (Data Feed Health widget)
+//
+// Distinct from /api/stream-sync (which checks TIMING alignment between scan
+// cycles) and from /api/system/health (which only checks "was a row written
+// recently"). This checks whether the underlying VALUES are actually
+// changing — a backgrounded/frozen browser tab keeps punching identical
+// scraped numbers with a fresh timestamp, which every other freshness signal
+// in this app is blind to. Detection method: walk each ticker's recent rows
+// newest→oldest and find how far back the tracked fields have been
+// byte-identical. Validated against real frozen episodes (Streams B & D,
+// 2026-08-20) before being productionized here.
+// ─────────────────────────────────────────────────────────────────────────
+const _feedHealthCache = { ts: 0, data: null };
+const FEED_HEALTH_CACHE_TTL = 30_000;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Tampermonkey version tracking
+//
+// scripts/ files in this repo are never live automatically (CLAUDE.md rule) —
+// a paste can be forgotten, confirmed too early, or applied to the wrong
+// script. This closes that trust gap: each script sends its own
+// SCRIPT_VERSION constant on every payload; we record the latest one per
+// stream and compare against what SHOULD be running (bump EXPECTED below
+// every time a script's SCRIPT_VERSION/@version changes).
+// ─────────────────────────────────────────────────────────────────────────
+const EXPECTED_SCRIPT_VERSIONS = {
+    A: '16.6',
+    B: '20.31',
+    D: '1.6',
+};
+const _scriptVersionUpsert = db.prepare(`
+    INSERT INTO script_version_reports (stream, reported_version, last_seen_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(stream) DO UPDATE SET reported_version = excluded.reported_version, last_seen_at = excluded.last_seen_at
+`);
+function _recordScriptVersion(stream, version) {
+    if (!version) return; // older/unmodified script, no version field yet — leave last-known row alone
+    try { _scriptVersionUpsert.run(stream, String(version), new Date().toISOString()); }
+    catch (e) { console.error(`[ScriptVersion] Failed to record ${stream}:`, e.message); }
+}
+
+function _walkFreeze(rowsAsc, fields) {
+    // rowsAsc: [{ ts: ISOString, ...fields }] ordered oldest -> newest
+    if (rowsAsc.length === 0) return null;
+    const latest = rowsAsc[rowsAsc.length - 1];
+    let i = rowsAsc.length - 1;
+    while (i > 0 && fields.every(f => rowsAsc[i][f] === rowsAsc[i - 1][f])) i--;
+    const frozenSince = rowsAsc[i].ts;
+    const frozenMinutes = Math.round((new Date(latest.ts) - new Date(frozenSince)) / 60000);
+    return { latestTs: latest.ts, frozenSince, frozenMinutes, sample: Object.fromEntries(fields.map(f => [f, latest[f]])) };
+}
+
+function _summarizeStream(tickerRowsMap, fields, freezeThresholdMin, nowMs) {
+    const frozenTickers = [];
+    let latestWriteMs = 0;
+    let totalTickers = 0;
+    for (const [ticker, rowsAsc] of Object.entries(tickerRowsMap)) {
+        if (rowsAsc.length === 0) continue;
+        totalTickers++;
+        const w = _walkFreeze(rowsAsc, fields);
+        if (!w) continue;
+        const latestMs = new Date(w.latestTs).getTime();
+        if (latestMs > latestWriteMs) latestWriteMs = latestMs;
+        if (w.frozenMinutes >= freezeThresholdMin) {
+            frozenTickers.push({
+                ticker,
+                frozenMinutes: w.frozenMinutes,
+                frozenSince: w.frozenSince,
+                lastWriteAgeMinutes: Math.round((nowMs - latestMs) / 60000),
+                values: w.sample,
+            });
+        }
+    }
+    frozenTickers.sort((a, b) => b.frozenMinutes - a.frozenMinutes);
+    const lastWriteAgeMinutes = latestWriteMs ? Math.round((nowMs - latestWriteMs) / 60000) : null;
+    // "stalled" = the whole stream hasn't written anything in a long time (different
+    // symptom than a specific ticker being frozen — both matter, both surfaced).
+    // Bug fix (2026-09-02): confirmed live — Stream A had been silent for 27+
+    // hours (zero rows in the entire lookback window) and this still reported
+    // "healthy", because lastWriteAgeMinutes is null when there's NO data at
+    // all, and the old check only flagged staleness when it had a numeric age
+    // to compare — treating "we have zero information" as "nothing's wrong"
+    // instead of the worst case. Total silence must always report 'stalled'.
+    const status = frozenTickers.length > 0 ? 'frozen'
+        : lastWriteAgeMinutes == null ? 'stalled'
+        : lastWriteAgeMinutes >= freezeThresholdMin ? 'stalled'
+        : 'healthy';
+    return {
+        status,
+        totalTickers,
+        frozenTickers,
+        lastWriteAt: latestWriteMs ? new Date(latestWriteMs).toISOString() : null,
+        lastWriteAgeMinutes,
+    };
+}
+
+// v20.26-era refactor: pulled the full computation out of the route handler
+// so a periodic background check (Telegram feed-health alerting) can reuse
+// the exact same logic/thresholds instead of duplicating them — one source
+// of truth for "is this stream healthy."
+function _computeFeedHealth() {
+        const now = Date.now();
+        const cutoffMs = now - 3 * 60 * 60 * 1000; // 3h lookback window — enough to see freeze runs, cheap to query
+        const cutoffISO = new Date(cutoffMs).toISOString();
+
+        // ── Stream A: scans + scan_results ──────────────────────────────────
+        const streamA = (() => {
+            const scans = db.prepare(`
+                SELECT s.id, s.timestamp, sr.raw_data
+                FROM scans s JOIN scan_results sr ON sr.scan_id = s.id
+                WHERE s.timestamp > ? ORDER BY s.timestamp ASC
+            `).all(cutoffISO);
+            const tickerRows = {};
+            for (const scan of scans) {
+                let payload;
+                try { payload = JSON.parse(scan.raw_data); } catch { continue; }
+                for (const item of (payload.results || [])) {
+                    const d = item.data || item;
+                    const t = item.ticker || d.ticker;
+                    if (!t) continue;
+                    (tickerRows[t] = tickerRows[t] || []).push({ ts: scan.timestamp, close: d.close, netTrend: d.netTrend, momScore: d.momScore });
+                }
+            }
+            return _summarizeStream(tickerRows, ['close', 'netTrend', 'momScore'], 20, now);
+        })();
+
+        // ── Stream B: market_context_logs ───────────────────────────────────
+        const streamB = (() => {
+            const rows = db.prepare(`SELECT timestamp, payload_json FROM market_context_logs WHERE timestamp > ? ORDER BY timestamp ASC`).all(cutoffISO);
+            const tickerRows = {};
+            for (const row of rows) {
+                let payload;
+                try { payload = JSON.parse(row.payload_json); } catch { continue; }
+                for (const w of (payload.watchlist_active_snapshot || [])) {
+                    const t = w.full;
+                    if (!t) continue;
+                    (tickerRows[t] = tickerRows[t] || []).push({ ts: row.timestamp, price: w.price, change_pct: w.change_pct });
+                }
+            }
+            return _summarizeStream(tickerRows, ['price', 'change_pct'], 20, now);
+        })();
+
+        // ── Stream C: smart_level_events + institutional_interest_events ────
+        // Bug fix (2026-09-01): this used to query ONLY institutional_interest_events,
+        // which is the sparser of Stream C's two tables — it can go quiet for many
+        // hours with nothing wrong, while smart_level_events (the far more active
+        // per-coin alert feed) kept landing every few minutes the whole time. That
+        // made this endpoint report "no data at all" for a stream that was
+        // demonstrably alive, confirmed live via direct DB query + a real webhook
+        // test POST. Union both tables (generic f1/f2 columns since their schemas
+        // differ) so freshness reflects whichever table actually has activity.
+        const streamC = (() => {
+            const rows = db.prepare(`
+                SELECT ticker, timestamp as ts, today_change_pct as f1, today_volume as f2
+                FROM institutional_interest_events WHERE timestamp > ?
+                UNION ALL
+                SELECT ticker, timestamp as ts, roc_pct as f1, price as f2
+                FROM smart_level_events WHERE timestamp > ?
+                ORDER BY ticker, ts ASC
+            `).all(cutoffISO, cutoffISO);
+            const tickerRows = {};
+            for (const r of rows) (tickerRows[r.ticker] = tickerRows[r.ticker] || []).push(r);
+            return _summarizeStream(tickerRows, ['f1', 'f2'], 90, now);
+        })();
+
+        // ── Stream D: coin_metric_history ───────────────────────────────────
+        // Bug fix (2026-09-02): confirmed live — after a Fresh Session reset,
+        // this kept flagging coins as "frozen" that were actually just RETIRED
+        // (removed from the watchlist), not broken. A retired ticker legitimately
+        // never gets new data again — that's not a malfunction, it's expected —
+        // but a pure "values not changing" check can't tell the two apart.
+        // Fix: Stream B's LATEST watchlist snapshot is the source of truth for
+        // "what's currently relevant" — only evaluate freeze status for tickers
+        // Stream D shares with that current list. A ticker Stream D still has
+        // history for, but that's no longer on the live watchlist, is silently
+        // dropped from tracking here rather than reported as frozen — it isn't
+        // wrong, it's just not current anymore. This re-derives itself on every
+        // Fresh Session / coin add-remove automatically, no extra state needed.
+        const streamD = (() => {
+            const latestB = db.prepare(`SELECT payload_json FROM market_context_logs ORDER BY timestamp DESC LIMIT 1`).get();
+            let currentWatchlistBaseSet = null; // null = no Stream B snapshot yet, don't filter (fail open)
+            if (latestB) {
+                try {
+                    const p = JSON.parse(latestB.payload_json);
+                    const list = p.watchlist_active_snapshot || [];
+                    if (list.length > 0) {
+                        currentWatchlistBaseSet = new Set(list.map(w => {
+                            const full = w.full || w.short || '';
+                            return (full.includes(':') ? full.split(':')[1] : full).toUpperCase();
+                        }).filter(Boolean));
+                    }
+                    // else: latest snapshot was empty (transient capture failure) — fail open, don't filter on it
+                } catch { /* fail open on parse error too */ }
+            }
+
+            const rows = db.prepare(`
+                SELECT ticker, ts, rvol_m15, dist_m15, rsi_m15, atr_m15
+                FROM coin_metric_history WHERE ts > ? ORDER BY ticker, ts ASC
+            `).all(cutoffMs);
+            const tickerRows = {};
+            for (const r of rows) {
+                if (currentWatchlistBaseSet && !currentWatchlistBaseSet.has(r.ticker.toUpperCase())) continue; // retired — not current, skip
+                (tickerRows[r.ticker] = tickerRows[r.ticker] || []).push({ ...r, ts: new Date(r.ts).toISOString() });
+            }
+            return _summarizeStream(tickerRows, ['rvol_m15', 'dist_m15', 'rsi_m15', 'atr_m15'], 15, now);
+        })();
+
+        const versionRows = db.prepare('SELECT stream, reported_version, last_seen_at FROM script_version_reports').all();
+        const versionByStream = Object.fromEntries(versionRows.map(r => [r.stream, r]));
+        const scriptVersions = {};
+        for (const stream of ['A', 'B', 'D']) {
+            const expected = EXPECTED_SCRIPT_VERSIONS[stream];
+            const row = versionByStream[stream];
+            scriptVersions[stream] = {
+                expected,
+                reported: row ? row.reported_version : null,
+                lastSeenAt: row ? row.last_seen_at : null,
+                match: row ? row.reported_version === expected : null, // null = never reported (old script, or not pasted yet)
+            };
+        }
+
+        const payload = {
+            generatedAt: new Date(now).toISOString(),
+            streams: { A: streamA, B: streamB, C: streamC, D: streamD },
+            scriptVersions,
+        };
+        _feedHealthCache.data = payload;
+        _feedHealthCache.ts = now;
+        return payload;
+}
+
+app.get('/api/system/feed-health', (req, res) => {
+    try {
+        const now = Date.now();
+        if (_feedHealthCache.data && (now - _feedHealthCache.ts) < FEED_HEALTH_CACHE_TTL) {
+            res.set('Cache-Control', 'public, max-age=15');
+            return res.json(_feedHealthCache.data);
+        }
+        res.json(_computeFeedHealth());
+    } catch (e) {
+        console.error('[feed-health]', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // 3C. PARTICIPATION PULSE (Analytics for Scout Screener)
 app.get('/api/analytics/participation-pulse', (req, res) => {
     try {
@@ -3357,7 +4027,7 @@ app.get('/api/ghosts/watchdog-settings', (req, res) => {
 
 app.post('/api/ghosts/watchdog-settings', (req, res) => {
     try {
-        const { settleHours, ghostHours, gapToleranceMin, momentumHours, freshSessionVetoMode } = req.body || {};
+        const { settleHours, ghostHours, gapToleranceMin, momentumHours, freshSessionVetoMode, strictScreenedCoin, watchlistMaxCoins, tabActivateWorkflowIdB, tabActivateThresholdMinB, streamAInitialSetupWorkflowId, tabActivateWorkflowIdA, tabActivateThresholdMinA, tabActivateWorkflowIdD, tabActivateThresholdMinD, watchlistSyncFallbackWorkflowId, watchlistSyncFallbackEscalationThreshold, watchlistSyncFallbackCooldownMin } = req.body || {};
         const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
         if (settleHours !== undefined) {
@@ -3385,6 +4055,67 @@ app.post('/api/ghosts/watchdog-settings', (req, res) => {
                 return res.status(400).json({ error: "freshSessionVetoMode must be 'bypass' or 'smart'" });
             }
             _setWatchdogSetting('fresh_session_veto_mode', freshSessionVetoMode);
+        }
+        if (strictScreenedCoin !== undefined) {
+            if (typeof strictScreenedCoin !== 'boolean') {
+                return res.status(400).json({ error: 'strictScreenedCoin must be a boolean' });
+            }
+            _setWatchdogSetting('strict_screened_coin', strictScreenedCoin);
+        }
+        if (watchlistMaxCoins !== undefined) {
+            const v = parseInt(watchlistMaxCoins, 10);
+            if (!isFinite(v)) return res.status(400).json({ error: 'watchlistMaxCoins must be a number' });
+            _setWatchdogSetting('watchlist_max_coins', clamp(v, 2, 200));
+        }
+        if (tabActivateWorkflowIdB !== undefined) {
+            const v = String(tabActivateWorkflowIdB).trim();
+            if (!v) return res.status(400).json({ error: 'tabActivateWorkflowIdB cannot be empty' });
+            _setWatchdogSetting('automa_tab_activate_workflow_id_b', v);
+        }
+        if (tabActivateThresholdMinB !== undefined) {
+            const v = parseFloat(tabActivateThresholdMinB);
+            if (!isFinite(v)) return res.status(400).json({ error: 'tabActivateThresholdMinB must be a number' });
+            _setWatchdogSetting('tab_activate_threshold_min_b', clamp(v, 2, 60));
+        }
+        if (streamAInitialSetupWorkflowId !== undefined) {
+            const v = String(streamAInitialSetupWorkflowId).trim();
+            if (!v) return res.status(400).json({ error: 'streamAInitialSetupWorkflowId cannot be empty' });
+            _setWatchdogSetting('automa_stream_a_initial_setup_workflow_id', v);
+        }
+        if (tabActivateWorkflowIdA !== undefined) {
+            const v = String(tabActivateWorkflowIdA).trim();
+            if (!v) return res.status(400).json({ error: 'tabActivateWorkflowIdA cannot be empty' });
+            _setWatchdogSetting('automa_tab_activate_workflow_id_a', v);
+        }
+        if (tabActivateThresholdMinA !== undefined) {
+            const v = parseFloat(tabActivateThresholdMinA);
+            if (!isFinite(v)) return res.status(400).json({ error: 'tabActivateThresholdMinA must be a number' });
+            _setWatchdogSetting('tab_activate_threshold_min_a', clamp(v, 2, 60));
+        }
+        if (tabActivateWorkflowIdD !== undefined) {
+            const v = String(tabActivateWorkflowIdD).trim();
+            if (!v) return res.status(400).json({ error: 'tabActivateWorkflowIdD cannot be empty' });
+            _setWatchdogSetting('automa_tab_activate_workflow_id_d', v);
+        }
+        if (tabActivateThresholdMinD !== undefined) {
+            const v = parseFloat(tabActivateThresholdMinD);
+            if (!isFinite(v)) return res.status(400).json({ error: 'tabActivateThresholdMinD must be a number' });
+            _setWatchdogSetting('tab_activate_threshold_min_d', clamp(v, 2, 60));
+        }
+        if (watchlistSyncFallbackWorkflowId !== undefined) {
+            const v = String(watchlistSyncFallbackWorkflowId).trim();
+            if (!v) return res.status(400).json({ error: 'watchlistSyncFallbackWorkflowId cannot be empty' });
+            _setWatchdogSetting('automa_watchlist_sync_fallback_workflow_id', v);
+        }
+        if (watchlistSyncFallbackEscalationThreshold !== undefined) {
+            const v = parseInt(watchlistSyncFallbackEscalationThreshold, 10);
+            if (!isFinite(v)) return res.status(400).json({ error: 'watchlistSyncFallbackEscalationThreshold must be a number' });
+            _setWatchdogSetting('watchlist_sync_fallback_escalation_threshold', clamp(v, 1, 50));
+        }
+        if (watchlistSyncFallbackCooldownMin !== undefined) {
+            const v = parseFloat(watchlistSyncFallbackCooldownMin);
+            if (!isFinite(v)) return res.status(400).json({ error: 'watchlistSyncFallbackCooldownMin must be a number' });
+            _setWatchdogSetting('watchlist_sync_fallback_cooldown_min', clamp(v, 2, 120));
         }
 
         const updated = _getWatchdogSettings();
@@ -3465,15 +4196,8 @@ app.get('/api/watchlist/fresh-session-status', (req, res) => {
 // coin_lifecycles stores item.ticker which includes the .P suffix (e.g. "XRPUSDT.P").
 // We only strip the exchange prefix — everything else (including .P) is kept so
 // whitelistTickers.has(cleanTicker) works correctly at protection-check time.
-// Accepts: "XRPUSDT.P", "BINANCE:XRPUSDT.P", "xrpusdt.p"
-function normaliseWhitelistTicker(raw) {
-    if (!raw || typeof raw !== 'string') return null;
-    let s = raw.trim().toUpperCase();
-    // Strip exchange prefix (e.g. "BINANCE:")
-    const colonIdx = s.indexOf(':');
-    if (colonIdx !== -1) s = s.slice(colonIdx + 1);
-    return s || null;
-}
+// Shared with telegram_watchlist matching — see server/utils/tickerNormalize.js.
+const normaliseWhitelistTicker = require('./utils/tickerNormalize').normaliseTicker;
 
 // Watchlist sync health — which targets TradingView has not accepted, how long
 // they've been outstanding, and how many times we've re-fired Automa for them.
@@ -5166,6 +5890,42 @@ setTimeout(() => {
         TelegramService.onHeartbeat().catch(e => console.error('[Heartbeat]', e.message));
     }, 60 * 60 * 1000);
 }, 60 * 1000);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FEED HEALTH ALERTING — proactive "a data stream is down" notification
+// (2026-09-02). Confirmed live that Stream A sat offline 27 hours before
+// anyone noticed, because the only signal was a dashboard widget nobody had
+// open. Checks every 15 minutes — frequent enough to catch a real outage
+// within a reasonable window, far below Telegram's own rate limits, and the
+// service's own per-stream cooldown (1h) prevents repeat spam regardless.
+// First check delayed 2 minutes after boot so a fresh restart's normal
+// "streams haven't reported yet" moment doesn't immediately fire alerts.
+// ─────────────────────────────────────────────────────────────────────────────
+setTimeout(() => {
+    setInterval(() => {
+        try {
+            const health = _computeFeedHealth();
+            TelegramService.onFeedHealthCheck(health.streams).catch(e => console.error('[FeedHealthAlert]', e.message));
+        } catch (e) {
+            console.error('[FeedHealthAlert] compute failed:', e.message);
+        }
+        // 2026-09-11: "all dark" is checked independently of any incoming
+        // request — it HAS to be, since the whole point is that nobody is
+        // polling to trigger anything. Reuses the same per-stream thresholds
+        // the tab-activation coordinator uses, so "dark" here means exactly
+        // "past the point where the coordinator would have tried to help."
+        try {
+            const settings = _getWatchdogSettings();
+            const thresholds = { A: settings.tabActivateThresholdMinA, B: settings.tabActivateThresholdMinB, D: settings.tabActivateThresholdMinD };
+            const ages = { A: _getStreamAgeMin('A'), B: _getStreamAgeMin('B'), D: _getStreamAgeMin('D') };
+            const allDark = ['A', 'B', 'D'].every(s => ages[s] > thresholds[s]);
+            const detail = ['A', 'B', 'D'].map(s => `${s}: ${isFinite(ages[s]) ? ages[s].toFixed(0) + 'm' : 'never'}`).join(' | ');
+            TelegramService.onAllStreamsDark(allDark, detail).catch(e => console.error('[AllDarkAlert]', e.message));
+        } catch (e) {
+            console.error('[AllDarkAlert] compute failed:', e.message);
+        }
+    }, 15 * 60 * 1000);
+}, 2 * 60 * 1000);
 
 // ============================================================================
 // LEVEL REACTION MONITOR — /api/level-reactions

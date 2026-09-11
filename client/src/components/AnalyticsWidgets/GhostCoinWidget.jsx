@@ -23,11 +23,47 @@ function GhostQueue({ containerRef }) {
     const [ghostHours, setGhostHours]              = useState(36);
     const [gapToleranceMin, setGapToleranceMin]   = useState(15);
     const [momentumHours, setMomentumHours]        = useState(2);
+    // Max coins allowed in the real TV watchlist. Majors (BTC/ETH) and
+    // whitelist pins are never evicted; beyond that, the LOWEST current-volume
+    // coins are dropped first when over the cap — highest volume survives.
+    const [watchlistMaxCoins, setWatchlistMaxCoins] = useState(35);
     // How a Fresh Session reset treats a coin still visible on the live DOM
     // screener: 'bypass' force-removes it anyway (re-earns via a fresh 8/20min
     // cycle); 'smart' still protects it via VETO_PRUNE, same as normal prune
     // cycles. See coin_scanner.js v20.13.
     const [freshSessionVetoMode, setFreshSessionVetoMode] = useState('bypass');
+    // Strict Screened Coin — when on, coin_scanner.js (Stream B) verifies the
+    // watchlist's "screened" filter pill is actually applied in the DOM before
+    // trusting a telemetry cycle; if the filter dropped (e.g. accidentally
+    // cleared), it reloads the page instead of silently sending an unfiltered,
+    // wrong universe of symbols. Off by default — opt in once the DOM selector
+    // is confirmed correct for your screener setup.
+    const [strictScreenedCoin, setStrictScreenedCoin] = useState(true);
+    // Backend-driven tab activation for Stream B — when its telemetry (market_context_logs)
+    // goes stale past this many minutes, the next response carries this Automa
+    // workflow ID and coin_scanner.js dispatches it to bring the tab to front.
+    // Both editable here — no script/backend redeploy needed to change either.
+    const [tabActivateWorkflowIdB, setTabActivateWorkflowIdB] = useState('3lt4ZkHylt3L0uQlo05iH');
+    const [tabActivateThresholdMinB, setTabActivateThresholdMinB] = useState(6);
+    // 2026-09-10: Stream A/D now both have their own backend-driven
+    // tab-activate dispatch (A: v16.3+, D: v1.6) — same pattern as B's.
+    // streamAInitialSetupWorkflowId remains reference/config-only (A's DOM
+    // filter-setup check dispatches it directly, hardcoded in the script —
+    // this field exists so the ID is editable in one place, not buried).
+    const [streamAInitialSetupWorkflowId, setStreamAInitialSetupWorkflowId] = useState('3lcKzNfE_GyXzpUMKxwVi');
+    const [tabActivateWorkflowIdA, setTabActivateWorkflowIdA] = useState('9NoMligzmg3VE9SJMC942');
+    const [tabActivateThresholdMinA, setTabActivateThresholdMinA] = useState(6);
+    const [tabActivateWorkflowIdD, setTabActivateWorkflowIdD] = useState('h3ixjpLixrztE_ZzhLWtk');
+    const [tabActivateThresholdMinD, setTabActivateThresholdMinD] = useState(6);
+    // 2026-09-11: watchlist sync fallback — a heavier recovery action for
+    // when a specific ticker's normal sync retry has clearly stopped working
+    // (confirmed live: BCH/ETHFI stuck 15h+, 75 forced retries, never
+    // landing). Past this many escalations for any one ticker, the backend
+    // dispatches this Automa workflow instead of repeating the same failing
+    // retry forever.
+    const [watchlistSyncFallbackWorkflowId, setWatchlistSyncFallbackWorkflowId] = useState('4mxKJE8VxWpqztNVK5Wn_');
+    const [watchlistSyncFallbackEscalationThreshold, setWatchlistSyncFallbackEscalationThreshold] = useState(5);
+    const [watchlistSyncFallbackCooldownMin, setWatchlistSyncFallbackCooldownMin] = useState(15);
     const [settingsOpen, setSettingsOpen]          = useState(false);
     const [savingSettings, setSavingSettings]      = useState(false);
 
@@ -120,6 +156,18 @@ function GhostQueue({ containerRef }) {
                 setGapToleranceMin(data.gapToleranceMin);
                 setMomentumHours(data.momentumHours);
                 if (data.freshSessionVetoMode) setFreshSessionVetoMode(data.freshSessionVetoMode);
+                if (typeof data.strictScreenedCoin === 'boolean') setStrictScreenedCoin(data.strictScreenedCoin);
+                if (data.watchlistMaxCoins) setWatchlistMaxCoins(data.watchlistMaxCoins);
+                if (data.tabActivateWorkflowIdB) setTabActivateWorkflowIdB(data.tabActivateWorkflowIdB);
+                if (data.tabActivateThresholdMinB) setTabActivateThresholdMinB(data.tabActivateThresholdMinB);
+                if (data.streamAInitialSetupWorkflowId) setStreamAInitialSetupWorkflowId(data.streamAInitialSetupWorkflowId);
+                if (data.tabActivateWorkflowIdA) setTabActivateWorkflowIdA(data.tabActivateWorkflowIdA);
+                if (data.tabActivateThresholdMinA) setTabActivateThresholdMinA(data.tabActivateThresholdMinA);
+                if (data.tabActivateWorkflowIdD) setTabActivateWorkflowIdD(data.tabActivateWorkflowIdD);
+                if (data.tabActivateThresholdMinD) setTabActivateThresholdMinD(data.tabActivateThresholdMinD);
+                if (data.watchlistSyncFallbackWorkflowId) setWatchlistSyncFallbackWorkflowId(data.watchlistSyncFallbackWorkflowId);
+                if (data.watchlistSyncFallbackEscalationThreshold) setWatchlistSyncFallbackEscalationThreshold(data.watchlistSyncFallbackEscalationThreshold);
+                if (data.watchlistSyncFallbackCooldownMin) setWatchlistSyncFallbackCooldownMin(data.watchlistSyncFallbackCooldownMin);
             }
         } catch (e) { console.error('Watchdog settings fetch failed', e); }
     }, []);
@@ -287,8 +335,20 @@ function GhostQueue({ containerRef }) {
                           hint: 'A coin younger than this is never judged for pruning at all. Coins that already passed momentum-watch skip this.' },
                         { key: 'ghostHours', label: 'Ghost hours', value: ghostHours, setValue: setGhostHours, min: 1, max: 336, step: 1,
                           hint: 'Manual mode only — how long a flagged coin waits for momentum before auto-reset.' },
+                        { key: 'watchlistMaxCoins', label: 'Max watchlist coins', value: watchlistMaxCoins, setValue: setWatchlistMaxCoins, min: 2, max: 200, step: 1,
+                          hint: 'Cap on the real TV watchlist. Majors (BTC/ETH) and whitelist pins are never evicted. Beyond that, the lowest current-volume coins are dropped first when over the cap.' },
                         { key: 'gapToleranceMin', label: 'Gap tolerance (min)', value: gapToleranceMin, setValue: setGapToleranceMin, min: 1, max: 120, step: 1,
                           hint: 'A scan gap bigger than this resets every coin’s confidence clock (system was offline).' },
+                        { key: 'tabActivateThresholdMinB', label: 'Tab activate after (min) - B', value: tabActivateThresholdMinB, setValue: setTabActivateThresholdMinB, min: 2, max: 60, step: 1,
+                          hint: 'Stream B — how stale market_context_logs has to get before the backend tells the tab to activate itself via Automa.' },
+                        { key: 'tabActivateThresholdMinA', label: 'Tab activate after (min) - A', value: tabActivateThresholdMinA, setValue: setTabActivateThresholdMinA, min: 2, max: 60, step: 1,
+                          hint: 'Stream A — how stale the scans table has to get before the backend tells the tab to activate itself via Automa.' },
+                        { key: 'tabActivateThresholdMinD', label: 'Tab activate after (min) - D', value: tabActivateThresholdMinD, setValue: setTabActivateThresholdMinD, min: 2, max: 60, step: 1,
+                          hint: 'Stream D — how stale coin_metric_history has to get before the backend tells the tab to activate itself via Automa.' },
+                        { key: 'watchlistSyncFallbackEscalationThreshold', label: 'Sync fallback after (escalations)', value: watchlistSyncFallbackEscalationThreshold, setValue: setWatchlistSyncFallbackEscalationThreshold, min: 1, max: 50, step: 1,
+                          hint: 'How many failed forced-retry escalations a single stuck ticker needs before the backend gives up on the normal retry and dispatches the fallback workflow instead.' },
+                        { key: 'watchlistSyncFallbackCooldownMin', label: 'Sync fallback cooldown (min)', value: watchlistSyncFallbackCooldownMin, setValue: setWatchlistSyncFallbackCooldownMin, min: 2, max: 120, step: 1,
+                          hint: 'Minimum time between two fallback-workflow dispatches, so it does not fire every single cycle while a ticker stays stuck.' },
                     ].map(f => (
                         <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }} title={f.hint}>
                             <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.03em' }}>{f.label}</span>
@@ -330,6 +390,123 @@ function GhostQueue({ containerRef }) {
                             <option value="bypass">Force reset (default)</option>
                             <option value="smart">Smart filter (keep on-screener)</option>
                         </select>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}
+                        title="When on, Stream B (coin_scanner.js) checks that the watchlist's 'screened' filter pill is actually applied before trusting a telemetry cycle. If the filter's missing — meaning the watchlist may be showing an unfiltered, wrong universe of symbols — it reloads the page (bounded retries) instead of silently sending unscreened data.">
+                        <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Strict screened coin</span>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', height: 24 }}>
+                            <input
+                                type="checkbox"
+                                checked={strictScreenedCoin}
+                                onChange={e => {
+                                    const v = e.target.checked;
+                                    setStrictScreenedCoin(v);
+                                    saveWatchdogSetting('strictScreenedCoin', v);
+                                }}
+                            />
+                            <span style={{ color: 'var(--text-main)', fontSize: 12 }}>{strictScreenedCoin ? 'On' : 'Off'}</span>
+                        </label>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}
+                        title="Automa workflow ID dispatched when Stream B's tab is judged stale/hidden (past the 'Tab activate after' threshold). Find this in Automa's dashboard — workflow settings / URL. Changing it here takes effect on the next backend response, no script edit needed.">
+                        <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tab-activate workflow ID (B)</span>
+                        <input
+                            type="text"
+                            value={tabActivateWorkflowIdB}
+                            onChange={e => setTabActivateWorkflowIdB(e.target.value)}
+                            onBlur={() => {
+                                const v = tabActivateWorkflowIdB.trim();
+                                if (v) saveWatchdogSetting('tabActivateWorkflowIdB', v);
+                            }}
+                            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                            style={{
+                                width: 160, padding: '3px 6px', borderRadius: 4,
+                                border: '1px solid var(--border)', background: 'var(--bg-app)',
+                                color: 'var(--text-main)', fontSize: 12, fontFamily: 'monospace',
+                            }}
+                        />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}
+                        title="Automa workflow ID dispatched when Stream A's screener setup check fails (pills/columns/rows) — bounded retries, then a page reload after 3 failed attempts. Hardcoded in the script's CONFIG, not read from this setting yet — editable here for reference/future use.">
+                        <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Stream A initial-setup workflow ID</span>
+                        <input
+                            type="text"
+                            value={streamAInitialSetupWorkflowId}
+                            onChange={e => setStreamAInitialSetupWorkflowId(e.target.value)}
+                            onBlur={() => {
+                                const v = streamAInitialSetupWorkflowId.trim();
+                                if (v) saveWatchdogSetting('streamAInitialSetupWorkflowId', v);
+                            }}
+                            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                            style={{
+                                width: 160, padding: '3px 6px', borderRadius: 4,
+                                border: '1px solid var(--border)', background: 'var(--bg-app)',
+                                color: 'var(--text-main)', fontSize: 12, fontFamily: 'monospace',
+                            }}
+                        />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}
+                        title="Automa workflow ID dispatched when Stream A's tab is judged stale/hidden (past the 'Tab activate after (min) - A' threshold). Changing it here takes effect on the next backend response, no script edit needed.">
+                        <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tab-activate workflow ID (A)</span>
+                        <input
+                            type="text"
+                            value={tabActivateWorkflowIdA}
+                            onChange={e => setTabActivateWorkflowIdA(e.target.value)}
+                            onBlur={() => {
+                                const v = tabActivateWorkflowIdA.trim();
+                                if (v) saveWatchdogSetting('tabActivateWorkflowIdA', v);
+                            }}
+                            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                            style={{
+                                width: 160, padding: '3px 6px', borderRadius: 4,
+                                border: '1px solid var(--border)', background: 'var(--bg-app)',
+                                color: 'var(--text-main)', fontSize: 12, fontFamily: 'monospace',
+                            }}
+                        />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}
+                        title="Automa workflow ID dispatched when Stream D's tab is judged stale/hidden (past the 'Tab activate after (min) - D' threshold). Changing it here takes effect on the next backend response, no script edit needed.">
+                        <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tab-activate workflow ID (D)</span>
+                        <input
+                            type="text"
+                            value={tabActivateWorkflowIdD}
+                            onChange={e => setTabActivateWorkflowIdD(e.target.value)}
+                            onBlur={() => {
+                                const v = tabActivateWorkflowIdD.trim();
+                                if (v) saveWatchdogSetting('tabActivateWorkflowIdD', v);
+                            }}
+                            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                            style={{
+                                width: 160, padding: '3px 6px', borderRadius: 4,
+                                border: '1px solid var(--border)', background: 'var(--bg-app)',
+                                color: 'var(--text-main)', fontSize: 12, fontFamily: 'monospace',
+                            }}
+                        />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}
+                        title="Automa workflow ID dispatched when a single ticker's watchlist sync has failed repeatedly (past 'Sync fallback after (escalations)') and the normal retry has clearly stopped working. Opens a fresh tab and redoes the copy+paste from scratch. Changing it here takes effect on the next backend response, no script edit needed.">
+                        <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Watchlist sync fallback workflow ID</span>
+                        <input
+                            type="text"
+                            value={watchlistSyncFallbackWorkflowId}
+                            onChange={e => setWatchlistSyncFallbackWorkflowId(e.target.value)}
+                            onBlur={() => {
+                                const v = watchlistSyncFallbackWorkflowId.trim();
+                                if (v) saveWatchdogSetting('watchlistSyncFallbackWorkflowId', v);
+                            }}
+                            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                            style={{
+                                width: 160, padding: '3px 6px', borderRadius: 4,
+                                border: '1px solid var(--border)', background: 'var(--bg-app)',
+                                color: 'var(--text-main)', fontSize: 12, fontFamily: 'monospace',
+                            }}
+                        />
                     </div>
 
                     <span style={{ color: 'var(--text-muted)', fontSize: 10, opacity: savingSettings ? 1 : 0, transition: 'opacity 0.2s' }}>

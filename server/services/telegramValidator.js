@@ -166,7 +166,7 @@ function attach(engine, telegramService) {
 
         // Map to severity tier: CONFIRMED = CRITICAL, FAILED = HIGH, others = INFO
         const tier = verdict === 'CONFIRMED' ? 'CRITICAL' : verdict === 'FAILED' ? 'HIGH' : 'INFO';
-        telegramService.sendAlert(msg, verdict === 'CONFIRMED' ? 'SUCCESS' : verdict === 'FAILED' ? 'WARN' : 'INFO', {}, tier);
+        telegramService.sendAlert(msg, verdict === 'CONFIRMED' ? 'SUCCESS' : verdict === 'FAILED' ? 'WARN' : 'INFO', {}, tier, 'validator_verdict');
     });
 
     engine.on('early_favorable', ({ trial, priceMovePct }) => {
@@ -184,7 +184,7 @@ function attach(engine, telegramService) {
 
         const prefix = telegramService.getPrefix ? telegramService.getPrefix() : '💻 [LOCAL]';
         const msg    = buildEarlyMessage(trial, priceMovePct, prefix);
-        telegramService.sendAlert(msg, 'INFO', {}, 'HIGH');
+        telegramService.sendAlert(msg, 'INFO', {}, 'HIGH', 'validator_early');
     });
 
     console.log('📣 Telegram Validator v2 attached to Umpire Engine (4h per-ticker cooldown active)');

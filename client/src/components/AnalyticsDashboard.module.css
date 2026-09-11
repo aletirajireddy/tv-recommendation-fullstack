@@ -25,6 +25,34 @@
     /* Ensure height for widgets */
 }
 
+.cardHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.cardHeader h3 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.tag {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--accent-blue);
+    background: rgba(99, 179, 237, 0.1);
+    border: 1px solid rgba(99, 179, 237, 0.25);
+    border-radius: 4px;
+    padding: 2px 6px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
 /* Specific overrides for small widgets */
 .sensorCard {
     min-height: auto;

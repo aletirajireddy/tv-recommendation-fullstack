@@ -3,6 +3,7 @@ import { FreshnessChip } from '../FreshnessChip';
 import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import styles from './ATRRaceWidget.module.css';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useActiveCoinMask } from '../../hooks/useActiveCoinMask';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
 import { Activity, RefreshCw, Settings, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
@@ -394,10 +395,11 @@ export function ATRRaceWidget() {
     );
     useDataInvalidation(containerRef, reloadSilent, lastDataPush);
 
+    const { isActive } = useActiveCoinMask();
     const allRows = useMemo(() => {
         if (!boardData?.board?.length) return [];
         const { longSeries, shortSeries, equalThreshold } = cascadeSeries;
-        return boardData.board.map(b => {
+        return boardData.board.filter(b => isActive(b.ticker)).map(b => {
             const longDir  = checkCascade(b.emas, longSeries,  equalThreshold);
             const shortDir = checkCascade(b.emas, shortSeries, equalThreshold);
             const atrGate  = passesAtrGate(b.emas, shortSeries, b.atrs, b.price);
@@ -418,7 +420,7 @@ export function ATRRaceWidget() {
                 price:    b.price || 0,
             };
         });
-    }, [boardData, cascadeSeries]);
+    }, [boardData, cascadeSeries, isActive]);
 
     const displayRows = useMemo(() => {
         const filtered = allRows.filter(r => coinMatchesFilter(r, longFilter, shortFilter, filterClause));

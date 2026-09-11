@@ -1,0 +1,311 @@
+.overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1999;
+    backdrop-filter: blur(4px);
+}
+
+.modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 420px;
+    max-width: 92vw;
+    max-height: 85vh;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-bright);
+    border-radius: 10px;
+    z-index: 2000;
+    padding: 18px 20px;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modalHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.modalHeader h3 {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-main);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.closeBtn {
+    background: rgba(252, 129, 129, 0.15);
+    color: #fc8181;
+    border: 1px solid rgba(252, 129, 129, 0.3);
+    border-radius: 6px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 11px;
+}
+
+.tabRow {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.tabBtn {
+    flex: 1;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    cursor: pointer;
+}
+
+.tabBtnActive {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: var(--accent-blue);
+    color: var(--text-main);
+}
+
+/* ── Category list ── */
+.categoryRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    font-size: 12px;
+    color: var(--text-main);
+}
+
+.categoryRow:last-child { border-bottom: none; }
+
+.switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.switch input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.switchTrack {
+    display: inline-block;
+    width: 34px;
+    height: 18px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    position: relative;
+    transition: background 0.2s;
+}
+
+.switchTrackOn {
+    background: rgba(72, 187, 120, 0.4);
+}
+
+.switchThumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #888;
+    transition: left 0.2s, background 0.2s;
+}
+
+.switchThumbOn {
+    left: 17px;
+    background: #68d391;
+}
+
+/* ── Coins of Interest ── */
+.addRow {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.addInput {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-main);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 12px;
+    text-transform: uppercase;
+}
+
+.addBtn {
+    background: var(--accent-blue);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.addBtn:hover { opacity: 0.9; }
+.addBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Ticker autocomplete ── */
+.searchWrapper {
+    position: relative;
+    margin-bottom: 12px;
+}
+
+.searchInputRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 7px 10px;
+}
+
+.searchInput {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text-main);
+    font-size: 12px;
+    text-transform: uppercase;
+}
+
+.searchInput::placeholder {
+    color: var(--text-muted);
+    text-transform: none;
+}
+
+.suggestionDropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-bright);
+    border-radius: 6px;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
+    z-index: 10;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.suggestionItem {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    padding: 8px 10px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.suggestionItem:last-child { border-bottom: none; }
+.suggestionItem:hover { background: rgba(255, 255, 255, 0.05); }
+
+.suggTicker {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-main);
+    letter-spacing: 0.3px;
+}
+
+.suggStatus {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 2px 5px;
+    border-radius: 3px;
+}
+
+.suggActive { background: rgba(104, 211, 145, 0.12); color: #68d391; }
+.suggGhost  { background: rgba(246, 173, 85, 0.12);  color: #f6ad55; }
+.suggDead   { background: rgba(160, 160, 160, 0.1);  color: #718096; }
+
+.coinRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.coinTicker {
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--text-main);
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 72px;
+}
+
+.chipRow {
+    display: flex;
+    gap: 4px;
+    flex: 1;
+}
+
+.chip {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 3px 7px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.chipActive {
+    background: rgba(104, 211, 145, 0.15);
+    border-color: rgba(104, 211, 145, 0.4);
+    color: var(--accent-green);
+}
+
+.removeBtn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+    flex-shrink: 0;
+}
+
+.removeBtn:hover { color: #fc8181; }
+
+.emptyState {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 16px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+}

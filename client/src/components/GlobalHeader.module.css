@@ -6,6 +6,10 @@
     /* Parent handles padding */
 }
 
+.icon {
+    color: var(--text-muted);
+}
+
 .deckSection {
     flex: 2;
     height: 100%;

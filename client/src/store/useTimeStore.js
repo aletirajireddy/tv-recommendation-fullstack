@@ -67,6 +67,7 @@ export const useTimeStore = create((set, get) => ({
     sidebarCollapsed: localStorage.getItem('tv_sidebarCollapsed') === 'true', // Layout state
     mobileMenuOpen: false, // New Mobile Layout state
     showPlayback: localStorage.getItem('tv_showPlayback') === null ? true : localStorage.getItem('tv_showPlayback') === 'true',
+    coinMaskEnabled: localStorage.getItem('tv_coinMask') === 'true', // Global: show only current-scan coins
 
     // NEW: Genie Smart State
     marketMood: { score: 0, label: 'LOADING', stats: { bullish: 0, bearish: 0, total: 0 } },
@@ -90,6 +91,10 @@ export const useTimeStore = create((set, get) => ({
         localStorage.setItem('tv_showPlayback', String(!!show));
     },
     setTelegramEnabled: (enabled) => set({ telegramEnabled: enabled }),
+    setCoinMaskEnabled: (enabled) => {
+        set({ coinMaskEnabled: !!enabled });
+        try { localStorage.setItem('tv_coinMask', String(!!enabled)); } catch {}
+    },
     setSmartLevelsContext: (enabled) => {
         set({ useSmartLevelsContext: enabled });
         // Re-evaluate current scan to immediately apply changes
@@ -149,6 +154,85 @@ export const useTimeStore = create((set, get) => ({
             }
         })();
         return _inflight.telegram;
+    },
+
+    // ── Telegram category toggles + Coins of Interest ─────────────────────────
+    telegramCategories: {},
+    telegramWatchlist: [],
+
+    fetchTelegramCategories: async () => {
+        try {
+            const res = await fetch(`${API_BASE}/telegram/settings`);
+            if (res.ok) set({ telegramCategories: await res.json() });
+        } catch (err) {
+            console.error('Telegram categories fetch failed:', err);
+        }
+    },
+
+    saveTelegramCategory: async (key, enabled) => {
+        // Optimistic update
+        set(s => ({ telegramCategories: { ...s.telegramCategories, [key]: { ...s.telegramCategories[key], enabled } } }));
+        try {
+            await fetch(`${API_BASE}/telegram/settings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [key]: enabled }),
+            });
+        } catch (err) {
+            console.error('Failed to save Telegram category:', err);
+            get().fetchTelegramCategories(); // resync on failure
+        }
+    },
+
+    fetchTelegramWatchlist: async () => {
+        try {
+            const res = await fetch(`${API_BASE}/telegram/watchlist`);
+            if (res.ok) {
+                const data = await res.json();
+                set({ telegramWatchlist: data.coins || [] });
+            }
+        } catch (err) {
+            console.error('Telegram watchlist fetch failed:', err);
+        }
+    },
+
+    addTelegramWatchlistCoin: async (ticker) => {
+        try {
+            const res = await fetch(`${API_BASE}/telegram/watchlist`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker }),
+            });
+            if (res.ok) await get().fetchTelegramWatchlist();
+        } catch (err) {
+            console.error('Failed to add watchlist coin:', err);
+        }
+    },
+
+    updateTelegramWatchlistCoin: async (ticker, field, value) => {
+        set(s => ({
+            telegramWatchlist: s.telegramWatchlist.map(c => c.ticker === ticker ? { ...c, [field]: value ? 1 : 0 } : c),
+        }));
+        try {
+            await fetch(`${API_BASE}/telegram/watchlist/${encodeURIComponent(ticker)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [field]: value }),
+            });
+        } catch (err) {
+            console.error('Failed to update watchlist coin:', err);
+            get().fetchTelegramWatchlist();
+        }
+    },
+
+    removeTelegramWatchlistCoin: async (ticker) => {
+        set(s => ({ telegramWatchlist: s.telegramWatchlist.filter(c => c.ticker !== ticker) }));
+        try {
+            await fetch(`${API_BASE}/telegram/watchlist/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
+        } catch (err) {
+            console.error('Failed to remove watchlist coin:', err);
+            get().fetchTelegramWatchlist();
+        }
     },
 
     fetchStreamsHealth: async () => {

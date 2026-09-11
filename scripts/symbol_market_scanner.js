@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Ultra Scalper v16.0 - Connected Core (Master)
 // @namespace    http://tampermonkey.net/
-// @version      16.0
-// @description  Auto-triggers AI analysis with smart change detection + Alert integration + Fixed event toggles
+// @version      16.6
+// @description  v16.6: confirmed live via real DOM inspection that v16.5's pills-only check missed a genuinely broken screener state — 10 filter pills were present (would've passed), but the table itself had only 1 real data column and every row's indicator cell was empty with a Pine Script "array.get() Index out of bounds" error. checkStreamAFilterSetup() now checks three things together: pills container > 4 children, thead th[data-field] count > 5, tbody tr[data-rowkey] count >= 2. Retry cooldown bumped 3min -> 5min (the table can take a while to populate after the pills render). After 3 retries still fail, reloads the page instead of giving up silently, capped at 3 reloads total to avoid a reload loop if the page is broken for a reason neither Automa nor a reload can fix. v16.5: the initial-setup filter check's settle window now starts from a real page-load signal (document.readyState === 'complete', or a window 'load' listener if not there yet) instead of script-injection time — Tampermonkey has no @run-at directive here (defaults to document-idle), which can fire before TradingView's SPA content has actually rendered, risking judging (and firing Automa against) a genuinely not-yet-loaded page. checkStreamAFilterSetup() fails open (never judges, never triggers) until the real load event has fired, THEN waits the existing 45s settle window on top of that before evaluating. v16.4: fixed a real deadlock in v16.3's filter-setup check — it only ran from inside processData(), but processData() is never called until startAutoScan()'s button-discovery loop finds the scan button, and confirmed live that loop can get stuck retrying forever ("Scan button not found, retrying...") when the screener isn't properly set up. That's exactly the situation the filter check exists to fix, so gating it behind the very thing it was supposed to unblock meant the Automa setup workflow never got a chance to fire. Now a standalone startStreamASetupMonitor() runs checkStreamAFilterSetup() on its own 15s timer, independent of the scan button or any other state, started before the button-dependent functions in the init sequence. v16.3: two additions, mirroring Stream B (coin_scanner.js). (1) Initial-setup filter check — before trusting a scan cycle, verifies the screener's filter pills container (dynamic selector: [class*=screenerContainer] div [class*=pillsWrapper-] div[class*=pillsContainerWrapper-] div[class*=pillsContainer-]) has more than 4 direct children (confirmed via DOM inspection: only 2 children when broken); if not, dispatches Automa workflow 3lcKzNfE_GyXzpUMKxwVi (bounded retries, 3min cooldown, 45s settle window after page load — same scaffolding as Strict Screened Coin) and skips processData() for that cycle instead of sending unfiltered data. Gated once in processData() itself so every trigger source (manual, auto, alert-triggered) is covered. (2) Backend-driven tab activation — the backend now watches scans table staleness and, past a threshold, includes activate_tab_workflow_id in the /scan-report response; the script dispatches whatever ID it's given via the same automa:execute-workflow CustomEvent, on a local 3min cooldown. The workflow ID is never hardcoded here for this part — the backend owns it. v16.2: parseTableData() now rejects non-ticker garbage (JSON/long strings) before adding a row to coins[] — confirmed live (2026-09-01) that fragments of Automa's own workflow-editor JSON got scraped as literal "tickers" (18 junk rows in one scan), sent to the backend, and showed up as permanently "frozen" in the Data Feed Health widget. Same class of fix already applied to Stream B (coin_scanner.js v20.19). v16.1: hidden-tab guard on auto-scan (skip click+process while backgrounded, catch up instantly on refocus) + diagnostic warning when a previously-captured ticker vanishes from a scan's rows (dropped off pine-screener table). v16.0: Auto-triggers AI analysis with smart change detection + Alert integration + Fixed event toggles
 // @author       Your Name
 // @match        *://*.tradingview.com/pine-screener/*
 // @grant        GM_xmlhttpRequest
@@ -56,10 +56,169 @@
 
         AUTO_TRIGGER_AFTER_SCANS: 2,
         AUTO_TRIGGER_ENDPOINT: 'http://localhost:3000/scan-report',
+
+        // 2026-09-10: Stream A "initial setup" filter check — mirrors Stream
+        // B's Strict Screened Coin (coin_scanner.js). Verifies the screener's
+        // filter pills are actually applied before trusting a scan cycle; if
+        // the pills container has too few children (confirmed via DOM
+        // inspection: 2 children when broken, needs >4 when properly
+        // filtered), dispatches this Automa workflow to fix it (bounded
+        // retries, cooldown, settle window after page load — same
+        // scaffolding as Stream B's). Hardcoded here same as Stream B's
+        // STRICT_SCREEN_AUTOMA_WORKFLOW_ID — this one's a fixed recovery
+        // action, not something the backend needs to pick dynamically.
+        STREAM_A_SETUP_AUTOMA_WORKFLOW_ID: '3lcKzNfE_GyXzpUMKxwVi',
+        STREAM_A_SETUP_MAX_RETRIES: 3,
+        // 2026-09-10: bumped 3min -> 5min. Confirmed live via real DOM
+        // inspection that the pills-only check missed a genuinely broken
+        // state (10 filter pills present, but the table itself only had 1
+        // real data column and every row showed a Pine Script indicator
+        // error) — the table can take a while to actually populate after the
+        // pills render, so a tighter cooldown risked misjudging "still
+        // loading" as "still broken" and burning retries too fast.
+        STREAM_A_SETUP_COOLDOWN_MS: 5 * 60 * 1000,
+        STREAM_A_SETUP_INITIAL_SETTLE_MS: 45000,
+        STREAM_A_FILTER_MIN_PILLS: 4,    // pills container must have MORE than this many direct children
+        STREAM_A_MIN_TABLE_COLUMNS: 5,   // thead th[data-field] count must be MORE than this
+        STREAM_A_MIN_TABLE_ROWS: 2,      // tbody tr[data-rowkey] count must be AT LEAST this many
+        // 2026-09-10: after MAX_RETRIES Automa triggers all fail to fix it,
+        // reload the page instead of just giving up silently — capped so a
+        // persistently broken page (TradingView itself down, Automa broken)
+        // can't reload forever.
+        STREAM_A_SETUP_MAX_RELOADS: 3,
+
+        // Backend-driven tab activation — same pattern as Stream B v20.30.
+        // The backend decides (scans table staleness) whether this tab needs
+        // to come to front and hands down whichever workflow ID it wants
+        // dispatched via activate_tab_workflow_id in the /scan-report
+        // response. Never hardcoded here — see processSyncPayload-equivalent
+        // handling in the response onload below.
+        TAB_ACTIVATE_COOLDOWN_MS: 3 * 60 * 1000,
     };
 
     const INTERVAL_MS = CONFIG.INTERVAL_MINUTES * 60 * 1000;
     const UI_DELAY_MS = CONFIG.UI_DELAY_SECONDS * 1000;
+
+    // Self-reported version, sent with every payload — lets the backend tell
+    // us if the browser is actually running what we think it's running,
+    // instead of relying on "I pasted it" going unconfirmed. Bump this any
+    // time @version above changes.
+    const SCRIPT_VERSION = '16.6';
+
+    // ── Backgrounded-tab guard ───────────────────────────────────────────────
+    // Same class of bug fixed in Stream B/D: Chrome throttles setInterval in
+    // hidden tabs, and TradingView's own screener can stop updating while
+    // backgrounded, so a click-and-read cycle can silently process/send
+    // stale DOM data stamped with a fresh timestamp. Skip the cycle while
+    // hidden, and catch up immediately on refocus instead of waiting for the
+    // next (possibly throttle-delayed) interval tick.
+    function isTabHidden() {
+        return typeof document.hidden === 'boolean' ? document.hidden : false;
+    }
+
+    // ── 2026-09-10: Stream A initial-setup filter check ──────────────────────
+    // Selector is written to match by partial class-name fragments
+    // (`[class*=...]`) instead of TradingView's full hashed class names, so it
+    // keeps working across their CSS rebuilds — same approach as Stream B's
+    // STRICT_SCREEN_SELECTOR.
+    const STREAM_A_FILTER_SELECTOR = '[class*=screenerContainer] div [class*=pillsWrapper-] div[class*=pillsContainerWrapper-] div[class*=pillsContainer-]';
+
+    // 2026-09-10: settle window now starts from a REAL page-load signal, not
+    // script-injection time. Tampermonkey has no @run-at here (defaults to
+    // document-idle), which can fire well before TradingView's SPA content
+    // has actually rendered — starting the settle clock at script-parse time
+    // risked judging (and firing Automa against) a genuinely not-yet-rendered
+    // page. null means "not loaded yet" — checkStreamAFilterSetup() fails
+    // open (never judges, never triggers) until this is set.
+    let streamAPageLoadedAt = null;
+    function _markStreamAPageLoaded() {
+        if (streamAPageLoadedAt === null) {
+            streamAPageLoadedAt = Date.now();
+            console.log('[Stream-A-Setup] 📄 Page load event fired — settle window starts now.');
+        }
+    }
+    if (document.readyState === 'complete') {
+        _markStreamAPageLoaded();
+    } else {
+        window.addEventListener('load', _markStreamAPageLoaded, { once: true });
+    }
+
+    /**
+     * v16.6: combined health check — confirmed live via real DOM inspection
+     * that the pills-count check alone missed a genuinely broken state: 10
+     * filter pills were present (pills check would've said "fine"), but the
+     * table itself only had 1 real data column (thead th[data-field]) and
+     * every row's indicator cell was empty with a Pine Script error tooltip
+     * ("array.get() Index out of bounds"). All three must hold for the
+     * screener to count as properly initialized:
+     *   1. filter pills container > STREAM_A_FILTER_MIN_PILLS children
+     *   2. thead th[data-field] count > STREAM_A_MIN_TABLE_COLUMNS
+     *   3. tbody tr[data-rowkey] count >= STREAM_A_MIN_TABLE_ROWS
+     * On failure: bounded retries at a 5min cooldown (bumped from 3min —
+     * the table can take a while to actually populate after the pills
+     * render, so a tight cooldown risked misjudging "still loading" as
+     * "broken"). Once retries are exhausted, reload the page instead of
+     * giving up silently — capped at STREAM_A_SETUP_MAX_RELOADS so a
+     * persistently broken page can't reload forever.
+     */
+    function checkStreamAFilterSetup() {
+        if (streamAPageLoadedAt === null) {
+            return true; // page hasn't fired its load event yet — nothing to judge
+        }
+        const sinceLoad = Date.now() - streamAPageLoadedAt;
+        if (sinceLoad < CONFIG.STREAM_A_SETUP_INITIAL_SETTLE_MS) {
+            return true; // loaded, but still settling — don't judge a not-yet-rendered screener as broken
+        }
+
+        const pillsContainer = document.querySelector(STREAM_A_FILTER_SELECTOR);
+        const pillsCount = pillsContainer ? pillsContainer.children.length : 0;
+        const pillsOk = pillsCount > CONFIG.STREAM_A_FILTER_MIN_PILLS;
+
+        const columnCount = document.querySelectorAll('thead th[data-field]').length;
+        const columnsOk = columnCount > CONFIG.STREAM_A_MIN_TABLE_COLUMNS;
+
+        const rowCount = document.querySelectorAll('tbody tr[data-rowkey]').length;
+        const rowsOk = rowCount >= CONFIG.STREAM_A_MIN_TABLE_ROWS;
+
+        const setupOk = pillsOk && columnsOk && rowsOk;
+
+        if (setupOk) {
+            if (GM_getValue('streamASetup_retryCount', 0) !== 0) {
+                GM_setValue('streamASetup_retryCount', 0);
+                console.log(`[Stream-A-Setup] ✅ Setup confirmed (pills:${pillsCount} columns:${columnCount} rows:${rowCount}) — retry counter reset.`);
+            }
+            return true;
+        }
+
+        const count = GM_getValue('streamASetup_retryCount', 0);
+        const lastTriggerAt = GM_getValue('streamASetup_lastTriggerAt', 0);
+        console.warn(`[Stream-A-Setup] ⚠️ Setup incomplete — pills:${pillsCount}(need>${CONFIG.STREAM_A_FILTER_MIN_PILLS}) columns:${columnCount}(need>${CONFIG.STREAM_A_MIN_TABLE_COLUMNS}) rows:${rowCount}(need>=${CONFIG.STREAM_A_MIN_TABLE_ROWS}). Retry ${count}/${CONFIG.STREAM_A_SETUP_MAX_RETRIES}.`);
+
+        if (count >= CONFIG.STREAM_A_SETUP_MAX_RETRIES) {
+            const reloadCount = GM_getValue('streamASetup_reloadCount', 0);
+            if (reloadCount >= CONFIG.STREAM_A_SETUP_MAX_RELOADS) {
+                console.error(`[Stream-A-Setup] ❌ Still broken after ${CONFIG.STREAM_A_SETUP_MAX_RETRIES} retries AND ${reloadCount} reloads — giving up entirely to avoid a reload loop. Check the screener manually.`);
+                return false;
+            }
+            GM_setValue('streamASetup_reloadCount', reloadCount + 1);
+            GM_setValue('streamASetup_retryCount', 0); // fresh retry budget after the reload
+            console.error(`[Stream-A-Setup] 🔄 Still broken after ${CONFIG.STREAM_A_SETUP_MAX_RETRIES} Automa retries — reloading the page (reload ${reloadCount + 1}/${CONFIG.STREAM_A_SETUP_MAX_RELOADS}).`);
+            location.reload();
+            return false;
+        }
+
+        if (Date.now() - lastTriggerAt < CONFIG.STREAM_A_SETUP_COOLDOWN_MS) {
+            return false; // already triggered recently — give the workflow time to land
+        }
+
+        GM_setValue('streamASetup_retryCount', count + 1);
+        GM_setValue('streamASetup_lastTriggerAt', Date.now());
+        console.log(`[Stream-A-Setup] 🔧 Dispatching Automa setup workflow (attempt ${count + 1}/${CONFIG.STREAM_A_SETUP_MAX_RETRIES}).`);
+        window.dispatchEvent(new CustomEvent('automa:execute-workflow', {
+            detail: { id: CONFIG.STREAM_A_SETUP_AUTOMA_WORKFLOW_ID }
+        }));
+        return false;
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // STATE
@@ -203,6 +362,22 @@
                                     unsafeWindow.latestConfirmedAlertTs = ts;
                                     const localTime = new Date(ts).toLocaleTimeString('en-IN', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
                                     console.log(`[Sync] 🔄 Updated Confirm Head: ${localTime}`);
+                                }
+                            }
+
+                            // 2026-09-10: backend-driven tab activation — same pattern as
+                            // Stream B v20.30. The backend decides (scans table staleness)
+                            // whether this tab needs to come to front and hands down
+                            // whichever workflow ID it wants dispatched. Never hardcoded
+                            // here — the backend owns which ID that is.
+                            if (resJson.activate_tab_workflow_id) {
+                                const lastTabActivateAt = GM_getValue('tabActivate_lastTriggerAt', 0);
+                                if (Date.now() - lastTabActivateAt >= CONFIG.TAB_ACTIVATE_COOLDOWN_MS) {
+                                    GM_setValue('tabActivate_lastTriggerAt', Date.now());
+                                    console.log(`[Tab-Activate] 🔔 Backend flagged this stream as stale/hidden — dispatching Automa workflow ${resJson.activate_tab_workflow_id} to bring the tab to front.`);
+                                    window.dispatchEvent(new CustomEvent('automa:execute-workflow', {
+                                        detail: { id: resJson.activate_tab_workflow_id }
+                                    }));
                                 }
                             }
                         } catch (e) {
@@ -623,9 +798,24 @@
                 positionCode: parseTvNumber(cells[columnMap.POSITION_CODE]?.innerText),
             };
 
-            if (coin.ticker && coin.ticker !== 'UNKNOWN') {
-                coins.push(coin);
+            // Sanity guard (2026-09-01): confirmed live — 18 garbage "ticker" rows
+            // (fragments of Automa's own workflow-editor JSON — "AUTOMA-BLOCKS",
+            // {"NODES", "BLOCKDELAY", {"WIDTH", 1000}, {"SOURCE"...) got scraped
+            // into real scan_results and sent to the backend, then showed up as
+            // permanently "frozen tickers" in the Data Feed Health widget. Same
+            // root cause as the Stream B watchlist corruption (a clipboard/paste
+            // collision put JSON where a symbol should be) — this just never had
+            // a matching guard on the Stream A side. A real ticker is always short
+            // and punctuation-free; reject anything else before it ever enters coins[].
+            const isJunkTicker = !coin.ticker || coin.ticker === 'UNKNOWN'
+                || coin.ticker.length > 20 || /[{}"\\[\]]/.test(coin.ticker);
+            if (isJunkTicker) {
+                if (coin.ticker && coin.ticker !== 'UNKNOWN') {
+                    console.warn(`[Parse] ⚠️ Skipping non-ticker garbage row: "${String(coin.ticker).slice(0, 60)}"`);
+                }
+                return;
             }
+            coins.push(coin);
         });
 
         return coins;
@@ -1466,6 +1656,7 @@
                 id: `scan_${Date.now()}`,
                 trigger: scanType, // Consistent with 'manual', 'auto', 'alert-triggered'
                 timestamp: historyEntry.timestamp,
+                script_version: SCRIPT_VERSION,
                 results: Array.from(uniqueMap.values()),
                 aiPriority: aiPriority,
                 market_sentiment: market_sentiment,
@@ -1479,6 +1670,7 @@
             return {
                 id: `error_${Date.now()}`,
                 trigger: scanType,
+                script_version: SCRIPT_VERSION,
                 error: error.message,
                 results: [],
                 market_sentiment: {},
@@ -1549,6 +1741,14 @@
     // PROCESS DATA (MAIN PROCESSING FUNCTION)
     // ═══════════════════════════════════════════════════════════════
     function processData(scanType = 'auto') {
+        // Single choke point for every trigger source (manual click, auto-scan,
+        // alert-triggered) — gate here once instead of in each caller, same
+        // reasoning as Stream B routing everything through sendTelemetry().
+        if (!checkStreamAFilterSetup()) {
+            console.warn(`[Process] ⏸️ Skipping ${scanType} scan — screener filter setup not confirmed. Waiting on Automa correction.`);
+            return;
+        }
+
         // ═══════════════════════════════════════════════════════════════
         // WATCHDOG: Force Break Lock if stuck > 30s
         // ═══════════════════════════════════════════════════════════════
@@ -1601,6 +1801,21 @@
                     console.warn('[Process] No data available');
                     STATE.isScanning = false;
                     return;
+                }
+            }
+
+            // DIAGNOSTIC: a ticker that was captured last scan but is missing from
+            // this one won't get a fresh row written for it at all — its DB value
+            // just sits there with an aging timestamp while every other coin keeps
+            // moving. That looks identical to a "frozen coin" from outside, but the
+            // cause is the pine-screener table not rendering that row this cycle
+            // (sorted/scrolled out), not a send/hash bug. Surface it directly.
+            if (STATE.lastProcessedData && STATE.lastProcessedData.length > 0) {
+                const prevTickers = new Set(STATE.lastProcessedData.map((c) => c.ticker));
+                const currTickers = new Set(allCoins.map((c) => c.ticker));
+                const vanished = [...prevTickers].filter((t) => !currTickers.has(t));
+                if (vanished.length > 0) {
+                    console.warn(`[Process] ⚠️ ${vanished.length} ticker(s) missing from this scan's captured rows (dropped off pine-screener table?): ${vanished.join(', ')}`);
                 }
             }
 
@@ -2179,6 +2394,11 @@
             return;
         }
 
+        if (isTabHidden()) {
+            console.warn('[Auto-Scan] ⏸️ Tab is backgrounded — skipping cycle (would click/read stale DOM). Will catch up on refocus.');
+            return;
+        }
+
         const btn = findScanButton();
         if (!btn) {
             console.warn('[Auto-Scan] ⚠️ Button not found');
@@ -2195,6 +2415,23 @@
         STATE.processDebounceTimer = setTimeout(() => {
             processData('auto');
         }, UI_DELAY_MS);
+    }
+
+    // 2026-09-10: standalone filter-setup monitor — deliberately independent
+    // of the scan-button discovery loop. checkStreamAFilterSetup() used to
+    // only run from inside processData(), but processData() is never called
+    // until startAutoScan()'s checkForButton() finds the scan button — and
+    // confirmed live, that loop can get stuck retrying forever
+    // ("Scan button not found, retrying...") when the screener isn't properly
+    // set up. That's exactly the situation this check exists to fix, so
+    // gating it behind the very thing it's supposed to unblock was a
+    // deadlock. This runs on its own timer regardless of button/scan state,
+    // so the Automa setup workflow gets a chance to fire and fix the page
+    // even while everything else is stuck waiting.
+    function startStreamASetupMonitor() {
+        setInterval(() => {
+            checkStreamAFilterSetup();
+        }, 15000);
     }
 
     function startAutoScan() {
@@ -2217,6 +2454,20 @@
 
         checkForButton();
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // VISIBILITY CATCH-UP
+    // ═══════════════════════════════════════════════════════════════
+    // Don't wait for the next (possibly throttle-delayed) interval tick once
+    // the tab regains focus — fire the scan right away so a long background
+    // stretch doesn't cost extra minutes of staleness on top of what it
+    // already cost while hidden.
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && !STATE.isScanning) {
+            console.log('[Auto-Scan] 👁️ Tab regained focus — running catch-up scan.');
+            triggerAutoScan();
+        }
+    });
 
     // ═══════════════════════════════════════════════════════════════
     // KEYBOARD SHORTCUTS
@@ -2311,6 +2562,7 @@
 
     setTimeout(() => {
         console.log('[Init] 🟢 CONNECTING SYSTEMS (Warm-up Complete)...');
+        startStreamASetupMonitor(); // independent of the scan button — can fire even if the button is never found
         setupScanButtonListener();
         startAutoScan();
         startAlertMonitor();

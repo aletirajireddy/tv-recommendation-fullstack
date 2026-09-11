@@ -16,6 +16,28 @@
     margin-bottom: 20px;
 }
 
+.refreshBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.2s, background 0.2s, border-color 0.2s;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.refreshBtn:hover {
+    color: var(--accent-blue);
+    background: var(--bg-active);
+    border-color: var(--accent-blue);
+}
+
 .title {
     display: flex;
     align-items: center;

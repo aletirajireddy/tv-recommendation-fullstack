@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback, lazy, Suspense } from
 import { FreshnessChip } from '../FreshnessChip';
 import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useActiveCoinMask } from '../../hooks/useActiveCoinMask';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
 import { checkCascade } from '../../utils/cascadeUtils';
@@ -329,8 +330,9 @@ export function DistanceTracker({ filterTicker, compact }) {
         else { setSortKey(key); setSortDir('asc'); }
     };
 
+    const { isActive } = useActiveCoinMask();
     const rows = useMemo(() => {
-        const board = data?.board || [];
+        const board = (data?.board || []).filter(r => isActive(r.ticker));
 
         const enhancedBoard = board.map(r => {
             // Squeeze detection: all available EMA distances within ±0.5%
@@ -383,7 +385,7 @@ export function DistanceTracker({ filterTicker, compact }) {
             if (av > bv) return sortDir === 'asc' ? 1 : -1;
             return 0;
         });
-    }, [data, sortKey, sortDir]);
+    }, [data, sortKey, sortDir, isActive]);
 
     return (
         <div className={styles.widget}>

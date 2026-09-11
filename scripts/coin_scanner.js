@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Institutional Conviction Engine - Bidirectional v20.13 (Fresh Session Bypasses Veto)
+// @name         Institutional Conviction Engine - Bidirectional v20.17 (Fixed Repeat-Graduation Loop)
 // @namespace    http://tampermonkey.net/
-// @version      20.13
-// @description  v20.13: FRESH_SESSION removals now bypass VETO_PRUNE — previously any coin still visible on the live screener at reset time was protected from removal by the same veto that guards normal operation, so a hard reset could never actually reach the majors+whitelist baseline; it just stalled at "whatever the screener currently shows". A reset now forces removal regardless, and a legitimately-active coin simply re-earns its spot through a fresh 8/20min cycle. v20.12: clipboard re-assert (added in v20.11) is now scoped to RETRY attempts only (automaAttempt > 0) — refreshing on every 10s poll during the routine, usually-successful FIRST attempt meant hijacking the user's system clipboard constantly, interfering with their own parallel copy/paste work. Now it only kicks in once Automa has already failed once and we're actively retrying — a rare, already-degraded case where the protection is worth the tradeoff. v20.10: FRESH_SESSION signal — manual dashboard-triggered reset to majors + whitelist. v20.9: master_targets diff checks the live screener before honoring any removal. v20.8: closes the previous Automa tab before opening a new one; hard minimum interval between any two fires. v20.7: post-Automa verification, WIPE/PARTIAL_ADD detection + retry. v20.6: REFRESH_WATCHLIST signal. v20.5: screener snap cached by monitor(), absolute-index column mapping. v20.4: full-format diff, cross-exchange guard, always-fresh telemetry.
+// @version      20.31
+// @description  v20.31: watchlist sync fallback — confirmed live that a coin can get stuck failing to land on the real watchlist for 15h+ (BCH/ETHFI: 297 consecutive misses, 75 forced UPDATE_WATCHLIST retries via the normal clipboard-paste path, never landing) while every other historical case resolved within 1-2 cycles. The backend tracks this in watchlist_sync_audit and, past a configurable escalation count, sends serverInfo.watchlist_sync_fallback_workflow_id — a heavier Automa recovery workflow (opens a fresh tab, redoes copy+paste from scratch) instead of repeating the same failing action forever. Dispatched via the same automa:execute-workflow CustomEvent, own 5min local cooldown, workflow ID never hardcoded (backend owns it, same pattern as activate_tab_workflow_id). v20.30: backend-driven tab activation — the backend now watches how stale Stream B's actual telemetry write has gone (market_context_logs) and, past a threshold (6min, meaning sendTelemetry() has clearly been skipping itself via isTabHidden() for a while), includes activate_tab_workflow_id in its response with Automa's "Stream B make tab active" workflow ID (3lt4ZkHylt3L0uQlo05iH). processSyncPayload() dispatches whatever ID it's given via the same automa:execute-workflow CustomEvent used by Strict Screened Coin, on a local 3min cooldown to avoid re-firing every cycle. The workflow ID itself is never hardcoded in this script — the backend owns it, same pattern as strict_screened_coin's toggle. Works even while the tab is backgrounded because monitor()'s GATE_8/GATE_20 pushToBackend() calls don't check isTabHidden() (only sendTelemetry() does), so the backend can still reach this stream and tell it to wake itself up. v20.29: fixed a real race in Strict Screened Coin — checkStrictScreenedCoin() (called from sendTelemetry()) used to query the filter-pill DOM itself, BEFORE sendTelemetry() had called ensureWatchlistPanelOpen() to switch to the right panel, so it could misread a genuinely-applied filter as "missing" purely because the wrong panel was showing at that instant. Confirmed live 2026-09-02: Stream B went completely silent ~7-9min after a fresh v20.28 reload — exactly matching 3 false-positive retries at the 3min cooldown before STRICT_SCREEN_GAVE_UP permanently stopped both Automa triggering and telemetry sends. Now monitor() (which always has the panel confirmed open before it checks) is the single source of truth — it caches its DOM reading (lastKnownScreenerFilterActive) and checkStrictScreenedCoin() consumes that instead of re-querying blind. Self-healing: once the cached reading correctly reads true, the retry counter resets automatically on the next check, no manual reset needed even if a prior GAVE_UP already happened. v20.28: monitor() (the coin-intake loop, runs on its own SCAN_MS interval independent of sendTelemetry()) now also refuses to start a new pipeline/qualification clock for any coin scraped while Strict Screened Coin's filter pill isn't confirmed active — previously only sendTelemetry() was gated, so monitor() kept BIRTHing every row of the raw unfiltered screener (confirmed live 2026-09-03: 55+ symbols including cross-exchange UNIUSDT duplicates and non-target rows like SOXLUSDT/USELESSUSDT all started 8/20min qualification clocks simultaneously), later hammering the backend with a burst of GATE_8/GATE_20 pushes once the filter issue had already self-corrected. Existing already-tracked coins still advance normally so nothing is wrongly ghosted mid-correction; the screener snapshot cache used for telemetry/volume-ranking is also skipped while unconfirmed, so it never captures the wrong universe. v20.27: screener snap capture (lastScreenerSnap) now correctly parses TradingView's K/M/B magnitude suffixes (e.g. "570.07M" on a Vol in USD 24h column) into real numbers — previously fell through to raw text, unusable for ranking. Column detection was already header-name-based (data-field attribute), not hardcoded position, so a newly added column like Vol in USD 24h is captured automatically with zero code change beyond this parsing fix. v20.26: an automatic UPDATE_WATCHLIST/RESET_WATCHLIST cooldown-bypass is now only honored while Stream A is actively ingesting data (backend-reported stream_a_fresh, ~15min threshold) — confirmed live (2026-09-02) that a forced Automa push kept firing for master_targets containing old non-crypto garbage regardless of whether Stream A's tab was even running. FRESH_SESSION (manual, dashboard-triggered) is unaffected — never gated by Stream A's state. Normal cooldown-respecting updates are completely untouched either way. v20.25: Strict Screened Coin's workflow ID and all its tunables (max retries, cooldown, settle window) moved into the main CONFIG object at the top of the script — one place to edit instead of buried consts. Confirmed working via manual console test (2026-09-01). v20.24: Strict Screened Coin no longer reloads the page — dispatches Automa's documented CustomEvent ('automa:execute-workflow', workflow id GNRPpM5H6q7VmXjxjlOQC) to trigger a re-select workflow instead, per https://www.goautoma.com/extension/docs/blocks/trigger.html. Same bounded-retry/cooldown scaffolding, just swaps the recovery action. v20.23: Strict Screened Coin now waits 45s after page load before its first check (was: evaluated immediately, which could misread a not-yet-rendered/not-yet-Automa-reselected page as a real failure and burn a retry on nothing). v20.22: Strict Screened Coin now defaults ON (was off) and cooldown between reload attempts is 3min (was 5min) — before each telemetry capture, verifies the watchlist's "screened" filter pill is actually applied in the DOM; if missing, reloads the same tab in place (max 3 attempts, 3min gap between each) instead of silently sending an unfiltered/wrong universe of symbols. v20.20: fireAutoma() now re-asserts the correct ticker-list clipboard value every 2s for 90s after firing (was: written once, then hoped nothing touched it) — closes the actual race that let Automa's own workflow-editor JSON (copied while editing a block) win the clipboard and get pasted into "Add symbol" as junk rows. Stops early the moment verification confirms success. v20.19: updateArea2Watchlist() now rejects non-ticker garbage (JSON/long strings) before adding it to area2WatchlistSet — confirmed live (2026-09-01) that a clipboard collision got pasted into "Add symbol" and landed as literal junk rows on the real watchlist; without this guard, the script would then try to manage that JSON blob as if it were a ticker (diff/removal logic, telemetry payload). v20.18: refresh-click now logs which path found the button (confirmed #js-screener-container vs fallback) every cycle, so the console shows proof it's using the manually-verified selector, not silently falling back. v20.17: updateArea2Watchlist() no longer wipes area2WatchlistSet/watchlistBaseSet on a transient empty read (container present but 0 rows, e.g. mid-render right after a panel-tab switch) — confirmed via DB audit that this was letting coins already on the real watchlist look "missing" for up to a full TELEMETRY cycle, causing them to be wrongly re-adopted into the GATE_8/20 pipeline and re-graduate as STABLE every ~40min with no real screener change, driving needless master_targets diffs / Automa re-syncs. Now only clears+rebuilds on a genuinely non-empty read; an empty read keeps the last-known-good set. v20.16: refresh-button lookup now searches #js-screener-container first (confirmed via user DOM inspection as the button's actual parent), instead of relying on the watchlist-panel/document fallback to find it every time. v20.15: Telemetry cadence matched to Stream D (5min -> 2min). Refresh-click now uses the confirmed selector [data-qa-id="screener-refresh-button"] (was a best-effort guess in v20.14), waits the full 35s settle + re-checks visibility before capturing. Compact title heartbeat now shows coin count, +added/-removed vs the last cycle, and countdown — tuned for the tab strip's tiny width. v20.14: Confirmed live (2026-08-21) that sendTelemetry() kept punching identical price/change_pct for 25-30+ min while backgrounded — same silent-stale-data pattern as Stream D. Added: skip-when-hidden guard on sendTelemetry(), a visibilitychange catch-up call, a best-effort click of TradingView's own refresh control before reading the watchlist (their UI can independently pause its update loop while hidden), and a document.title heartbeat clock so a stuck tab is visible from the taskbar without opening the dashboard. v20.13: FRESH_SESSION removals now bypass VETO_PRUNE — previously any coin still visible on the live screener at reset time was protected from removal by the same veto that guards normal operation, so a hard reset could never actually reach the majors+whitelist baseline; it just stalled at "whatever the screener currently shows". A reset now forces removal regardless, and a legitimately-active coin simply re-earns its spot through a fresh 8/20min cycle. v20.12: clipboard re-assert (added in v20.11) is now scoped to RETRY attempts only (automaAttempt > 0) — refreshing on every 10s poll during the routine, usually-successful FIRST attempt meant hijacking the user's system clipboard constantly, interfering with their own parallel copy/paste work. Now it only kicks in once Automa has already failed once and we're actively retrying — a rare, already-degraded case where the protection is worth the tradeoff. v20.10: FRESH_SESSION signal — manual dashboard-triggered reset to majors + whitelist. v20.9: master_targets diff checks the live screener before honoring any removal. v20.8: closes the previous Automa tab before opening a new one; hard minimum interval between any two fires. v20.7: post-Automa verification, WIPE/PARTIAL_ADD detection + retry. v20.6: REFRESH_WATCHLIST signal. v20.5: screener snap cached by monitor(), absolute-index column mapping. v20.4: full-format diff, cross-exchange guard, always-fresh telemetry.
 // @author       Gemini_Thought_Partner
 // @match        *://*.tradingview.com/cex-screener/RDpx2vs9/*
 // @grant        GM_xmlhttpRequest
@@ -15,6 +15,12 @@
 
 (function () {
     'use strict';
+
+    // Self-reported version, sent with every TELEMETRY payload — lets the
+    // backend tell us if the browser is actually running what we think it's
+    // running. Bump this any time @version above changes.
+    const SCRIPT_VERSION = '20.31';
+
     const CONFIG = {
         SCAN_MS: 60000,
         GATE_8: 8,
@@ -56,6 +62,32 @@
         // calls sendTelemetry(), whose response can request another refresh —
         // unbounded recursion (observed: 74 empty snapshots in 13 minutes).
         REFRESH_MIN_INTERVAL_MS: 60000,
+        // ── Strict Screened Coin (v20.21+) ───────────────────────────────────
+        // Automa workflow that re-selects/reapplies the screened watchlist
+        // filter, triggered via its documented CustomEvent API — no page
+        // reload. Manually confirmed working (2026-09-01, browser console
+        // test). To point this at a different workflow, edit
+        // STRICT_SCREEN_AUTOMA_WORKFLOW_ID below — find the ID in Automa's
+        // dashboard (workflow settings / URL). See:
+        // https://www.goautoma.com/extension/docs/blocks/trigger.html
+        STRICT_SCREEN_AUTOMA_WORKFLOW_ID: 'GNRPpM5H6q7VmXjxjlOQC',
+        STRICT_SCREEN_MAX_RETRIES: 3,          // give up after this many consecutive failures
+        STRICT_SCREEN_COOLDOWN_MS: 3 * 60 * 1000,   // after triggering the workflow, give it time to actually reapply the filter before trying again
+        STRICT_SCREEN_INITIAL_SETTLE_MS: 45000,     // don't evaluate the check until this long after page load
+        // v20.30: backend-driven tab-activation. The backend decides (based on
+        // how stale Stream B's telemetry has gone) whether THIS tab needs to be
+        // brought to front, and tells us via serverInfo.activate_tab_workflow_id
+        // on any response — it owns the workflow ID (3lt4ZkHylt3L0uQlo05iH,
+        // Automa's "stream B make tab active" workflow), the script just
+        // dispatches whatever ID it's given. Cooldown here is purely local
+        // spam-prevention — the backend's own staleness threshold is the real
+        // gate on how often it will ever send this in the first place.
+        TAB_ACTIVATE_COOLDOWN_MS: 3 * 60 * 1000,
+        // v20.31: watchlist sync fallback cooldown — local spam-prevention
+        // only, same reasoning as TAB_ACTIVATE_COOLDOWN_MS above. The
+        // backend's own escalation-threshold + cooldown (watchdog settings)
+        // is the real gate on how often it sends this.
+        WATCHLIST_SYNC_FALLBACK_COOLDOWN_MS: 5 * 60 * 1000,
         BACKEND_URL: "http://localhost:3000/qualified-pick",
         FIELDS: {
             SYMBOL: "TickerUniversal",
@@ -65,8 +97,13 @@
     };
 
     const TELEMETRY = {
-        POLL_MS: 300000,
-        URL: "http://localhost:3000/api/market-context"
+        POLL_MS: 300000, // 5min — reverted from 2min to keep refresh-clicking gentler on TradingView's UI
+        URL: "http://localhost:3000/api/market-context",
+        // Confirmed selector (2026-08-22) for TradingView's own manual refresh
+        // control — same one used by the Stream D script. Forces TradingView
+        // to pull fresh data itself before we read the DOM.
+        REFRESH_BUTTON_SELECTOR: '[data-qa-id="screener-refresh-button"]',
+        REFRESH_SETTLE_MS: 35000,
     };
 
     const activeMasterSet = new Set();
@@ -97,6 +134,119 @@
     // overlapping Automa runs can race and paste the wrong/partial list into each
     // other's run, which can itself be the reason a wipe never resolves.
     let automaTabHandle     = null;
+    // v20.20: repeating re-assert guard — see fireAutoma() for why this exists.
+    let automaClipboardGuardTimer = null;
+
+    // ── v20.21: Strict Screened Coin ─────────────────────────────────────────
+    // Backend-controlled (dashboard toggle, off by default). When on, verifies
+    // the watchlist's "screened" filter pill is actually applied in the DOM
+    // before trusting a telemetry cycle — without it, the watchlist may be
+    // showing TradingView's full unfiltered universe instead of your curated
+    // screened set (confirmed live 2026-09-01: QuickList showed 47 symbols
+    // including non-crypto assets like TSLAUSDT/SILVERUS when the screener's
+    // filter chips weren't engaged, vs. 3 symbols with them applied).
+    let strictScreenedCoinEnabled = true; // matches the backend's default (system_settings 'strict_screened_coin'); overwritten by every server response regardless
+    const STRICT_SCREEN_SELECTOR = 'div[class*="watchlistWrapper"] button[data-qa-id="ui-lib-pill-active-area-button"]+button[class*="hasClickListener"]';
+    const strictScreenPageLoadedAt = Date.now();
+    // v20.29: last DOM reading of the filter pill, written ONLY by monitor()
+    // (see below) — the one place that has already called
+    // ensureWatchlistPanelOpen() and therefore has a guaranteed-correct panel
+    // state before querying STRICT_SCREEN_SELECTOR. checkStrictScreenedCoin()
+    // (called from sendTelemetry(), on an independent interval) used to query
+    // the same selector itself BEFORE sendTelemetry() had opened the watchlist
+    // panel — a real race that could read "missing" while the correct panel
+    // simply wasn't showing yet, burning all 3 retries on false positives and
+    // permanently giving up (confirmed live 2026-09-02: Stream B went silent
+    // ~7-9min after a fresh reload, matching exactly 3 retries at the 3min
+    // cooldown). Fail-open (true) until monitor() has run at least once.
+    let lastKnownScreenerFilterActive = true;
+
+    /**
+     * v20.28: pure/read-only status check — no side effects, no logging, no
+     * Automa dispatch. Used by monitor() (which runs on its own SCAN_MS
+     * interval, independent of sendTelemetry()'s cadence) to decide whether
+     * this cycle's screener rows represent the real curated set or TradingView's
+     * unfiltered universe. Kept separate from checkStrictScreenedCoin() so
+     * monitor()'s much more frequent polling doesn't spam retry counters or
+     * fire Automa multiple times per escalation window — that side-effecting
+     * logic stays solely on sendTelemetry()'s cadence, below.
+     */
+    function isScreenerFilterConfirmedActive() {
+        if (!strictScreenedCoinEnabled) return true;
+        const sinceLoad = Date.now() - strictScreenPageLoadedAt;
+        if (sinceLoad < CONFIG.STRICT_SCREEN_INITIAL_SETTLE_MS) return true; // fail open during settle window
+        // v20.29: only monitor() calls this, and only after ensureWatchlistPanelOpen()
+        // has already run this cycle — so this is the one reliable DOM read.
+        // Cache it for checkStrictScreenedCoin() (sendTelemetry's cadence) to
+        // consume instead of re-querying blind.
+        const filterActive = !!document.querySelector(STRICT_SCREEN_SELECTOR);
+        lastKnownScreenerFilterActive = filterActive;
+        return filterActive;
+    }
+
+    /**
+     * Returns true if it's safe to proceed with this telemetry cycle. If the
+     * feature is off, or the filter pill is present, returns true immediately.
+     * If the pill is missing, triggers the Automa re-select workflow (bounded
+     * retries, with a cooldown so we don't fire it in a tight loop) or — once
+     * retries are exhausted — just warns and blocks the send.
+     */
+    function checkStrictScreenedCoin() {
+        if (!strictScreenedCoinEnabled) return true;
+
+        const sinceLoad = Date.now() - strictScreenPageLoadedAt;
+        if (sinceLoad < CONFIG.STRICT_SCREEN_INITIAL_SETTLE_MS) {
+            auditLog("STRICT_SCREEN_SETTLING", null,
+                `Page loaded ${Math.round(sinceLoad / 1000)}s ago — waiting for ${CONFIG.STRICT_SCREEN_INITIAL_SETTLE_MS / 1000}s settle window before checking the filter.`,
+                "BUFFER");
+            return true; // don't gate telemetry on an unsettled page — just skip the check this cycle
+        }
+
+        // v20.29: read monitor()'s cached DOM reading instead of querying here —
+        // sendTelemetry() can run this check before it has switched panels
+        // itself (ensureWatchlistPanelOpen() happens further down in
+        // sendTelemetry()), which used to misread a real filter as "missing"
+        // just because the wrong panel was showing at that instant. monitor()
+        // always queries with the panel confirmed open, so its reading is the
+        // one to trust.
+        const filterActive = lastKnownScreenerFilterActive;
+        if (filterActive) {
+            if (GM_getValue('strictScreen_retryCount', 0) !== 0) {
+                GM_setValue('strictScreen_retryCount', 0);
+                auditLog("STRICT_SCREEN_RECOVERED", null, "Screened-coin filter pill is back — retry counter reset.", "QUALIFIED");
+            }
+            return true;
+        }
+
+        const count = GM_getValue('strictScreen_retryCount', 0);
+        const lastTriggerAt = GM_getValue('strictScreen_lastTriggerAt', 0);
+
+        auditLog("STRICT_SCREEN_MISSING", null,
+            `Screened-coin filter pill not found in watchlist DOM — telemetry would be unscreened. Retry ${count}/${CONFIG.STRICT_SCREEN_MAX_RETRIES}.`,
+            "ORPHAN");
+
+        if (count >= CONFIG.STRICT_SCREEN_MAX_RETRIES) {
+            auditLog("STRICT_SCREEN_GAVE_UP", null,
+                `Filter still missing after ${CONFIG.STRICT_SCREEN_MAX_RETRIES} Automa workflow triggers — giving up to avoid a trigger loop. Check the screener manually.`,
+                "ORPHAN");
+            return false;
+        }
+
+        if (Date.now() - lastTriggerAt < CONFIG.STRICT_SCREEN_COOLDOWN_MS) {
+            // Already triggered recently — give the workflow time to land before trying again.
+            return false;
+        }
+
+        GM_setValue('strictScreen_retryCount', count + 1);
+        GM_setValue('strictScreen_lastTriggerAt', Date.now());
+        auditLog("STRICT_SCREEN_AUTOMA_TRIGGER", null,
+            `Dispatching Automa re-select workflow (attempt ${count + 1}/${CONFIG.STRICT_SCREEN_MAX_RETRIES}) — no page reload.`,
+            "SYSTEM");
+        window.dispatchEvent(new CustomEvent('automa:execute-workflow', {
+            detail: { id: CONFIG.STRICT_SCREEN_AUTOMA_WORKFLOW_ID }
+        }));
+        return false;
+    }
 
     // =========================================================================
     // 🗂️ PRECISION AUDIT LOGGER
@@ -234,6 +384,7 @@
         // produce exactly the wipe we're trying to prevent.
         if (automaRetryTimer)  { clearTimeout(automaRetryTimer);  automaRetryTimer  = null; }
         if (automaVerifyTimer) { clearTimeout(automaVerifyTimer); automaVerifyTimer = null; }
+        if (automaClipboardGuardTimer) { clearInterval(automaClipboardGuardTimer); automaClipboardGuardTimer = null; }
 
         // v20.8: close the PREVIOUS Automa tab (if it's still open) before opening
         // a new one. Cancelling the JS timers above stops US from re-checking a
@@ -245,13 +396,39 @@
             catch (e) { /* tab may already be gone — non-fatal */ }
         }
 
-        GM_setClipboard(targets.join(','));
+        const clipboardText = targets.join(',');
+        GM_setClipboard(clipboardText);
         auditLog("AUTOMA_TRIGGERED", null, `Copied ${targets.length} coins. Firing new tab.${note || ''}`, "SYNC");
         automaTabHandle = GM_openInTab("https://www.tradingview.com/cex-screener/lEINSjG1/", { active: false, insert: true, setParent: true });
 
         window.lastAutomaTriggerMs = Date.now();
         automaExpectedList = targets.slice();
         saveState();
+
+        // v20.20: confirmed live (2026-09-01) — GM_setClipboard writes the REAL
+        // system clipboard, a single shared resource. Automa doesn't paste the
+        // instant we open its tab; it has to load the page and boot first, and
+        // that gap (observed: tens of seconds) is a window where ANYTHING else
+        // touching the clipboard silently wins — including the user copying a
+        // block while editing the Automa flow itself, which is exactly what put
+        // Automa's own workflow-editor JSON on the clipboard and got it pasted
+        // into "Add symbol" as junk watchlist rows. A single write-and-hope can't
+        // defend against that. Instead, keep re-asserting the correct value every
+        // 2s for the duration Automa needs it — if something else grabs the
+        // clipboard mid-window, this restores the right value within ~2s instead
+        // of leaving it corrupted for the whole run. Capped at 90s (comfortably
+        // past AUTOMA_VERIFY_START_MS's 45s typical boot time) so it doesn't
+        // fight the user's own copy/paste indefinitely.
+        const guardDeadline = Date.now() + 90000;
+        automaClipboardGuardTimer = setInterval(() => {
+            if (Date.now() > guardDeadline) {
+                clearInterval(automaClipboardGuardTimer);
+                automaClipboardGuardTimer = null;
+                return;
+            }
+            GM_setClipboard(clipboardText);
+        }, 2000);
+
         scheduleAutomaVerify();
     }
 
@@ -337,6 +514,9 @@
                 auditLog("AUTOMA_VERIFIED", null, `Watchlist OK: ${st.matched}/${st.expected} coins present.`, "SYSTEM");
             }
             automaAttempt = 0;
+            // Confirmed success — stop the clipboard re-assert guard immediately,
+            // no need to keep hijacking the user's clipboard for the rest of its window.
+            if (automaClipboardGuardTimer) { clearInterval(automaClipboardGuardTimer); automaClipboardGuardTimer = null; }
             return;
         }
 
@@ -401,7 +581,77 @@
         //   corrected immediately (no 15-min wait for dupes to clear).
         const forcePrune     = Array.isArray(serverInfo.force_prune) ? serverInfo.force_prune : [];
         const actionRequired = serverInfo.action_required || null;
-        const isForcedUpdate = actionRequired === 'UPDATE_WATCHLIST' || actionRequired === 'RESET_WATCHLIST' || actionRequired === 'FRESH_SESSION';
+        // v20.26: an automatic UPDATE_WATCHLIST/RESET_WATCHLIST cooldown-bypass
+        // is only honored while Stream A is actively ingesting data. Confirmed
+        // live (2026-09-02): master_targets can carry old garbage (non-crypto
+        // symbols graduated via a past Stream A data-quality bug) that gets
+        // force-pushed to Automa on repeat, regardless of whether Stream A is
+        // even running right now. The content of what Stream A found isn't the
+        // gate — its recent ingestion activity is: an actively-firing Stream A
+        // with an empty or unusual result is still legitimate signal and should
+        // force through exactly as today; a silent/stale Stream A means nothing
+        // new motivates urgency, so the bypass is withheld and this falls back
+        // to the normal cooldown-respecting update path instead. FRESH_SESSION
+        // is a deliberate manual dashboard action — never gated by this, since
+        // you're not waiting on Stream A when you click it.
+        const autoForcedAction = actionRequired === 'UPDATE_WATCHLIST' || actionRequired === 'RESET_WATCHLIST';
+        const streamAFresh = serverInfo.stream_a_fresh !== false; // undefined (older backend) treated as fresh — fail open, never fail toward MORE aggressive
+        if (autoForcedAction && !streamAFresh) {
+            auditLog("STREAM_A_STALE_SUPPRESS", null,
+                `${actionRequired} received but Stream A hasn't ingested data recently — not bypassing cooldown. Falling back to normal update cadence.`,
+                "BUFFER");
+        }
+        const isForcedUpdate = (autoForcedAction && streamAFresh) || actionRequired === 'FRESH_SESSION';
+        // Strict Screened Coin flag — dashboard-controlled, read fresh from every
+        // response so a toggle takes effect on the very next cycle, no script edit.
+        if (typeof serverInfo.strict_screened_coin === 'boolean') {
+            strictScreenedCoinEnabled = serverInfo.strict_screened_coin;
+        }
+
+        // v20.30: backend-driven tab activation. The backend watches how stale
+        // this stream's telemetry has gone (a gap here means sendTelemetry()
+        // has been skipping itself via isTabHidden() — monitor()'s GATE_8/20
+        // pushes don't check visibility, so this response can still reach us
+        // even while the tab is backgrounded) and, when it decides this window
+        // needs to come to front, sends the Automa workflow ID to fire — never
+        // hardcoded here, the backend owns which workflow that is. Local
+        // cooldown just prevents re-firing every single cycle while the
+        // backend keeps sending the same signal.
+        if (serverInfo.activate_tab_workflow_id) {
+            const lastTabActivateAt = GM_getValue('tabActivate_lastTriggerAt', 0);
+            if (Date.now() - lastTabActivateAt >= CONFIG.TAB_ACTIVATE_COOLDOWN_MS) {
+                GM_setValue('tabActivate_lastTriggerAt', Date.now());
+                auditLog("TAB_ACTIVATE_TRIGGER", null,
+                    `Backend flagged this stream as stale/hidden — dispatching Automa workflow ${serverInfo.activate_tab_workflow_id} to bring the tab to front.`,
+                    "SYSTEM");
+                window.dispatchEvent(new CustomEvent('automa:execute-workflow', {
+                    detail: { id: serverInfo.activate_tab_workflow_id }
+                }));
+            }
+        }
+
+        // v20.31: watchlist sync fallback. Confirmed live that a coin can get
+        // stuck failing to land on the real watchlist for 15h+ (297 consecutive
+        // misses, 75 forced UPDATE_WATCHLIST retries via the normal path) —
+        // the same clipboard-paste approach just isn't working for it anymore.
+        // The backend tracks this (watchlist_sync_audit) and, past a
+        // configurable escalation count, sends a heavier recovery workflow
+        // (opens a fresh tab, redoes the copy+paste from scratch) instead of
+        // us silently repeating the same failing action forever. Own cooldown,
+        // separate from tab-activate's — unrelated recovery actions, shouldn't
+        // share a spam-prevention timer.
+        if (serverInfo.watchlist_sync_fallback_workflow_id) {
+            const lastFallbackAt = GM_getValue('watchlistSyncFallback_lastTriggerAt', 0);
+            if (Date.now() - lastFallbackAt >= CONFIG.WATCHLIST_SYNC_FALLBACK_COOLDOWN_MS) {
+                GM_setValue('watchlistSyncFallback_lastTriggerAt', Date.now());
+                auditLog("WATCHLIST_SYNC_FALLBACK_TRIGGER", null,
+                    `Backend reports the normal watchlist sync retry has stopped working for a stuck ticker — dispatching Automa fallback workflow ${serverInfo.watchlist_sync_fallback_workflow_id} (fresh tab, redo copy+paste).`,
+                    "ORPHAN");
+                window.dispatchEvent(new CustomEvent('automa:execute-workflow', {
+                    detail: { id: serverInfo.watchlist_sync_fallback_workflow_id }
+                }));
+            }
+        }
 
         // ── v20.10 FRESH_SESSION ─────────────────────────────────────────────────
         // Manual "burn it down and start over" reset, triggered from the dashboard.
@@ -595,24 +845,61 @@
     }
 
     function updateArea2Watchlist() {
-        area2WatchlistSet.clear();
-        watchlistBaseSet.clear();   // Bug-2 fix: reset cross-exchange base set too
-        watchlistSnapshot = [];
-
         // =========================================================================
         // ✅ STRICT DOM SCOPING (Prevents reading the Screener accidentally)
         // =========================================================================
         const watchlistContainer = document.querySelector('div[data-name="symbol-list-wrap"]');
 
         if (!watchlistContainer) {
-            console.warn("[System] Watchlist container not found, skipping UI parse.");
+            console.warn("[System] Watchlist container not found, skipping UI parse (keeping last-known-good set).");
             return;
         }
 
+        const rows = watchlistContainer.querySelectorAll('div[data-symbol-full]');
+
+        // Bug fix (2026-08-22): confirmed via DB audit — the SAME 6 tickers were
+        // re-graduating as STABLE every ~40min even though they never left the
+        // real watchlist. Root cause: this function used to clear() the sets
+        // unconditionally, then repopulate from whatever it found. Right after
+        // ensureWatchlistPanelOpen() switches tabs, TradingView can take longer
+        // than the 1500ms wait to actually render the rows — so this ran with
+        // the container present but ZERO rows in it yet, wiping a good set down
+        // to empty. Every coin on the real watchlist then looked "missing" to
+        // the GATE_8/20 pipeline (line ~890's suppression check) for up to a
+        // full 5-min TELEMETRY cycle, got re-adopted, and 20-30min later fired
+        // a duplicate "STABLE" graduation — which is what was driving repeat
+        // master_targets diffs / Automa re-syncs with no real screener change.
+        // Fix: only clear+rebuild on a genuinely non-empty read; a transient
+        // empty read now keeps the last-known-good set instead of wiping it.
+        if (rows.length === 0) {
+            console.warn("[System] Watchlist container present but empty (mid-render after tab switch?) — keeping last-known-good set.");
+            return;
+        }
+
+        area2WatchlistSet.clear();
+        watchlistBaseSet.clear();   // Bug-2 fix: reset cross-exchange base set too
+        watchlistSnapshot = [];
+
         // Only query the rows INSIDE the specific Watchlist container
-        watchlistContainer.querySelectorAll('div[data-symbol-full]').forEach(row => {
+        rows.forEach(row => {
             const full = row.getAttribute('data-symbol-full');
             const short = row.getAttribute('data-symbol-short');
+
+            // Sanity guard (2026-09-01): confirmed live — a clipboard collision
+            // between our GM_setClipboard(ticker list) and something else copying
+            // text (observed: Automa's own workflow-editor JSON, copied while
+            // editing a block) let garbage get pasted into "Add symbol" and land
+            // as literal junk rows on the real watchlist. Without this check, this
+            // function would happily add that JSON blob to area2WatchlistSet and
+            // the diff logic would then try to "remove" it — feeding garbage into
+            // DIFF_DETECTED, the telemetry payload, and potentially back into a
+            // future Automa fire. A real ticker is always short and punctuation-free
+            // (e.g. "BINANCE:BTCUSDT.P") — anything wildly longer or containing
+            // JSON-ish characters is not a symbol and must never enter these sets.
+            if (full && (full.length > 40 || /[{}"\\[\]]/.test(full))) {
+                console.warn(`[System] ⚠️ Skipping non-ticker garbage in watchlist row: "${full.slice(0, 60)}..."`);
+                return;
+            }
 
             if (full) {
                 area2WatchlistSet.add(full);
@@ -637,7 +924,70 @@
         });
     }
 
+    // ── Backgrounded-tab guard ───────────────────────────────────────────────
+    // Confirmed live (2026-08-21): every ticker's price/change_pct in this
+    // exact snapshot held byte-identical for 25-30+ minutes while the timestamp
+    // kept advancing — a hidden/occluded tab silently punching stale DOM reads
+    // as if they were fresh. Skip the send entirely while hidden rather than
+    // write market_context_logs rows that look live but aren't.
+    function isTabHidden() {
+        return typeof document.hidden === 'boolean' ? document.hidden : false;
+    }
+
+    // Click TradingView's own refresh control before reading the watchlist,
+    // forcing a fresh pull from their feed rather than trusting whatever's
+    // already rendered — TradingView's own UI can independently pause its
+    // update loop while hidden/idle, which no Chrome flag controls.
+    function tryClickRefresh(container) {
+        // Confirmed (2026-08-22, user DOM inspection + manual console click-test):
+        // document.getElementById('js-screener-container').querySelector(
+        //   '[data-qa-id="screener-refresh-button"]')  is the button's real,
+        // verified-working path — search there first so the primary lookup
+        // actually succeeds instead of silently falling through.
+        const screenerContainer = document.getElementById('js-screener-container');
+        const scope = container || document;
+        let btn = null, via = null;
+        if (screenerContainer && (btn = screenerContainer.querySelector(TELEMETRY.REFRESH_BUTTON_SELECTOR))) {
+            via = '#js-screener-container (confirmed)';
+        } else if ((btn = scope.querySelector(TELEMETRY.REFRESH_BUTTON_SELECTOR))) {
+            via = 'watchlist-panel scope (fallback)';
+        } else if ((btn = document.querySelector(TELEMETRY.REFRESH_BUTTON_SELECTOR))) {
+            via = 'document-wide (fallback)';
+        }
+        if (btn) {
+            btn.click();
+            auditLog("REFRESH_CLICK", null, `Clicked refresh button via ${via}. Waiting ${TELEMETRY.REFRESH_SETTLE_MS/1000}s to settle.`, "SYSTEM");
+            return true;
+        }
+        auditLog("REFRESH_CLICK", null, `Refresh button not found (selector: "${TELEMETRY.REFRESH_BUTTON_SELECTOR}") — reading table as-is.`, "SYSTEM");
+        return false;
+    }
+
+    // ── Tab-title heartbeat — compact, tab-strip space is tiny ──────────────
+    // Format: "👁26c +2-1 45s"  =  26 coins tracked, +2/-1 vs last telemetry
+    // cycle, next update in 45s. If the countdown stops moving, the tab is
+    // stuck regardless of what any Chrome flag or dashboard says.
+    const titleState = { coinCount: 0, added: 0, removed: 0, nextEventAt: Date.now() + 30000, label: 'init' };
+    function renderTitle() {
+        const secsLeft = Math.max(0, Math.round((titleState.nextEventAt - Date.now()) / 1000));
+        const delta = (titleState.added || titleState.removed) ? ` +${titleState.added}-${titleState.removed}` : '';
+        document.title = `👁${titleState.coinCount}c${delta} ${titleState.label} ${secsLeft}s`;
+    }
+    setInterval(renderTitle, 1000);
+    let prevWatchlistBaseSet = new Set();
+
     async function sendTelemetry() {
+        if (isTabHidden()) {
+            auditLog("TELEMETRY_SKIPPED", null, "Tab is backgrounded — skipping to avoid punching stale prices. Will catch up when visible again.", "BUFFER");
+            titleState.label = 'hidden';
+            titleState.nextEventAt = Date.now() + TELEMETRY.POLL_MS;
+            return;
+        }
+        if (!checkStrictScreenedCoin()) {
+            titleState.label = 'unscreened';
+            titleState.nextEventAt = Date.now() + TELEMETRY.POLL_MS;
+            return;
+        }
         auditLog("TELEMETRY", null, "Capturing Market Context Snapshot...", "SYSTEM");
 
         // Bug-6 fix: use screener snap cached by monitor() instead of re-reading here.
@@ -656,14 +1006,44 @@
             return;
         }
 
+        // Force TradingView to pull fresh data itself before we read the DOM —
+        // its own update loop can independently pause while hidden/idle, which
+        // no Chrome flag controls.
+        if (tryClickRefresh(watchlistPanel)) {
+            titleState.label = 'refreshing';
+            titleState.nextEventAt = Date.now() + TELEMETRY.REFRESH_SETTLE_MS;
+            await new Promise(r => setTimeout(r, TELEMETRY.REFRESH_SETTLE_MS));
+            if (isTabHidden()) {
+                auditLog("TELEMETRY_SKIPPED", null, "Tab went hidden during the refresh wait — aborting this cycle.", "BUFFER");
+                titleState.label = 'hidden';
+                titleState.nextEventAt = Date.now() + TELEMETRY.POLL_MS;
+                return;
+            }
+        }
+
         // Always refresh watchlist state immediately before building the payload.
         updateArea2Watchlist();
+
+        // Compact added/removed vs the last telemetry cycle — shown in the
+        // title heartbeat since tab-strip space is tiny.
+        const addedSet   = new Set([...watchlistBaseSet].filter(t => !prevWatchlistBaseSet.has(t)));
+        const removedSet = new Set([...prevWatchlistBaseSet].filter(t => !watchlistBaseSet.has(t)));
+        titleState.coinCount = watchlistSnapshot.length;
+        titleState.added = addedSet.size;
+        titleState.removed = removedSet.size;
+        titleState.label = 'next';
+        titleState.nextEventAt = Date.now() + TELEMETRY.POLL_MS;
+        prevWatchlistBaseSet = new Set(watchlistBaseSet);
+        if (addedSet.size || removedSet.size) {
+            auditLog("WATCHLIST_DELTA", null, `+[${[...addedSet].join(',')}] -[${[...removedSet].join(',')}]`, "SYNC");
+        }
 
         const payload = {
             screener_total_count: screenerSnap.length,
             screener_visible_snapshot: screenerSnap,
             watchlist_count: watchlistSnapshot.length,
-            watchlist_active_snapshot: watchlistSnapshot
+            watchlist_active_snapshot: watchlistSnapshot,
+            script_version: SCRIPT_VERSION
         };
 
         GM_xmlhttpRequest({
@@ -693,6 +1073,18 @@
         await ensureWatchlistPanelOpen();
         mapHeaders();
         updateArea2Watchlist();
+
+        // v20.28: confirmed once per monitor() cycle, reused below to gate both
+        // the screener snapshot cache and new-coin intake. See
+        // isScreenerFilterConfirmedActive() for why this doesn't also drive the
+        // Automa retry/escalation — that stays on sendTelemetry()'s cadence only.
+        const screenerConfirmed = isScreenerFilterConfirmedActive();
+        if (!screenerConfirmed && (Date.now() - (window._lastUnscreenedMonitorLogMs || 0)) > 30000) {
+            auditLog("MONITOR_SKIPPED_UNSCREENED", null,
+                "Screener filter pill not confirmed active — skipping new-coin intake this cycle (existing tracked coins still advance normally). Waiting on Automa correction.",
+                "BUFFER");
+            window._lastUnscreenedMonitorLogMs = Date.now();
+        }
 
         // =========================================================================
         // 🔍 DYNAMIC ORPHAN COIN DETECTION
@@ -751,7 +1143,11 @@
         // monitor() runs while the screener panel is active. sendTelemetry() switches
         // to the watchlist tab before reading, which removes screener rows from the DOM
         // and produces screener_total_count: 0. Cache here so telemetry always has it.
-        if (rows.length > 0) {
+        // v20.28: also gated on screenerConfirmed — a snapshot taken from the
+        // unfiltered universe would otherwise get sent to the backend as
+        // screener_visible_snapshot and corrupt the volume-based watchlist-cap
+        // ranking with rows that were never really candidates.
+        if (rows.length > 0 && screenerConfirmed) {
             const snapHeaders = [];
             document.querySelectorAll('thead th[data-field]').forEach(th => {
                 const f = th.getAttribute('data-field');
@@ -769,8 +1165,20 @@
                         const fieldName = snapHeaders[idx];
                         const rawText   = cell.innerText || '';
                         const numCand   = rawText.replace(/[\n\r,\s]/g, '').replace(/−/g, '-').replace(/USDT$/i, '');
-                        snapData[fieldName] = (numCand !== '' && /^-?[\d.]+$/.test(numCand))
-                            ? parseFloat(numCand)
+                        // v20.27: handle TradingView's K/M/B magnitude suffixes (e.g. "570.07M"
+                        // on a Vol in USD 24h-style column) — previously only bare numbers
+                        // parsed; a suffixed value fell through to being stored as raw text,
+                        // unusable for any numeric ranking/comparison downstream.
+                        const magMatch = numCand.match(/^(-?[\d.]+)([KMB])$/i);
+                        let parsedVal;
+                        if (magMatch) {
+                            const mult = { K: 1e3, M: 1e6, B: 1e9 }[magMatch[2].toUpperCase()];
+                            parsedVal = parseFloat(magMatch[1]) * mult;
+                        } else if (numCand !== '' && /^-?[\d.]+$/.test(numCand)) {
+                            parsedVal = parseFloat(numCand);
+                        }
+                        snapData[fieldName] = (parsedVal !== undefined && isFinite(parsedVal))
+                            ? parsedVal
                             : rawText.replace(/−/g, '-').trim();
                     }
                 });
@@ -843,6 +1251,23 @@
                 return;
             }
 
+            // v20.28: don't start a new pipeline for a coin scraped while the
+            // screened filter isn't confirmed active — this is the exact incident
+            // from 2026-09-03 where 55+ unfiltered symbols (UNIUSDT duplicates
+            // across exchanges, SOXLUSDT/USELESSUSDT and other non-target rows)
+            // all got BIRTH'd simultaneously because the raw custom-screener view
+            // was mistaken for the real candidate set, later hammering the backend
+            // with a burst of GATE_8/GATE_20 qualifications at once. rowKey is
+            // still added to seenInThisScan above, so any coin that legitimately
+            // started its pipeline earlier (while confirmed) isn't wrongly ghosted
+            // just because this cycle happens to be unscreened. Automa's
+            // correction workflow (fired on sendTelemetry()'s cadence via
+            // checkStrictScreenedCoin()) gets a chance to fix the filter before
+            // intake resumes on a later cycle.
+            if (!screenerConfirmed) {
+                return;
+            }
+
             activeMasterSet.add(rowKey);
             const price = parseFloat(cells[colMap.PRICE]?.innerText.replace(/,/g, '')) || 0;
             pipelineRegistry.set(rowKey, { bornAt: Date.now(), bornPrice: price, ticker, q8: false });
@@ -883,5 +1308,15 @@
         sendTelemetry();
         setInterval(sendTelemetry, TELEMETRY.POLL_MS);
     }, 30000);
+
+    // Catch-up the instant the tab regains focus — don't wait for the next
+    // (possibly throttle-delayed) TELEMETRY.POLL_MS tick to notice fresh data
+    // is available.
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            auditLog("VISIBILITY", null, "Tab regained focus — running catch-up telemetry.", "SYSTEM");
+            sendTelemetry();
+        }
+    });
 
 })();

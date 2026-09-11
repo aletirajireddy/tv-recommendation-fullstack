@@ -1,7 +1,7 @@
 # TV Recommendation Dashboard — Architecture & Design Reference
 
 > Living document. Update whenever a design decision changes. Claude Code loads this automatically.
-> Last major update: 2026-08-20 (Momentum Watcher, Fresh Session manual reset, gated master_targets addition, Fresh Session veto mode — see "Momentum Watcher, Fresh Session & Gated Addition")
+> Last major update: 2026-09-11 (Backend-Driven Tab Activation & Self-Healing Pipeline — unified activation coordinator, wait-and-listen handshake, per-target backoff, all-streams-dark Telegram alert, Watchlist Sync Fallback — see "Backend-Driven Tab Activation & Self-Healing Pipeline")
 
 ---
 
@@ -30,11 +30,34 @@ Editing `scripts/coin_scanner.js`, `scripts/technical_watchlist_coin_scanner.js`
 
 | File | Browser script name | Current version |
 |---|---|---|
-| `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional | **v20.13** |
-| `scripts/technical_watchlist_coin_scanner.js` | (Stream D / technical watchlist scanner) | — |
-| `scripts/indicators/tamper_streamA.txt` | Stream A macro scanner | — |
+| `scripts/symbol_market_scanner.js` | Ultra Scalper - Connected Core (Master) — Stream A | **v16.6** |
+| `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional — Stream B | **v20.31** |
+| `scripts/technical_watchlist_coin_scanner.js` | Stream D Technical Watchlist Scanner | **v1.6** |
+| `scripts/indicators/tamper_streamA.txt` | Stream A macro scanner reference | — |
 | `scripts/indicators/tamper_streamB.txt` | Stream B reference | — |
 | `scripts/indicators/tamper_streamD.txt` | Stream D reference | — |
+
+### Automa Workflow ID Registry (updated 2026-09-11)
+
+> Automa runs entirely inside Chrome, independent of the Tampermonkey scripts and the
+> backend. A workflow ID only actually does something if either (a) a script
+> dispatches it via `window.dispatchEvent(new CustomEvent('automa:execute-workflow',
+> {detail:{id}}))`, or (b) it has its own native trigger configured directly in
+> Automa's UI (e.g. a Cron job). Column 3 says which applies to each row — don't
+> assume a listed ID is "live" just because it's in this table. IDs are stored in
+> `system_settings` (via the watchdog-settings API, editable from the Ghost Coin
+> widget's settings panel) — **never hardcoded in a script**, except the two marked
+> "hardcoded" below, which are deliberate fixed recovery actions rather than
+> something the backend needs to pick dynamically.
+
+| Workflow ID | Purpose | Wired how |
+|---|---|---|
+| `GNRPpM5H6q7VmXjxjlOQC` | Stream B — re-select the screened-coin filter | **Live, hardcoded.** Dispatched by `coin_scanner.js`'s `checkStrictScreenedCoin()` (`CONFIG.STRICT_SCREEN_AUTOMA_WORKFLOW_ID`) when the filter pill goes missing. |
+| `3lcKzNfE_GyXzpUMKxwVi` | Stream A — initial/filter setup | **Live, hardcoded.** Dispatched by `symbol_market_scanner.js`'s `checkStreamAFilterSetup()` (`CONFIG.STREAM_A_SETUP_AUTOMA_WORKFLOW_ID`) when the pills/columns/rows health check fails (see below). |
+| `3lt4ZkHylt3L0uQlo05iH` | Stream B — make its tab/window active | **Live**, `tabActivateWorkflowIdB` setting. Dispatched by the backend's activation coordinator (see below) via `coin_scanner.js`'s `activate_tab_workflow_id` handler. **Caution:** live-Automa-log testing on 2026-09-10 twice showed this ID actually activating Stream D's window, not B's — the user has since said it's fixed on the Automa side, but this hasn't been independently re-verified since. If tab-activation misbehaves for B, check this mapping first. |
+| `9NoMligzmg3VE9SJMC942` | Stream A — make its tab/window active | **Live**, `tabActivateWorkflowIdA` setting. Same dispatch path, via `symbol_market_scanner.js`'s `activate_tab_workflow_id` handler. |
+| `h3ixjpLixrztE_ZzhLWtk` | Stream D — make its tab/window active | **Live**, `tabActivateWorkflowIdD` setting. Same dispatch path, via `technical_watchlist_coin_scanner.js`'s `activate_tab_workflow_id` handler. Confirmed working via live cross-stream testing (fired through both B's and D's own dispatch code). |
+| `4mxKJE8VxWpqztNVK5Wn_` | Stream B — watchlist sync fallback (opens a fresh tab, redoes the copy+paste) | **Live**, `watchlistSyncFallbackWorkflowId` setting. Dispatched by `coin_scanner.js`'s `watchlist_sync_fallback_workflow_id` handler when a ticker's normal sync retry has clearly stopped working. **Proven live 2026-09-11** — see "Watchlist Sync Fallback" below. |
 
 ### How the force-update mechanism works (whitelist + watchlist sync)
 
@@ -43,6 +66,213 @@ When a coin is whitelisted via the dashboard:
 2. Next `processSyncPayload` response (from either `/qualified-pick` or `/api/market-context`) includes `action_required: 'UPDATE_WATCHLIST'` + the new coin in `master_targets`
 3. Tampermonkey `processSyncPayload()` sees `isForcedUpdate = true` → bypasses the 15-min Automa cooldown → calls `GM_setClipboard(masterTargetsList)` + `GM_openInTab('https://www.tradingview.com/cex-screener/lEINSjG1/')` → Automa reads clipboard → TV watchlist updated
 4. Flag is consumed (one-shot) — subsequent responses return `action_required: null`
+
+---
+
+## Backend-Driven Tab Activation & Self-Healing Pipeline (2026-09-10/11)
+
+> Read this before touching any `activate_tab_workflow_id`/`watchlist_sync_fallback_workflow_id`
+> logic in `server/index.js`, or any of the three scripts' response-handling code.
+> This replaced an earlier, structurally broken design — the "why" matters as much
+> as the "what" here, so a future edit doesn't reintroduce the same bug.
+
+### The problem this solves
+
+All three local-tab streams (A/B/D) depend on their TradingView browser tab staying
+genuinely visible/foregrounded — Chrome throttles background-tab timers hard enough
+that a backgrounded-too-long tab can stop polling almost entirely (confirmed live:
+a 12-hour, then a separate 20-hour, total silence on Stream A with the OS never
+sleeping — purely a tab-visibility problem). Automa can bring a tab back to the
+front on command, but only if *something* tells it to.
+
+### Real Automa mechanics (confirmed live, 2026-09-10/11 — do not assume otherwise)
+
+Each "make tab active" workflow does exactly ONE thing when fired: activate its own
+named tab, force-click its Scan button, wait ~2 minutes, click Scan again, wait
+~1 minute, then hand off focus to the *next* tab in a fixed rotation
+(B → D → A → B → …) baked into that workflow — and stops there. **The tab that
+receives the hand-off gets no forced scan and no further auto-advance** — it just
+sits foregrounded until its own script's normal cycle (or another dispatch) does
+something with it. Tab activation by itself never triggers a workflow; only an
+explicit `automa:execute-workflow` dispatch does.
+
+**Design consequence:** because each workflow already activates its *own* named tab
+directly (not the tab after it), the correct way to get a specific stale tab
+scanned is to dispatch **that tab's own workflow ID directly** — never rely on the
+rotation hand-off to do real work, since the hand-off target gets no scan.
+
+### The old design (retired) and why it was broken
+
+Originally, each stream independently asked "am I stale? if so, tell myself to
+activate" (`_getTabActivateSignal()` / `_getStreamAActivateSignal()` /
+`_getStreamDActivateSignal()`, one per stream, each reading only its own workflow
+ID). This was structurally circular: a stream stale enough to need activating is,
+by definition, no longer polling — so it can never receive an instruction to
+activate itself, because it never asks. Also each of the three response paths
+independently computed and could fire its own dispatch, with per-stream cooldowns
+only — no shared awareness, no defense against over-firing across all three at once
+(which itself creates Automa overhead: repeated tab switches/clicks piling up
+before a prior one has even had a chance to land).
+
+### The current design — unified activation coordinator
+
+`_getCoordinatedActivationTarget(askingStream)` in `server/index.js` replaces all
+three old functions. Called from every response path that can carry
+`activate_tab_workflow_id` (`/scan-report` for A, `/api/market-context` +
+`/qualified-pick` for B, `/api/stream-d/technicals` for D), passing which stream is
+asking (i.e. which one is currently reachable/polling):
+
+1. **Never targets the asker.** Only the other two streams are candidates — the
+   asker is, by definition, already alive.
+2. **Priority = most overdue wins**, in absolute age terms (not relative to each
+   stream's own threshold), among candidates that exceed their own threshold
+   (`tabActivateThresholdMinA/B/D`, default 6min each).
+3. **Wait-and-listen handshake** (not fire-and-forget): once a target is dispatched,
+   it's recorded as *pending* (`tab_activate_pending_target` /
+   `_dispatched_at` in `system_settings`). Every subsequent call first checks
+   whether that pending target's own data has genuinely resumed *after* the
+   dispatch timestamp:
+   - **Resumed** → handshake succeeded, slot freed, that target's fail-count reset.
+   - **Not yet, but still within `TAB_ACTIVATE_HANDSHAKE_WINDOW_MIN` (8min — sized
+     for the ~5-6min real Automa hop time plus buffer)** → stays quiet, dispatches
+     nothing else. This is the "breathing space" — no new activation fires while
+     one is still plausibly in flight.
+   - **8 minutes pass, still nothing** → counted as a failed handshake for that
+     target (`tab_activate_fail_count_<stream>`).
+4. **Backoff + rotate on repeated failure.** Two consecutive failed handshakes for
+   the same target (`TAB_ACTIVATE_MAX_CONSECUTIVE_FAILS`) → that target's workflow
+   is suspected broken on the Automa side, and it's backed off
+   (`tab_activate_backoff_until_<stream>`) for `TAB_ACTIVATE_BACKOFF_MIN` (30min),
+   during which the coordinator prefers whichever *other* stale stream needs help
+   instead — never permanently gives up, just deprioritizes.
+5. **One global cooldown** (`TAB_ACTIVATE_COORDINATOR_COOLDOWN_MIN`, 3min) across
+   all three callers, on top of the handshake window, as a final floor.
+
+No script changes are needed to swap in new logic here — all three scripts already
+just dispatch whatever ID arrives in `activate_tab_workflow_id`, regardless of which
+backend function computed it.
+
+### All-streams-dark detection (Telegram)
+
+The coordinator above only ever runs when *some* stream is polling to trigger it —
+if A, B, and D are **all** silent past their thresholds at once, nobody can ask, and
+the whole mechanism is powerless. This is checked independently, every 15 minutes,
+in the same periodic job that already does per-stream feed-health alerting (near
+the bottom of `server/index.js`) — `TelegramService.onAllStreamsDark(allDark,
+detail)` in `server/services/telegram.js`. CRITICAL tier, 1-hour cooldown, sends a
+recovery message once any stream resumes. Usually means Automa itself is
+stuck/broken, or the browser/laptop went idle — needs a human, not another retry.
+
+### Watchlist Sync Fallback — proven live 2026-09-11
+
+`reconcileWatchlistSync()`'s existing escalation path (force `UPDATE_WATCHLIST` on
+repeated miss) can itself fail silently and repeat forever for a specific ticker —
+confirmed live: `BINANCE:BCHUSDT.P` and `BINANCE:ETHFIUSDT.P` sat stuck for **15+
+hours**, 297 consecutive misses, 75 forced-retry escalations, never landing on the
+real watchlist, while every other historical entry in `watchlist_sync_audit`
+resolved within 1-2 cycles. That's a genuinely stuck case, not routine flakiness —
+same recovery action (clipboard-paste in place) just wasn't working anymore for it.
+
+`_getWatchlistSyncFallbackSignal()` watches `watchlist_sync_audit` for any ticker
+with `consecutive_misses > 0 AND escalations >= watchlistSyncFallbackEscalationThreshold`
+(default 5) and, past `watchlistSyncFallbackCooldownMin` (default 15min) since the
+last fallback dispatch, sends `watchlist_sync_fallback_workflow_id` in Stream B's
+response (both `/api/market-context` and `/qualified-pick`). `coin_scanner.js`
+dispatches it via the same `automa:execute-workflow` CustomEvent, on its own 5min
+local cooldown (separate from tab-activate's — unrelated recovery actions).
+
+**Result when this actually fired (2026-09-11):** all three stuck tickers
+(`BCHUSDT.P`, `ETHFIUSDT.P`, `SAGAUSDT.P`) landed on the real watchlist within one
+cycle of the fallback dispatch, confirmed via `[SYNC-VERIFY] ✅ Landed in
+watchlist:` in the backend log and `consecutive_misses` dropping to 0 in
+`watchlist_sync_audit`. This is the mechanism that was silently blocking watchlist
+rotation — **not** a ghost/prune-removal bug (see "Ghost/prune audit findings"
+below).
+
+### Ghost/prune audit findings (2026-09-11) — removal isn't broken, addition was
+
+Investigated a report of "the same 26 symbols never rotate, is ghost auto-removal
+broken?" Findings:
+- `ghost_auto_approve` was correctly ON, `coin_lifecycles.clock_start_at` for the
+  current watchlist had genuinely passed the 12h settle window — removal logic
+  *was* eligible to run and wasn't being blocked by the settle gate.
+- The 26 coins were legitimate, currently-qualifying majors/liquid-alts — nothing
+  pointed to prune logic being broken.
+- The actual blocker was the sync-fallback scenario above: new candidates
+  (BCH/ETHFI/SAGA) kept getting backend-approved but could never *land* on the
+  real watchlist, so nothing could ever rotate in regardless of what happened on
+  the removal side.
+- Separately noted, not yet fixed: `_checkMonitoringGap()` resets **every**
+  tracked coin's `clock_start_at` on any gap over `gapToleranceMin` (15min) —
+  including coins that are obviously ancient zombie records (7-day-old mangled
+  tickers from an earlier contamination bug, `born_at` days old but only ever
+  `last_seen_at` once). Given how often qualifying gaps occur in practice, a truly
+  ancient bad record may rarely or never accumulate 12 continuous settle hours.
+  Cosmetic today (confirmed those specific zombie tickers are NOT in the real live
+  watchlist, just stale `coin_lifecycles` bookkeeping) but worth a real fix later:
+  a coin already older than some threshold could skip the settle-window reset and
+  become immediately re-evaluable after a gap, instead of waiting another full
+  12h alongside genuinely young coins.
+- Also noted, not yet fixed: some coins currently on the live watchlist show
+  `coin_lifecycles.status: 'DEAD'` while still actively present — the `status`
+  field isn't being kept in sync with reality. Didn't block anything found so far,
+  but worth checking if `status` is ever load-bearing for a future decision.
+
+### Stream A — initial/filter setup check (v16.3 → v16.6)
+
+Mirrors Stream B's Strict Screened Coin, but had to evolve further once tested
+against the real DOM:
+
+- **v16.3**: single check — pills container (`[class*=screenerContainer] div
+  [class*=pillsWrapper-] div[class*=pillsContainerWrapper-]
+  div[class*=pillsContainer-]`) must have > 4 direct children.
+- **v16.4 fix (real deadlock found)**: the check only ran from inside
+  `processData()`, which is never called until `startAutoScan()`'s button-discovery
+  loop finds the scan button — but that loop can get stuck retrying forever
+  ("Scan button not found") exactly when the screener isn't properly set up. The
+  fix meant to escape that state was gated behind the very state it needed to
+  escape. Fixed with a standalone `startStreamASetupMonitor()` on its own 15s
+  timer, independent of button/scan state, started *before* the button-dependent
+  functions in the init sequence.
+- **v16.5**: settle window now starts from a real page-`load` event (or
+  `document.readyState === 'complete'`), not script-injection time — Tampermonkey
+  has no `@run-at` here (defaults to `document-idle`), which can fire before
+  TradingView's SPA content has actually rendered.
+- **v16.6 (combined check, per live DOM review)**: pills-only missed a real broken
+  state — 10 filter pills were present (would've passed) but the table itself had
+  only 1 real data column and every row showed a Pine Script `array.get() Index
+  out of bounds` error. Now requires all three: pills > 4 children, `thead
+  th[data-field]` count > 5, `tbody tr[data-rowkey]` count ≥ 2. Retry cooldown
+  bumped 3min → 5min (table can take a while to populate after pills render).
+  After 3 retries still fail, **reloads the page** instead of giving up silently —
+  capped at 3 reloads total to avoid a reload loop.
+
+### Watchdog settings API reference (activation/sync-fallback fields)
+
+```
+GET/POST /api/ghosts/watchdog-settings
+  tabActivateWorkflowIdA/B/D        — Automa workflow ID per stream's tab-activate
+  tabActivateThresholdMinA/B/D      — staleness minutes before that stream is a candidate (default 6)
+  streamAInitialSetupWorkflowId     — Stream A's filter-setup fix workflow (hardcoded in-script too, editable here for reference)
+  watchlistSyncFallbackWorkflowId   — heavier recovery workflow for a stuck watchlist-sync ticker
+  watchlistSyncFallbackEscalationThreshold — escalations before fallback fires (default 5)
+  watchlistSyncFallbackCooldownMin  — min gap between fallback dispatches (default 15)
+```
+
+All editable from the Ghost Coin widget's settings panel (⚙), auto-save on blur —
+no script or backend redeploy needed to change an ID or threshold.
+
+### Verifying real data flow (not just timestamps) — methodology
+
+A stream can look "healthy" by `lastWriteAgeMinutes` alone while actually punching
+frozen values with fresh timestamps (the original bug class this whole session
+started from). The real check: walk back through a ticker's recent rows and find
+how far back the tracked fields have been byte-identical — a fresh timestamp with
+an unchanged value for many consecutive rows means the tab is stuck, not healthy.
+Confirmed via this method on 2026-09-11 that the vast majority of A/B/D data is
+genuinely changing cycle-to-cycle (not just tab-switch cosmetics) — one real
+exception found: `1000PEPEUSDT.P` on Stream A stuck at `close: 0` for ~1h, a
+Pine Script data-quality issue on that specific symbol, not a systemic freeze.
 
 ---
 

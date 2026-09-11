@@ -1,0 +1,141 @@
+.widget {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    padding: var(--card-padding);
+    color: var(--text-main);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+}
+
+.titleText {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    color: var(--text-main);
+}
+
+.subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: -10px 0 14px;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+
+@media (max-width: 900px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.card {
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cardHealthy { border-color: rgba(104, 211, 145, 0.3); }
+.cardStalled { border-color: rgba(246, 173, 85, 0.4); }
+.cardFrozen  { border-color: rgba(252, 129, 129, 0.5); box-shadow: 0 0 0 1px rgba(252, 129, 129, 0.15); }
+
+.cardHead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.streamLabel {
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--text-main);
+}
+
+.statusPill {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 3px 7px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pillHealthy { background: rgba(104, 211, 145, 0.12); color: #68d391; }
+.pillStalled { background: rgba(246, 173, 85, 0.15);  color: #f6ad55; }
+.pillFrozen  { background: rgba(252, 129, 129, 0.15); color: #fc8181; }
+
+.metaRow {
+    font-size: 10px;
+    color: var(--text-muted);
+    display: flex;
+    justify-content: space-between;
+}
+
+.frozenList {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 2px;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+.frozenRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    background: rgba(252, 129, 129, 0.06);
+    border: 1px solid rgba(252, 129, 129, 0.15);
+    border-radius: 4px;
+    padding: 4px 6px;
+}
+
+.frozenTicker {
+    font-weight: 700;
+    color: var(--text-main);
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.frozenMinutes {
+    color: #fc8181;
+    font-weight: 800;
+    flex-shrink: 0;
+}
+
+.emptyState {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 8px 0;
+}
+
+.loading {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 24px;
+}

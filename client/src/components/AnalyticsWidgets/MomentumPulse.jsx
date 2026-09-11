@@ -11,6 +11,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
 import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useActiveCoinMask } from '../../hooks/useActiveCoinMask';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
 import { Zap, RefreshCw, AlertTriangle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
@@ -160,8 +161,9 @@ export function MomentumPulse() {
     // a ref inside useMemo without a guard causes double-increments in dev mode.
     // The prevDataRef check ensures the ageMap mutates exactly once per new
     // data object reference, regardless of how many times React invokes the factory.
+    const { isActive } = useActiveCoinMask();
     const { rows, counts, srcStats } = useMemo(() => {
-        const all = data?.coins || [];
+        const all = (data?.coins || []).filter(c => isActive(c.ticker));
 
         // --- Signal age: update only when data reference is new ---
         if (data !== prevDataRef.current) {
@@ -212,7 +214,7 @@ export function MomentumPulse() {
             counts:   { surging: surgingN, rsi: rsiN, extended: extendedN, fading: fadingN },
             srcStats: { sc: scN, sb: sbN },
         };
-    }, [data, sortKey, sortDir, filter]);
+    }, [data, sortKey, sortDir, filter, isActive]);
 
     const handleSort = (key) => {
         if (key === sortKey) setSortDir(d => d === 'desc' ? 'asc' : 'desc');

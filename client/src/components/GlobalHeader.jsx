@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
-import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart, Target, Menu, Palette, History } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Clock, Wifi, LayoutDashboard, LineChart, Target, Menu, Palette, History, Eye, EyeOff } from 'lucide-react';
 import styles from './GlobalHeader.module.css';
 import { format, formatDistanceToNow } from 'date-fns';
 import { HeaderStatsDeck } from './HeaderStatsDeck';
@@ -27,6 +27,8 @@ export function GlobalHeader({ onOpenThemeBuilder }) {
     const fetchStreamsHealth = useTimeStore(s => s.fetchStreamsHealth);
     const mobileMenuOpen = useTimeStore(s => s.mobileMenuOpen);
     const setMobileMenuOpen = useTimeStore(s => s.setMobileMenuOpen);
+    const coinMaskEnabled = useTimeStore(s => s.coinMaskEnabled);
+    const setCoinMaskEnabled = useTimeStore(s => s.setCoinMaskEnabled);
 
     // ── Serialised boot sequence ────────────────────────────────────────────────
     // PROBLEM: firing fetchTimeline + 4 widget fetches + socket all at T=0
@@ -143,6 +145,18 @@ export function GlobalHeader({ onOpenThemeBuilder }) {
                     style={{ background: 'transparent', cursor: 'pointer', padding: '6px' }}
                 >
                     <Palette size={18} strokeWidth={2} />
+                </button>
+
+                {/* ACTIVE COIN MASK — filters per-coin widgets to the current scan's tickers */}
+                <button
+                    onClick={() => setCoinMaskEnabled(!coinMaskEnabled)}
+                    className="p-1.5 rounded hover:bg-bg-panel transition-colors border border-transparent hover:border-border flex items-center justify-center"
+                    title={coinMaskEnabled ? 'Showing only active-scan coins — click to show all' : 'Showing all coins — click to mask to active-scan only'}
+                    style={{ background: 'transparent', cursor: 'pointer', padding: '6px' }}
+                >
+                    {coinMaskEnabled
+                        ? <EyeOff size={18} strokeWidth={2} color="var(--accent-blue)" />
+                        : <Eye size={18} strokeWidth={2} className="text-text-muted" />}
                 </button>
             </div>
         </header>

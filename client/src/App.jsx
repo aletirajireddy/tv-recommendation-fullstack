@@ -46,6 +46,7 @@ const SmartMoodChart            = lazy(() => import('./components/AnalyticsWidge
 const MomentumPulse             = lazy(() => import('./components/AnalyticsWidgets/MomentumPulse').then(m => ({ default: m.MomentumPulse })));
 const RSIGridWall               = lazy(() => import('./components/AnalyticsWidgets/RSIGridWall').then(m => ({ default: m.RSIGridWall })));
 const StreamSyncDiagnostics     = lazy(() => import('./components/AnalyticsWidgets/StreamSyncDiagnostics').then(m => ({ default: m.StreamSyncDiagnostics })));
+const DataFeedHealthWidget      = lazy(() => import('./components/AnalyticsWidgets/DataFeedHealthWidget').then(m => ({ default: m.DataFeedHealthWidget })));
 
 // Thin placeholder shown while the timeline is loading — same visual weight
 // as a widget skeleton but without mounting the actual widget (and firing its fetch).
@@ -289,6 +290,16 @@ function App() {
           <section id="section-sync-diag" className={styles.widgetSection}>
             <LazyWidget minHeight={460}>
               <StreamSyncDiagnostics />
+            </LazyWidget>
+          </section>
+
+          {/* SECTION: DATA FEED HEALTH
+              Frozen-DOM detection — a backgrounded scraper tab keeps sending
+              the same values with a fresh timestamp; this checks for that
+              specifically, which no other freshness indicator catches. */}
+          <section id="section-feed-health" className={styles.widgetSection}>
+            <LazyWidget minHeight={280}>
+              <DataFeedHealthWidget />
             </LazyWidget>
           </section>
 

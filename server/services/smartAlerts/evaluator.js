@@ -222,7 +222,7 @@ function dispatchTelegram(alert, { price, ema, atr, distAtr }) {
     telegramService.sendAlert(msg, 'SMART_ALERT', {
         alert_id: alert.id, ticker: alert.clean_ticker, tf: alert.timeframe,
         price, ema, distance_atr: distAtr,
-    }, 'INFO').catch(err => console.error('[SmartAlerts] tg send failed:', err.message));
+    }, 'INFO', 'smart_alerts').catch(err => console.error('[SmartAlerts] tg send failed:', err.message));
 }
 
 function formatPrice(p) {

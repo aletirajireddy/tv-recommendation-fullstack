@@ -92,7 +92,7 @@ function StateBadge({ state, verdict }) {
 
 
 function RuleStrip({ rulesJson }) {
-    if (!rulesJson) return <div className={styles.ruleStrip}><span className={styles.ruleDotEmpty} /></div>;
+    if (!rulesJson) return <div className={styles.ruleStrip}><span className={`${styles.ruleDot} ${styles.ruleDot_none}`} /></div>;
     let rules = {};
     try { rules = typeof rulesJson === 'string' ? JSON.parse(rulesJson) : rulesJson; } catch { return null; }
 

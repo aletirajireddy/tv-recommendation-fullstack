@@ -1,6 +1,8 @@
 const TelegramBot = require('node-telegram-bot-api');
 const path = require('path');
 const db = require('../database');
+const categorySettings = require('./telegramSettingsManager');
+const { normaliseTicker } = require('../utils/tickerNormalize');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,8 +32,34 @@ const INST_HIGH_BAR_MOVE_PCT     = 1.5;   // >= 1.5% = HIGH (was previously unch
 const RVOL_CRITICAL = 3.0;   // >= 3.0× = CRITICAL
 const RVOL_HIGH     = 1.8;   // >= 1.8× = HIGH
 
+// Coins of Interest — minimum bar move to bother alerting even a watched coin
+// (avoids literal 0.0x% noise while still being well below INST_HIGH_BAR_MOVE_PCT)
+const WATCHED_INST_MIN_BAR_MOVE_PCT = 0.5;
+
 // Max items in the morning digest queue (prevents memory growth overnight)
 const DIGEST_QUEUE_MAX = 30;
+
+// Feed Health — minimum gap between repeat "still down" reminders for the
+// SAME stream while it stays down. A stream down for 5 hours gets pinged
+// once, then reminded hourly — not on every periodic check.
+const FEED_HEALTH_REMINDER_COOLDOWN_MS = 60 * 60 * 1000;
+
+// 2026-09-11: "all 3 local streams dark" — a distinct, stronger signal from
+// a single stream being down. The backend's tab-activation coordinator can
+// only ever run when SOME stream is polling to ask it to — if all three go
+// silent at once, nobody can ask, and the coordinator never gets a chance to
+// run at all. That's exactly the case worth telling the user about
+// separately: it likely means Automa itself is stuck/broken, not just one
+// workflow. Own cooldown so it doesn't compete with or spam alongside the
+// per-stream feed-health reminders.
+const ALL_DARK_REMINDER_COOLDOWN_MS = 60 * 60 * 1000;
+
+const FEED_HEALTH_LABELS = {
+    A: 'Stream A · Macro Scan',
+    B: 'Stream B · Watchlist',
+    C: 'Stream C · Webhooks',
+    D: 'Stream D · Technicals',
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 class TelegramService {
@@ -69,6 +97,17 @@ class TelegramService {
 
         // Retry queue — failed sends retried on next successful delivery
         this._retryQueue = [];
+
+        // Feed Health alerting — separate cooldown/state from per-ticker alerts,
+        // since streams (not tickers) are what's being tracked here.
+        // lastAlertedAt: stream -> ms, gates repeat "still down" reminders.
+        // wasDown: stream -> bool, so a recovery message only fires for a
+        // stream we actually alerted about going down (never spam a recovery
+        // for something that was never announced as broken).
+        this.feedHealthLastAlertedAt = new Map();
+        this.feedHealthWasDown = new Map();
+        this.allDarkLastAlertedAt = 0;
+        this.allDarkWasActive = false;
 
         if (this.token && this.token !== 'YOUR_BOT_TOKEN_HERE') {
             try {
@@ -140,21 +179,26 @@ class TelegramService {
      * @param {string} level     - DB log level string (e.g. 'SUCCESS', 'WARN', 'AI_PULSE')
      * @param {object} meta      - Optional meta for DB log
      * @param {string} tier      - 'CRITICAL' | 'HIGH' | 'INFO'  — controls quiet-hours gate
+     * @param {string} [category] - Category key suffix (e.g. 'stream_a_pulse'); when set,
+     *                              gated by the user's per-category Telegram toggle.
      */
-    async sendAlert(message, level = 'INFO', meta = {}, tier = 'INFO') {
+    async sendAlert(message, level = 'INFO', meta = {}, tier = 'INFO', category = null) {
         // 1. Always write to telegram_logs
         try {
             db.prepare(`INSERT INTO telegram_logs (timestamp, level, message, meta_json) VALUES (?, ?, ?, ?)`)
-              .run(new Date().toISOString(), level, message, JSON.stringify({ ...meta, tier }));
+              .run(new Date().toISOString(), level, message, JSON.stringify({ ...meta, tier, category }));
         } catch (e) {
             console.error('❌ TLog write failed:', e.message);
         }
 
         if (!this.bot || !this.chatId || !this.isEnabled) return;
 
+        // 2. Category gate — user muted this category, silently drop (already logged above)
+        if (category && !categorySettings.readKey(`telegram.category.${category}`)) return;
+
         const tierLevel = this._tierLevel(tier);
 
-        // 2. Quiet hours gate — only CRITICAL bypasses
+        // 3. Quiet hours gate — only CRITICAL bypasses
         if (this._isQuietHours() && tierLevel < TIER.CRITICAL) {
             if (tierLevel >= TIER.HIGH && this.digestQueue.length < DIGEST_QUEUE_MAX) {
                 this.digestQueue.push({ message, level, meta, tier, queued_at: new Date().toISOString() });
@@ -163,10 +207,10 @@ class TelegramService {
             return;
         }
 
-        // 3. Retry failed sends from previous cycle first
+        // 4. Retry failed sends from previous cycle first
         await this._drainRetryQueue();
 
-        // 4. Send
+        // 5. Send
         try {
             const prefix      = this.getPrefix();
             const taggedMsg   = message.startsWith(prefix) ? message : `${prefix} ${message}`;
@@ -210,7 +254,7 @@ class TelegramService {
             msg += `${i + 1}. ${firstLine}\n`;
         });
         msg += `\n_These were suppressed during quiet hours (00:00-06:00 UTC)._`;
-        await this.sendAlert(msg, 'DIGEST', { count }, 'CRITICAL'); // force delivery
+        await this.sendAlert(msg, 'DIGEST', { count }, 'CRITICAL', 'heartbeat'); // force delivery
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -284,16 +328,37 @@ class TelegramService {
 
         body += `\n\`[A·MACRO] #EYE_CATCHER\``;
 
-        await this.sendAlert(header + body, 'AI_PULSE', { eyeCatcherCount: eyeCatchers.length }, 'HIGH');
+        await this.sendAlert(header + body, 'AI_PULSE', { eyeCatcherCount: eyeCatchers.length }, 'HIGH', 'stream_a_pulse');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // STREAM C — Institutional bar move (was completely unalerted)
     // ─────────────────────────────────────────────────────────────────────────
 
+    _isWatchedCoin(ticker, category) {
+        try {
+            const norm = normaliseTicker(ticker);
+            if (!norm) return false;
+            const row = db.prepare(
+                `SELECT * FROM telegram_watchlist WHERE ticker = ? AND ${category} = 1`
+            ).get(norm);
+            return !!row;
+        } catch { return false; }
+    }
+
     async onInstitutionalBarMove({ ticker, price, barMovePct, direction, volume }) {
         const absMove = Math.abs(barMovePct);
-        if (absMove < INST_HIGH_BAR_MOVE_PCT) return; // below threshold — skip
+        if (absMove < INST_HIGH_BAR_MOVE_PCT) {
+            // Below the general noise threshold — still worth a ping if this is
+            // a hand-picked Coin of Interest and the move clears a much lower bar.
+            if (absMove >= WATCHED_INST_MIN_BAR_MOVE_PCT && this._isWatchedCoin(ticker, 'institutional')) {
+                await this.onWatchedSignal({
+                    ticker, price, signalType: 'INSTITUTIONAL',
+                    detail: `Bar Move: *${barMovePct >= 0 ? '+' : ''}${barMovePct.toFixed(2)}%*`,
+                });
+            }
+            return;
+        }
 
         const tier = absMove >= INST_CRITICAL_BAR_MOVE_PCT ? 'CRITICAL' : 'HIGH';
 
@@ -312,7 +377,7 @@ class TelegramService {
             `Bar Move: *${barMovePct >= 0 ? '+' : ''}${barMovePct.toFixed(2)}%*${volStr}\n` +
             `\`[C·ALERT] #INST_MOVE\``;
 
-        await this.sendAlert(msg, 'INST_MOVE', { ticker, barMovePct, direction }, tier);
+        await this.sendAlert(msg, 'INST_MOVE', { ticker, barMovePct, direction }, tier, 'institutional_move');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -333,7 +398,7 @@ class TelegramService {
             `Status: *STABLE* — entering active watchlist${volStr}\n` +
             `\`[B·SCOUT] #GRADUATION\``;
 
-        await this.sendAlert(msg, 'SCOUT', { ticker, type, volChange }, 'HIGH');
+        await this.sendAlert(msg, 'SCOUT', { ticker, type, volChange }, 'HIGH', 'scout_graduation');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -352,7 +417,7 @@ class TelegramService {
             `Approve in dashboard or it stays active.\n` +
             `\`[SYSTEM] #GHOST_PENDING\``;
 
-        await this.sendAlert(msg, 'GHOST', { ticker, reason }, 'INFO');
+        await this.sendAlert(msg, 'GHOST', { ticker, reason }, 'INFO', 'ghost_queue');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -373,7 +438,133 @@ class TelegramService {
             `Relative Volume: *${relVol.toFixed(2)}×* (institutional footprint)\n` +
             `\`[D·REALTIME] #RVOL_SPIKE\``;
 
-        await this.sendAlert(msg, 'RVOL_SPIKE', { ticker, relVol }, tier);
+        await this.sendAlert(msg, 'RVOL_SPIKE', { ticker, relVol }, tier, 'rvol_spike');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FEED HEALTH — proactive "a data stream is down" alerting (2026-09-02)
+    // Closes a real gap: Stream A sat offline for 27 hours before anyone
+    // noticed, because the only signal was a dashboard widget nobody was
+    // looking at. Called periodically from index.js with the SAME
+    // _computeFeedHealth() output the widget itself uses — one source of
+    // truth, no separate threshold logic to drift out of sync.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async onFeedHealthCheck(streams) {
+        for (const [stream, info] of Object.entries(streams || {})) {
+            const label = FEED_HEALTH_LABELS[stream] || `Stream ${stream}`;
+            const isDown = info.status === 'stalled' || info.status === 'frozen';
+            const wasDown = this.feedHealthWasDown.get(stream) || false;
+
+            if (isDown) {
+                const lastAlertedAt = this.feedHealthLastAlertedAt.get(stream) || 0;
+                if (Date.now() - lastAlertedAt < FEED_HEALTH_REMINDER_COOLDOWN_MS) continue; // already pinged recently, stay quiet
+
+                this.feedHealthLastAlertedAt.set(stream, Date.now());
+                this.feedHealthWasDown.set(stream, true);
+
+                const tier = info.status === 'stalled' ? 'CRITICAL' : 'HIGH';
+                const icon = info.status === 'stalled' ? '🔴' : '🟠';
+                const reminderTag = wasDown ? ' _(still down)_' : '';
+
+                let detail;
+                if (info.status === 'stalled') {
+                    const ageStr = info.lastWriteAgeMinutes != null
+                        ? `${info.lastWriteAgeMinutes}min ago (${(info.lastWriteAgeMinutes / 60).toFixed(1)}h)`
+                        : 'no data at all';
+                    detail = `No new data at all — last write: ${ageStr}`;
+                } else {
+                    const n = (info.frozenTickers || []).length;
+                    const worst = (info.frozenTickers || [])[0];
+                    detail = `${n} ticker${n === 1 ? '' : 's'} stuck on repeated values` +
+                        (worst ? ` (worst: *${worst.ticker}*, ${worst.frozenMinutes}min)` : '');
+                }
+
+                const msg =
+                    `${icon} *DATA FEED DOWN*${reminderTag}\n` +
+                    `*${label}*\n` +
+                    `${detail}\n` +
+                    `\`[FEED_HEALTH] #${info.status.toUpperCase()}\``;
+
+                await this.sendAlert(msg, 'FEED_HEALTH', { stream, status: info.status }, tier, 'feed_health');
+
+            } else if (wasDown) {
+                // Recovered — only announce this for a stream we actually alerted about.
+                this.feedHealthWasDown.set(stream, false);
+                this.feedHealthLastAlertedAt.delete(stream);
+
+                const msg =
+                    `✅ *DATA FEED RECOVERED*\n` +
+                    `*${label}* is healthy again.\n` +
+                    `\`[FEED_HEALTH] #RECOVERED\``;
+
+                await this.sendAlert(msg, 'FEED_HEALTH', { stream, status: 'recovered' }, 'HIGH', 'feed_health');
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ALL-DARK — Streams A, B, and D (the three local-tab streams) have ALL
+    // gone silent past their thresholds at once. 2026-09-11: the tab-activation
+    // coordinator (_getCoordinatedActivationTarget in index.js) can only ever
+    // run when at least one of them is polling to ask it to fire — if all
+    // three are silent, nobody can ask, and the whole self-healing mechanism
+    // is powerless. Worth calling out distinctly: this usually means Automa
+    // itself is stuck/broken (not just one workflow), or the browser/laptop
+    // went properly idle — either way, it needs a human, not another retry.
+    // ─────────────────────────────────────────────────────────────────────────
+    async onAllStreamsDark(isAllDark, detail) {
+        if (isAllDark) {
+            if (Date.now() - this.allDarkLastAlertedAt < ALL_DARK_REMINDER_COOLDOWN_MS) return; // already pinged recently
+            this.allDarkLastAlertedAt = Date.now();
+            this.allDarkWasActive = true;
+
+            const msg =
+                `🔴🔴🔴 *ALL STREAMS DARK*\n` +
+                `Streams A, B, and D are all silent past their thresholds at the same time.\n` +
+                `${detail}\n` +
+                `The backend's self-healing tab-activation can't help here — no stream is polling to trigger it. ` +
+                `Likely Automa is stuck/broken, or the browser/laptop went idle. Needs a manual check.\n` +
+                `\`[FEED_HEALTH] #ALL_DARK\``;
+
+            await this.sendAlert(msg, 'FEED_HEALTH', { allDark: true }, 'CRITICAL', 'feed_health');
+        } else if (this.allDarkWasActive) {
+            this.allDarkWasActive = false;
+            this.allDarkLastAlertedAt = 0;
+
+            const msg =
+                `✅ *STREAMS RECOVERED*\n` +
+                `At least one of A/B/D is polling again.\n` +
+                `\`[FEED_HEALTH] #ALL_DARK_RECOVERED\``;
+
+            await this.sendAlert(msg, 'FEED_HEALTH', { allDark: false }, 'HIGH', 'feed_health');
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // COINS OF INTEREST — elevated alerts for a user-curated ticker watchlist.
+    // Fires on a lower/bypassed bar than the generic breakout/institutional/rvol
+    // paths above, since these are hand-picked coins the user explicitly wants
+    // to hear about, not general noise-filtered market signals.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async onWatchedSignal({ ticker, signalType, price, detail }) {
+        const cooldownKey = `WATCH:${signalType}:${ticker}`;
+        if (this._isTickerOnCooldown(cooldownKey)) return;
+        this._markTickerAlerted(cooldownKey);
+
+        const ICONS = { BREAKOUT: '🦅', INSTITUTIONAL: '🏦', RVOL: '⚡' };
+        const LABELS = { BREAKOUT: 'BREAKOUT', INSTITUTIONAL: 'INSTITUTIONAL MOVE', RVOL: 'VOLUME SPIKE' };
+        const icon  = ICONS[signalType] || '⭐';
+        const label = LABELS[signalType] || signalType;
+
+        const msg =
+            `⭐ *WATCHED COIN* — ${icon} ${label}\n` +
+            `*${ticker}*${price != null ? ` · ${this._fmtPrice(price)}` : ''}\n` +
+            (detail ? `${detail}\n` : '') +
+            `\`[WATCHLIST] #WATCHED_${signalType}\``;
+
+        await this.sendAlert(msg, 'WATCHED_SIGNAL', { ticker, signalType }, 'HIGH', 'watchlist');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -409,7 +600,7 @@ class TelegramService {
                 `Top activity: ${topStr}\n` +
                 `\`[SYSTEM] #HEARTBEAT\``;
 
-            await this.sendAlert(msg, 'HEARTBEAT', {}, 'INFO');
+            await this.sendAlert(msg, 'HEARTBEAT', {}, 'INFO', 'heartbeat');
         } catch (err) {
             console.error('[Telegram] Heartbeat error:', err.message);
         }

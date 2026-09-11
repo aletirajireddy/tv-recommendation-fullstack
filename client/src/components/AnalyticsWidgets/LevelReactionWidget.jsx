@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
 import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useActiveCoinMask } from '../../hooks/useActiveCoinMask';
 import { useDataInvalidation } from '../../hooks/useDataInvalidation';
 import { useTimeStore } from '../../store/useTimeStore';
 import {
@@ -755,16 +756,18 @@ export function LevelReactionWidget({ filterTicker, compact }) {
 
     // Filtered coins — memoized so sortedCoins dep doesn't re-fire on every render
     // when data is null (|| [] would produce a new array reference each time)
+    const { isActive } = useActiveCoinMask();
     const coins = useMemo(() => (data?.coins ?? []).filter(c => {
+        if (!isActive(c.ticker)) return false;
         if (filterSide !== 'ALL' && c.side !== filterSide) return false;
         if (filterReact !== 'ALL') {
             if (filterReact === 'BREAK' && !c.reaction.startsWith('BREAK')) return false;
             if (filterReact !== 'BREAK' && c.reaction !== filterReact) return false;
         }
         return true;
-    }), [data?.coins, filterSide, filterReact]);
+    }), [data?.coins, filterSide, filterReact, isActive]);
 
-    const reactionCounts = (data?.coins ?? []).reduce((acc, c) => {
+    const reactionCounts = coins.reduce((acc, c) => {
         const key = c.reaction.startsWith('BREAK') ? 'BREAK' : c.reaction;
         acc[key] = (acc[key] || 0) + 1;
         return acc;

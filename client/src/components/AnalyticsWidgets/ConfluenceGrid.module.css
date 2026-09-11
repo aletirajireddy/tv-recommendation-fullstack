@@ -7,6 +7,13 @@
     border: 1px solid var(--border);
 }
 
+.loading {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
 .title {
     margin: 0 0 16px 0;
     font-size: 0.95rem;

@@ -5,9 +5,10 @@ import {
     PanelLeftClose, PanelLeft, Brain, Bell, MonitorPlay,
     TrendingUp, BarChart2, Gauge, Heart, PieChart, Map,
     LayoutGrid, Search, Star, Calendar, Flame, Filter,
-    GitCompareArrows,
+    GitCompareArrows, Settings, Radar,
 } from 'lucide-react';
 import styles from './Sidebar.module.css';
+import { TelegramSettingsModal } from './TelegramSettingsModal';
 
 export const Sidebar = () => {
     const collapsed = useTimeStore(s => s.sidebarCollapsed);
@@ -20,6 +21,7 @@ export const Sidebar = () => {
     const toggleTelegram = useTimeStore(s => s.toggleTelegram);
     const mobileMenuOpen = useTimeStore(s => s.mobileMenuOpen);
     const setMobileMenuOpen = useTimeStore(s => s.setMobileMenuOpen);
+    const [telegramSettingsOpen, setTelegramSettingsOpen] = React.useState(false);
 
     // Body scroll lock when mobile drawer is open + ESC to close
     useEffect(() => {
@@ -62,6 +64,7 @@ export const Sidebar = () => {
         { id: 'momentum-pulse',   label: 'Momentum Pulse',   icon: Gauge,      prefetch: () => import('./AnalyticsWidgets/MomentumPulse') },
         { id: 'smart-mood',       label: 'Smart Mood',       icon: Heart,      prefetch: () => import('./AnalyticsWidgets/SmartMoodChart') },
         { id: 'sync-diag',        label: 'Stream Sync',      icon: GitCompareArrows, prefetch: () => import('./AnalyticsWidgets/StreamSyncDiagnostics') },
+        { id: 'feed-health',      label: 'Feed Health',      icon: Radar,      prefetch: () => import('./AnalyticsWidgets/DataFeedHealthWidget') },
         { id: 'calendar',         label: 'Daily Calendar',   icon: Calendar,   prefetch: () => import('./AnalyticsWidgets/DailyCalendarWidget') },
     ];
 
@@ -140,18 +143,30 @@ export const Sidebar = () => {
                             <span className={styles.status}>{useSmartLevelsContext ? 'ON' : 'OFF'}</span>
                         </button>
 
-                        <button 
-                            className={`${styles.settingBtn} ${telegramEnabled ? styles.active : ''}`}
-                            onClick={toggleTelegram}
-                        >
-                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Bell size={14} /> Telegram Alerts</span>
-                            <span className={styles.status}>{telegramEnabled ? 'ON' : 'OFF'}</span>
-                        </button>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                                className={`${styles.settingBtn} ${telegramEnabled ? styles.active : ''}`}
+                                onClick={toggleTelegram}
+                                style={{ flex: 1 }}
+                            >
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Bell size={14} /> Telegram Alerts</span>
+                                <span className={styles.status}>{telegramEnabled ? 'ON' : 'OFF'}</span>
+                            </button>
+                            <button
+                                className={styles.settingBtn}
+                                onClick={() => setTelegramSettingsOpen(true)}
+                                title="Telegram alert categories & coins of interest"
+                                style={{ flex: '0 0 auto', justifyContent: 'center', padding: '8px' }}
+                            >
+                                <Settings size={14} />
+                            </button>
+                        </div>
                     </div>
                 )}
                 {!collapsed && <div className={styles.version}>v4.0.1 PRO</div>}
             </div>
         </aside>
+        {telegramSettingsOpen && <TelegramSettingsModal onClose={() => setTelegramSettingsOpen(false)} />}
         </>
     );
 };

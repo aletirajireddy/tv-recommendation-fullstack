@@ -156,6 +156,18 @@ class VolumeEventService {
             try {
                 getTelegram().onRelVolSpike({ ticker, price, relVol: rvol });
             } catch (e) { console.error('[VolumeEvent] Telegram relVol hook error:', e.message); }
+        } else {
+            // Below the general noise threshold — still worth a ping if this is a
+            // hand-picked Coin of Interest (already cleared the lower record threshold above).
+            try {
+                const svc = getTelegram();
+                if (svc._isWatchedCoin(ticker, 'volume_spike')) {
+                    svc.onWatchedSignal({
+                        ticker, price, signalType: 'RVOL',
+                        detail: `Relative Volume: *${rvol.toFixed(2)}×*`,
+                    });
+                }
+            } catch (e) { console.error('[VolumeEvent] Telegram watchlist hook error:', e.message); }
         }
     }
 

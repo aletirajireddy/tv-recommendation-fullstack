@@ -112,6 +112,11 @@
 }
 
 /* Card Types */
+.typeNeutral {
+    border-left: 3px solid var(--border-bright, #4a5568);
+}
+
+/* Default/unmatched type - Muted */
 .typeOpp {
     border-left: 3px solid #00E4FF;
 }
@@ -153,6 +158,10 @@
 
 .typeInfo .icon {
     color: #94A3B8;
+}
+
+.typeNeutral .icon {
+    color: var(--text-muted);
 }
 
 .confidence {

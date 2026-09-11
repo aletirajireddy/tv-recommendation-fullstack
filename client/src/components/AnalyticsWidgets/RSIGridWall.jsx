@@ -7,6 +7,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
 import { ResetPrefsButton } from '../Shared/WidgetHeaderBadges';
 import { usePolledFetch } from '../../hooks/usePolledFetch';
+import { useActiveCoinMask } from '../../hooks/useActiveCoinMask';
 import { useTimeStore } from '../../store/useTimeStore';
 import socketService from '../../services/SocketService';
 import { BarChart2, RefreshCw, AlertTriangle, Settings } from 'lucide-react';
@@ -285,7 +286,8 @@ export function RSIGridWall() {
     const oversold  = cfg.oversold   ?? prefs.oversold;
     const overbought = cfg.overbought ?? prefs.overbought;
 
-    const allCoins  = data?.coins || [];
+    const { isActive } = useActiveCoinMask();
+    const allCoins  = (data?.coins || []).filter(c => isActive(c.ticker));
 
     const counts = useMemo(() => ({
         bear:     allCoins.filter(c => c.cascadeState === 'BEAR_CASCADE').length,
