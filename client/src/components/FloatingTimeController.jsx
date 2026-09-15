@@ -84,16 +84,24 @@ export function FloatingTimeController() {
         };
     };
 
+    // Audit fix: this effect previously depended on [isDragging, position], so
+    // React tore down and re-registered all 4 window listeners on every single
+    // mousemove/touchmove tick during a drag (position updates every tick) —
+    // needless listener churn for the whole duration of any drag. Track the
+    // latest position in a ref instead so handleMouseUp can read it without
+    // being a dependency; the effect now only re-runs on isDragging changes
+    // (i.e. once per drag start/end).
+    const positionRef = React.useRef(position);
+    positionRef.current = position;
+
     React.useEffect(() => {
         const handleMouseMove = (e) => {
-            if (!isDragging) return;
             const newX = e.clientX - dragOffset.current.x;
             const newY = e.clientY - dragOffset.current.y;
             setPosition({ x: newX, y: newY });
         };
 
         const handleTouchMove = (e) => {
-            if (!isDragging) return;
             const touch = e.touches[0];
             const newX = touch.clientX - dragOffset.current.x;
             const newY = touch.clientY - dragOffset.current.y;
@@ -101,10 +109,8 @@ export function FloatingTimeController() {
         };
 
         const handleMouseUp = () => {
-            if (isDragging) {
-                setIsDragging(false);
-                localStorage.setItem('timeControllerPos', JSON.stringify(position));
-            }
+            setIsDragging(false);
+            localStorage.setItem('timeControllerPos', JSON.stringify(positionRef.current));
         };
 
         if (isDragging) {
@@ -119,7 +125,7 @@ export function FloatingTimeController() {
             window.removeEventListener('touchmove', handleTouchMove);
             window.removeEventListener('touchend', handleMouseUp);
         };
-    }, [isDragging, position]);
+    }, [isDragging]);
 
 
     return (

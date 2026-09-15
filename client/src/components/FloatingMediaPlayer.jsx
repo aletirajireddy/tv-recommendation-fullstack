@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useTimeStore } from '../store/useTimeStore';
 import { Play, Pause, SkipBack, SkipForward, ChevronsLeft, ChevronsRight, Radio } from 'lucide-react';
 import styles from './FloatingMediaPlayer.module.css';
@@ -126,16 +126,23 @@ export function FloatingMediaPlayer() {
         };
     };
 
+    // Audit fix: this effect previously depended on [isDragging, position], so
+    // all 4 window listeners were torn down and re-registered on every single
+    // mousemove/touchmove tick during a drag (position updates every tick) —
+    // same needless listener churn found in FloatingTimeController. Track the
+    // latest position in a ref so handleMouseUp can read it without being a
+    // dependency; the effect now only re-runs on isDragging changes.
+    const positionRef = useRef(position);
+    positionRef.current = position;
+
     useEffect(() => {
         const handleMouseMove = (e) => {
-            if (!isDragging) return;
             const newX = e.clientX - dragOffset.current.x;
             const newY = e.clientY - dragOffset.current.y;
             setPosition({ x: newX, y: newY });
         };
 
         const handleTouchMove = (e) => {
-            if (!isDragging) return;
             const touch = e.touches[0];
             const newX = touch.clientX - dragOffset.current.x;
             const newY = touch.clientY - dragOffset.current.y;
@@ -143,10 +150,8 @@ export function FloatingMediaPlayer() {
         };
 
         const handleMouseUp = () => {
-            if (isDragging) {
-                setIsDragging(false);
-                localStorage.setItem('mediaPlayerPos', JSON.stringify(position));
-            }
+            setIsDragging(false);
+            localStorage.setItem('mediaPlayerPos', JSON.stringify(positionRef.current));
         };
 
         if (isDragging) {
@@ -161,7 +166,7 @@ export function FloatingMediaPlayer() {
             window.removeEventListener('touchmove', handleTouchMove);
             window.removeEventListener('touchend', handleMouseUp);
         };
-    }, [isDragging, position]);
+    }, [isDragging]);
 
 
     // Always show if timeline exists

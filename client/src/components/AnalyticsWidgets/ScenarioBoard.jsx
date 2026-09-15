@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTimeStore } from '../../store/useTimeStore';
 import { Swords, Zap, Flame } from 'lucide-react';
 import styles from './ScenarioBoard.module.css';
@@ -13,28 +13,47 @@ const ScenarioBoard = () => {
 
     const TACTICAL_WINDOW_HOURS = 1;
 
-    const fetchScenarios = async () => {
+    // Audit fix: activeScan changes on every playback tick (1/s while isPlaying)
+    // or fast timeline scrub. With no abort/staleness guard, overlapping fetches
+    // could resolve out of order and stomp fresher scenario data with a stale
+    // response — same race class already fixed in ValidatorTimelineWidget via
+    // AbortController. Guard here the same way: cancel any in-flight request
+    // before firing the next one, and ignore a response that isn't the latest.
+    const inflightRef = useRef(null);
+
+    const fetchScenarios = async (refTime) => {
+        if (inflightRef.current) inflightRef.current.abort();
+        const controller = new AbortController();
+        inflightRef.current = controller;
+
         try {
             let refTimeStr = '';
-            if (activeScan && activeScan.timestamp) {
-                refTimeStr = `&refTime=${encodeURIComponent(activeScan.timestamp)}`;
+            if (refTime) {
+                refTimeStr = `&refTime=${encodeURIComponent(refTime)}`;
             }
 
-            const res = await fetch(`/api/analytics/scenarios?hours=${TACTICAL_WINDOW_HOURS}&smartLevels=${useSmartLevelsContext}${refTimeStr}`);
+            const res = await fetch(`/api/analytics/scenarios?hours=${TACTICAL_WINDOW_HOURS}&smartLevels=${useSmartLevelsContext}${refTimeStr}`, {
+                signal: controller.signal
+            });
             const data = await res.json();
+            if (inflightRef.current !== controller) return; // superseded by a newer request
             if (data && !data.error) {
                 setScenarios(data);
             }
         } catch (err) {
-            console.error('Failed to fetch scenarios:', err);
+            if (err.name !== 'AbortError') console.error('Failed to fetch scenarios:', err);
         } finally {
-            setLoading(false);
+            if (inflightRef.current === controller) {
+                inflightRef.current = null;
+                setLoading(false);
+            }
         }
     };
 
     useEffect(() => {
-        fetchScenarios();
+        fetchScenarios(activeScan?.timestamp);
         // Re-fetch only when a new scan arrives (fresh data) or toggle changes
+        return () => { if (inflightRef.current) inflightRef.current.abort(); };
     }, [activeScan, useSmartLevelsContext]);
 
     const [isPulsing, setIsPulsing] = useState(false);
