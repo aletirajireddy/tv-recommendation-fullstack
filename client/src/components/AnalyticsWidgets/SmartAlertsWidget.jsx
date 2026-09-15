@@ -3,7 +3,7 @@
 // (mark all read, delete all). Per-alert: enable/disable toggle,
 // expand to view full state-transition history, soft-delete.
 
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { FreshnessChip } from '../FreshnessChip';
 import { Bell, RefreshCw, Trash2, CheckCheck, Power, ChevronDown, ChevronRight, Clock, Activity, AlertTriangle } from 'lucide-react';
 import socketService from '../../services/SocketService';
@@ -43,14 +43,30 @@ export function SmartAlertsWidget() {
     const [expandedId,   setExpandedId]  = useState(null);
     const [lastFetchedAt, setLastFetchedAt] = useState(null);
 
+    // Audit fix: rapid tab-switching (Active/Qualified/Expired/Disabled/All) had
+    // no abort/staleness guard, so an older tab's slower response could land
+    // after a newer tab's and overwrite it with the wrong tab's data — same
+    // race class fixed elsewhere (ScenarioBoard, ValidatorTimelineWidget).
+    const inflightRef = useRef(null);
     const reload = useCallback(async () => {
+        if (inflightRef.current) inflightRef.current.abort();
+        const controller = new AbortController();
+        inflightRef.current = controller;
         try {
-            const r = await fetch(`/api/smart-alerts?state=${tab}&limit=200`);
+            const r = await fetch(`/api/smart-alerts?state=${tab}&limit=200`, { signal: controller.signal });
             const j = await r.json();
+            if (inflightRef.current !== controller) return; // superseded
             if (j.error) throw new Error(j.error);
             setData(j); setError(null); setLastFetchedAt(Date.now());
-        } catch (e) { setError(e.message); }
-        finally    { setLoading(false); }
+        } catch (e) {
+            if (e.name === 'AbortError') return;
+            setError(e.message);
+        } finally {
+            if (inflightRef.current === controller) {
+                inflightRef.current = null;
+                setLoading(false);
+            }
+        }
     }, [tab]);
 
     useEffect(() => { reload(); }, [reload]);
