@@ -1,8 +1,18 @@
 // ==UserScript==
 // @name         Ultra Scalper v16.0 - Connected Core (Master)
 // @namespace    http://tampermonkey.net/
-// @version      16.6
-// @description  v16.6: confirmed live via real DOM inspection that v16.5's pills-only check missed a genuinely broken screener state — 10 filter pills were present (would've passed), but the table itself had only 1 real data column and every row's indicator cell was empty with a Pine Script "array.get() Index out of bounds" error. checkStreamAFilterSetup() now checks three things together: pills container > 4 children, thead th[data-field] count > 5, tbody tr[data-rowkey] count >= 2. Retry cooldown bumped 3min -> 5min (the table can take a while to populate after the pills render). After 3 retries still fail, reloads the page instead of giving up silently, capped at 3 reloads total to avoid a reload loop if the page is broken for a reason neither Automa nor a reload can fix. v16.5: the initial-setup filter check's settle window now starts from a real page-load signal (document.readyState === 'complete', or a window 'load' listener if not there yet) instead of script-injection time — Tampermonkey has no @run-at directive here (defaults to document-idle), which can fire before TradingView's SPA content has actually rendered, risking judging (and firing Automa against) a genuinely not-yet-loaded page. checkStreamAFilterSetup() fails open (never judges, never triggers) until the real load event has fired, THEN waits the existing 45s settle window on top of that before evaluating. v16.4: fixed a real deadlock in v16.3's filter-setup check — it only ran from inside processData(), but processData() is never called until startAutoScan()'s button-discovery loop finds the scan button, and confirmed live that loop can get stuck retrying forever ("Scan button not found, retrying...") when the screener isn't properly set up. That's exactly the situation the filter check exists to fix, so gating it behind the very thing it was supposed to unblock meant the Automa setup workflow never got a chance to fire. Now a standalone startStreamASetupMonitor() runs checkStreamAFilterSetup() on its own 15s timer, independent of the scan button or any other state, started before the button-dependent functions in the init sequence. v16.3: two additions, mirroring Stream B (coin_scanner.js). (1) Initial-setup filter check — before trusting a scan cycle, verifies the screener's filter pills container (dynamic selector: [class*=screenerContainer] div [class*=pillsWrapper-] div[class*=pillsContainerWrapper-] div[class*=pillsContainer-]) has more than 4 direct children (confirmed via DOM inspection: only 2 children when broken); if not, dispatches Automa workflow 3lcKzNfE_GyXzpUMKxwVi (bounded retries, 3min cooldown, 45s settle window after page load — same scaffolding as Strict Screened Coin) and skips processData() for that cycle instead of sending unfiltered data. Gated once in processData() itself so every trigger source (manual, auto, alert-triggered) is covered. (2) Backend-driven tab activation — the backend now watches scans table staleness and, past a threshold, includes activate_tab_workflow_id in the /scan-report response; the script dispatches whatever ID it's given via the same automa:execute-workflow CustomEvent, on a local 3min cooldown. The workflow ID is never hardcoded here for this part — the backend owns it. v16.2: parseTableData() now rejects non-ticker garbage (JSON/long strings) before adding a row to coins[] — confirmed live (2026-09-01) that fragments of Automa's own workflow-editor JSON got scraped as literal "tickers" (18 junk rows in one scan), sent to the backend, and showed up as permanently "frozen" in the Data Feed Health widget. Same class of fix already applied to Stream B (coin_scanner.js v20.19). v16.1: hidden-tab guard on auto-scan (skip click+process while backgrounded, catch up instantly on refocus) + diagnostic warning when a previously-captured ticker vanishes from a scan's rows (dropped off pine-screener table). v16.0: Auto-triggers AI analysis with smart change detection + Alert integration + Fixed event toggles
+// @version      16.7
+// @description  v16.7: streamAInitialSetupWorkflowId (Ghost Coin widget settings panel) was
+//               settable via the watchdog-settings API but had nowhere to go — the script
+//               only ever dispatched its own hardcoded CONFIG.STREAM_A_SETUP_AUTOMA_WORKFLOW_ID,
+//               so editing the field in the UI silently did nothing (confirmed: DB value read
+//               back out by GET /api/ghosts/watchdog-settings for display, never consumed by
+//               any /scan-report response). Backend now includes stream_a_setup_workflow_id in
+//               every /scan-report response (same pattern as activate_tab_workflow_id); the
+//               script picks it up into dynamicStreamASetupWorkflowId and checkStreamAFilterSetup()
+//               dispatches that instead of the hardcoded constant once it's arrived at least
+//               once. The hardcoded value remains the fallback for a fresh page load before the
+//               first response lands. v16.6: confirmed live via real DOM inspection that v16.5's pills-only check missed a genuinely broken screener state — 10 filter pills were present (would've passed), but the table itself had only 1 real data column and every row's indicator cell was empty with a Pine Script "array.get() Index out of bounds" error. checkStreamAFilterSetup() now checks three things together: pills container > 4 children, thead th[data-field] count > 5, tbody tr[data-rowkey] count >= 2. Retry cooldown bumped 3min -> 5min (the table can take a while to populate after the pills render). After 3 retries still fail, reloads the page instead of giving up silently, capped at 3 reloads total to avoid a reload loop if the page is broken for a reason neither Automa nor a reload can fix. v16.5: the initial-setup filter check's settle window now starts from a real page-load signal (document.readyState === 'complete', or a window 'load' listener if not there yet) instead of script-injection time — Tampermonkey has no @run-at directive here (defaults to document-idle), which can fire before TradingView's SPA content has actually rendered, risking judging (and firing Automa against) a genuinely not-yet-loaded page. checkStreamAFilterSetup() fails open (never judges, never triggers) until the real load event has fired, THEN waits the existing 45s settle window on top of that before evaluating. v16.4: fixed a real deadlock in v16.3's filter-setup check — it only ran from inside processData(), but processData() is never called until startAutoScan()'s button-discovery loop finds the scan button, and confirmed live that loop can get stuck retrying forever ("Scan button not found, retrying...") when the screener isn't properly set up. That's exactly the situation the filter check exists to fix, so gating it behind the very thing it was supposed to unblock meant the Automa setup workflow never got a chance to fire. Now a standalone startStreamASetupMonitor() runs checkStreamAFilterSetup() on its own 15s timer, independent of the scan button or any other state, started before the button-dependent functions in the init sequence. v16.3: two additions, mirroring Stream B (coin_scanner.js). (1) Initial-setup filter check — before trusting a scan cycle, verifies the screener's filter pills container (dynamic selector: [class*=screenerContainer] div [class*=pillsWrapper-] div[class*=pillsContainerWrapper-] div[class*=pillsContainer-]) has more than 4 direct children (confirmed via DOM inspection: only 2 children when broken); if not, dispatches Automa workflow 3lcKzNfE_GyXzpUMKxwVi (bounded retries, 3min cooldown, 45s settle window after page load — same scaffolding as Strict Screened Coin) and skips processData() for that cycle instead of sending unfiltered data. Gated once in processData() itself so every trigger source (manual, auto, alert-triggered) is covered. (2) Backend-driven tab activation — the backend now watches scans table staleness and, past a threshold, includes activate_tab_workflow_id in the /scan-report response; the script dispatches whatever ID it's given via the same automa:execute-workflow CustomEvent, on a local 3min cooldown. The workflow ID is never hardcoded here for this part — the backend owns it. v16.2: parseTableData() now rejects non-ticker garbage (JSON/long strings) before adding a row to coins[] — confirmed live (2026-09-01) that fragments of Automa's own workflow-editor JSON got scraped as literal "tickers" (18 junk rows in one scan), sent to the backend, and showed up as permanently "frozen" in the Data Feed Health widget. Same class of fix already applied to Stream B (coin_scanner.js v20.19). v16.1: hidden-tab guard on auto-scan (skip click+process while backgrounded, catch up instantly on refocus) + diagnostic warning when a previously-captured ticker vanishes from a scan's rows (dropped off pine-screener table). v16.0: Auto-triggers AI analysis with smart change detection + Alert integration + Fixed event toggles
 // @author       Your Name
 // @match        *://*.tradingview.com/pine-screener/*
 // @grant        GM_xmlhttpRequest
@@ -64,9 +74,20 @@
         // inspection: 2 children when broken, needs >4 when properly
         // filtered), dispatches this Automa workflow to fix it (bounded
         // retries, cooldown, settle window after page load — same
-        // scaffolding as Stream B's). Hardcoded here same as Stream B's
-        // STRICT_SCREEN_AUTOMA_WORKFLOW_ID — this one's a fixed recovery
-        // action, not something the backend needs to pick dynamically.
+        // scaffolding as Stream B's).
+        //
+        // 2026-09-16: this is now the FALLBACK default only. It was
+        // previously treated as a fixed value never picked dynamically — but
+        // the Ghost Coin widget's settings panel lets you edit
+        // streamAInitialSetupWorkflowId, and that edit had nowhere to go
+        // (dead setting, confirmed: saved to system_settings, never read back
+        // out anywhere). The backend now includes the live value as
+        // `stream_a_setup_workflow_id` in every /scan-report response (same
+        // pattern as activate_tab_workflow_id below) — see
+        // dynamicStreamASetupWorkflowId, which checkStreamAFilterSetup()
+        // prefers over this constant once the backend has responded at least
+        // once. This constant only matters before the first successful
+        // response of a fresh page load, or if the backend ever omits the field.
         STREAM_A_SETUP_AUTOMA_WORKFLOW_ID: '3lcKzNfE_GyXzpUMKxwVi',
         STREAM_A_SETUP_MAX_RETRIES: 3,
         // 2026-09-10: bumped 3min -> 5min. Confirmed live via real DOM
@@ -131,6 +152,14 @@
     // page. null means "not loaded yet" — checkStreamAFilterSetup() fails
     // open (never judges, never triggers) until this is set.
     let streamAPageLoadedAt = null;
+
+    // 2026-09-16: live-updated from stream_a_setup_workflow_id on every
+    // /scan-report response — see the response handler further down. null
+    // until the first successful response arrives, at which point
+    // checkStreamAFilterSetup() prefers this over CONFIG.STREAM_A_SETUP_AUTOMA_WORKFLOW_ID.
+    // Lets the Ghost Coin widget's settings-panel field actually take effect,
+    // same as tabActivateWorkflowIdA/B/D and watchlistSyncFallbackWorkflowId.
+    let dynamicStreamASetupWorkflowId = null;
     function _markStreamAPageLoaded() {
         if (streamAPageLoadedAt === null) {
             streamAPageLoadedAt = Date.now();
@@ -213,9 +242,10 @@
 
         GM_setValue('streamASetup_retryCount', count + 1);
         GM_setValue('streamASetup_lastTriggerAt', Date.now());
-        console.log(`[Stream-A-Setup] 🔧 Dispatching Automa setup workflow (attempt ${count + 1}/${CONFIG.STREAM_A_SETUP_MAX_RETRIES}).`);
+        const workflowId = dynamicStreamASetupWorkflowId || CONFIG.STREAM_A_SETUP_AUTOMA_WORKFLOW_ID;
+        console.log(`[Stream-A-Setup] 🔧 Dispatching Automa setup workflow ${workflowId}${dynamicStreamASetupWorkflowId ? ' (live from backend)' : ' (hardcoded fallback — no backend response received yet)'} (attempt ${count + 1}/${CONFIG.STREAM_A_SETUP_MAX_RETRIES}).`);
         window.dispatchEvent(new CustomEvent('automa:execute-workflow', {
-            detail: { id: CONFIG.STREAM_A_SETUP_AUTOMA_WORKFLOW_ID }
+            detail: { id: workflowId }
         }));
         return false;
     }
@@ -363,6 +393,18 @@
                                     const localTime = new Date(ts).toLocaleTimeString('en-IN', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
                                     console.log(`[Sync] 🔄 Updated Confirm Head: ${localTime}`);
                                 }
+                            }
+
+                            // 2026-09-16: pick up the live Stream A setup-fix workflow ID.
+                            // Previously the Ghost Coin widget's settings-panel field for
+                            // this had nowhere to go — the script only ever used its own
+                            // hardcoded constant, so editing the preset in the UI silently
+                            // did nothing. checkStreamAFilterSetup() now dispatches this
+                            // value once it arrives (falls back to the hardcoded default
+                            // until the first successful response of a fresh page load).
+                            if (resJson.stream_a_setup_workflow_id && resJson.stream_a_setup_workflow_id !== dynamicStreamASetupWorkflowId) {
+                                console.log(`[Stream-A-Setup] 📡 Backend workflow ID updated: ${dynamicStreamASetupWorkflowId || '(none yet, using hardcoded default)'} → ${resJson.stream_a_setup_workflow_id}`);
+                                dynamicStreamASetupWorkflowId = resJson.stream_a_setup_workflow_id;
                             }
 
                             // 2026-09-10: backend-driven tab activation — same pattern as

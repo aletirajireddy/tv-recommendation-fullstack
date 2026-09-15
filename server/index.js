@@ -405,7 +405,19 @@ app.post('/scan-report', (req, res) => {
             try { umpire.onStreamA(payload); } catch (err) { console.error('Umpire onStreamA error:', err); }
         });
 
-        res.json({ success: true, id: payload.id, activate_tab_workflow_id: _getCoordinatedActivationTarget('A') });
+        // Audit fix (2026-09-16): streamAInitialSetupWorkflowId was settable via the
+        // watchdog-settings API/Ghost Coin widget UI but never actually read back
+        // out anywhere — the script always dispatched its own hardcoded default,
+        // so editing the field in the UI silently did nothing. Include the live
+        // setting here, same pattern as activate_tab_workflow_id below, so the
+        // script (once updated to read it — see scripts/symbol_market_scanner.js)
+        // can dispatch whichever Automa preset is actually configured.
+        res.json({
+            success: true,
+            id: payload.id,
+            activate_tab_workflow_id: _getCoordinatedActivationTarget('A'),
+            stream_a_setup_workflow_id: _getWatchdogSettings().streamAInitialSetupWorkflowId,
+        });
 
     } catch (e) {
         console.error("V3 Ingest Error:", e);

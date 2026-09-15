@@ -30,7 +30,7 @@ Editing `scripts/coin_scanner.js`, `scripts/technical_watchlist_coin_scanner.js`
 
 | File | Browser script name | Current version |
 |---|---|---|
-| `scripts/symbol_market_scanner.js` | Ultra Scalper - Connected Core (Master) — Stream A | **v16.6** |
+| `scripts/symbol_market_scanner.js` | Ultra Scalper - Connected Core (Master) — Stream A | **v16.7** (pending Tampermonkey paste — repo file updated, not yet confirmed live in browser) |
 | `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional — Stream B | **v20.31** |
 | `scripts/technical_watchlist_coin_scanner.js` | Stream D Technical Watchlist Scanner | **v1.6** |
 | `scripts/indicators/tamper_streamA.txt` | Stream A macro scanner reference | — |
@@ -46,14 +46,28 @@ Editing `scripts/coin_scanner.js`, `scripts/technical_watchlist_coin_scanner.js`
 > Automa's UI (e.g. a Cron job). Column 3 says which applies to each row — don't
 > assume a listed ID is "live" just because it's in this table. IDs are stored in
 > `system_settings` (via the watchdog-settings API, editable from the Ghost Coin
-> widget's settings panel) — **never hardcoded in a script**, except the two marked
-> "hardcoded" below, which are deliberate fixed recovery actions rather than
-> something the backend needs to pick dynamically.
+> widget's settings panel) — **never hardcoded in a script**, except the one marked
+> "hardcoded" below (Stream B's re-select-filter recovery), which is a deliberate
+> fixed action rather than something the backend needs to pick dynamically.
+
+**2026-09-16 fix — Stream A setup workflow ID was a dead setting.** Until
+`symbol_market_scanner.js` v16.7, `streamAInitialSetupWorkflowId` was editable from
+the Ghost Coin widget's settings panel and persisted to `system_settings`, but
+nothing ever read it back out to the browser — `/scan-report`'s response never
+included it, so `checkStreamAFilterSetup()` always dispatched its own hardcoded
+`CONFIG.STREAM_A_SETUP_AUTOMA_WORKFLOW_ID` regardless of what was configured in the
+UI. Diagnosed live 2026-09-16 (user reported the setup workflow "not firing" after
+reconfiguring a preset — the preset itself was fine, the ID just never reached the
+script). Fixed: `/scan-report` now includes `stream_a_setup_workflow_id` in every
+response (same pattern as `activate_tab_workflow_id`), and the script (v16.7+)
+dispatches that live value, falling back to the hardcoded default only until the
+first successful response of a fresh page load. **Requires the Tampermonkey paste
+— not live until the user confirms it.**
 
 | Workflow ID | Purpose | Wired how |
 |---|---|---|
 | `GNRPpM5H6q7VmXjxjlOQC` | Stream B — re-select the screened-coin filter | **Live, hardcoded.** Dispatched by `coin_scanner.js`'s `checkStrictScreenedCoin()` (`CONFIG.STRICT_SCREEN_AUTOMA_WORKFLOW_ID`) when the filter pill goes missing. |
-| `3lcKzNfE_GyXzpUMKxwVi` | Stream A — initial/filter setup | **Live, hardcoded.** Dispatched by `symbol_market_scanner.js`'s `checkStreamAFilterSetup()` (`CONFIG.STREAM_A_SETUP_AUTOMA_WORKFLOW_ID`) when the pills/columns/rows health check fails (see below). |
+| `3lcKzNfE_GyXzpUMKxwVi` | Stream A — initial/filter setup | **Live**, `streamAInitialSetupWorkflowId` setting (as of v16.7 — see "2026-09-16 fix" below). Dispatched by `symbol_market_scanner.js`'s `checkStreamAFilterSetup()` when the pills/columns/rows health check fails (see below). |
 | `3lt4ZkHylt3L0uQlo05iH` | Stream B — make its tab/window active | **Live**, `tabActivateWorkflowIdB` setting. Dispatched by the backend's activation coordinator (see below) via `coin_scanner.js`'s `activate_tab_workflow_id` handler. **Caution:** live-Automa-log testing on 2026-09-10 twice showed this ID actually activating Stream D's window, not B's — the user has since said it's fixed on the Automa side, but this hasn't been independently re-verified since. If tab-activation misbehaves for B, check this mapping first. |
 | `9NoMligzmg3VE9SJMC942` | Stream A — make its tab/window active | **Live**, `tabActivateWorkflowIdA` setting. Same dispatch path, via `symbol_market_scanner.js`'s `activate_tab_workflow_id` handler. |
 | `h3ixjpLixrztE_ZzhLWtk` | Stream D — make its tab/window active | **Live**, `tabActivateWorkflowIdD` setting. Same dispatch path, via `technical_watchlist_coin_scanner.js`'s `activate_tab_workflow_id` handler. Confirmed working via live cross-stream testing (fired through both B's and D's own dispatch code). |
@@ -253,7 +267,7 @@ against the real DOM:
 GET/POST /api/ghosts/watchdog-settings
   tabActivateWorkflowIdA/B/D        — Automa workflow ID per stream's tab-activate
   tabActivateThresholdMinA/B/D      — staleness minutes before that stream is a candidate (default 6)
-  streamAInitialSetupWorkflowId     — Stream A's filter-setup fix workflow (hardcoded in-script too, editable here for reference)
+  streamAInitialSetupWorkflowId     — Stream A's filter-setup fix workflow (live as of v16.7 — see the 2026-09-16 fix note above)
   watchlistSyncFallbackWorkflowId   — heavier recovery workflow for a stuck watchlist-sync ticker
   watchlistSyncFallbackEscalationThreshold — escalations before fallback fires (default 5)
   watchlistSyncFallbackCooldownMin  — min gap between fallback dispatches (default 15)

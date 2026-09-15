@@ -47,9 +47,12 @@ function GhostQueue({ containerRef }) {
     const [tabActivateThresholdMinB, setTabActivateThresholdMinB] = useState(6);
     // 2026-09-10: Stream A/D now both have their own backend-driven
     // tab-activate dispatch (A: v16.3+, D: v1.6) — same pattern as B's.
-    // streamAInitialSetupWorkflowId remains reference/config-only (A's DOM
-    // filter-setup check dispatches it directly, hardcoded in the script —
-    // this field exists so the ID is editable in one place, not buried).
+    // 2026-09-16: streamAInitialSetupWorkflowId is now genuinely live, not
+    // just reference/config-only — the backend includes it as
+    // stream_a_setup_workflow_id in every /scan-report response and
+    // symbol_market_scanner.js v16.7+ dispatches that value instead of its
+    // hardcoded default. (Before v16.7, editing this field here saved to
+    // system_settings but had no effect — confirmed dead wiring, fixed.)
     const [streamAInitialSetupWorkflowId, setStreamAInitialSetupWorkflowId] = useState('3lcKzNfE_GyXzpUMKxwVi');
     const [tabActivateWorkflowIdA, setTabActivateWorkflowIdA] = useState('9NoMligzmg3VE9SJMC942');
     const [tabActivateThresholdMinA, setTabActivateThresholdMinA] = useState(6);
