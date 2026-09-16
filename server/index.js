@@ -3434,7 +3434,10 @@ const FEED_HEALTH_CACHE_TTL = 30_000;
 // every time a script's SCRIPT_VERSION/@version changes).
 // ─────────────────────────────────────────────────────────────────────────
 const EXPECTED_SCRIPT_VERSIONS = {
-    A: '16.6',
+    A: '16.9', // bumped 2026-09-16 — 16.7 (streamAInitialSetupWorkflowId wiring), 16.8 (setup-check
+               // timing + SCRIPT_VERSION fix), 16.9 (Tampermonkey metadata-block fix + eslint config).
+               // I forgot this update across all three version bumps this session — feed-health kept
+               // reporting a false version mismatch for a script that was actually correctly up to date.
     B: '20.31',
     D: '1.6',
 };
