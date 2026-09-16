@@ -1387,6 +1387,23 @@ function _getCoordinatedActivationTarget(askingStream) {
 // unrelated recovery actions and shouldn't compete for the same dispatch slot.
 function _getWatchlistSyncFallbackSignal() {
     try {
+        // 2026-09-16: user feedback — activate_tab_workflow_id and
+        // watchlist_sync_fallback_workflow_id are both independently computed
+        // and placed in the SAME response object (e.g. /api/market-context),
+        // so if both signals happened to be true at once the browser would
+        // dispatch two separate Automa workflows back-to-back in one tick —
+        // a real collision risk (sync-fallback opens a fresh tab and redoes
+        // a copy+paste; a concurrent tab-activation stealing focus mid-way
+        // through that could corrupt it). Per explicit direction: give this
+        // low priority relative to live-data tab-activation, not equal
+        // weight — defer to any tab-activation handshake currently in
+        // flight rather than firing alongside it. Deliberately does NOT
+        // touch watchlist_sync_fallback_last_dispatch_at when deferring —
+        // this wasn't a real dispatch, so it shouldn't burn any of the
+        // fallback's own cooldown; it just tries again on the very next
+        // eligible call once the pending activation clears.
+        if (_getPendingActivation()) return null;
+
         const settings = _getWatchdogSettings();
         const stuck = db.prepare(
             'SELECT ticker, escalations FROM watchlist_sync_audit WHERE consecutive_misses > 0 AND escalations >= ? ORDER BY escalations DESC LIMIT 1'
