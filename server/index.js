@@ -1635,6 +1635,14 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
 
     const ghostList = [];
 
+    // 2026-09-16: genuine price-move-based freeze detection, computed ONCE for
+    // this whole batch (not per-ticker — see _getStreamAFrozenTickers' own
+    // comment for why). Replaces trusting the browser-reported `freeze`
+    // column, which the user keeps for their own price-action reference, not
+    // as a vetted signal — and which the same per-ticker Pine Script parsing
+    // errors that hit close/netTrend/momScore can just as easily corrupt.
+    const streamAFrozenTickers = _getStreamAFrozenTickers();
+
     // Process Candidates
     scanResults.forEach(item => {
         const d = item.data || item;
@@ -1679,7 +1687,13 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
 
         if (underMomentumWatch) {
             const watchElapsedMs = now - new Date(existingLifecycle.momentum_watch_started_at).getTime();
-            const showsMomentumNow = (d.score > 30) || (d.breakout === 1);
+            // 2026-09-16: a genuinely frozen ticker must never count as "proven
+            // momentum" no matter what d.score/d.breakout claim — those are raw
+            // scanner columns kept for the user's own price-action reference,
+            // not vetted signals, and the same per-ticker parsing errors that
+            // freeze close/netTrend/momScore can just as easily leave a stale
+            // breakout=1 sitting on a row that isn't actually moving.
+            const showsMomentumNow = !streamAFrozenTickers.has(cleanTicker) && ((d.score > 30) || (d.breakout === 1));
             const provenSoFar = existingLifecycle.momentum_proven === 1 || showsMomentumNow;
 
             if (watchElapsedMs >= momentumMs) {
@@ -1723,9 +1737,10 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
             // [WATCHDOG CLOCK] A coin younger than settle_hours is never judged —
             // same treatment as a protected coin, but for a different reason (not
             // enough continuous data yet, not "this coin is special").
-            if (d.freeze === 1) {
+            const frozenForMin = streamAFrozenTickers.get(cleanTicker);
+            if (frozenForMin != null) {
                 shouldPrune = true;
-                pruneReason = "Frozen";
+                pruneReason = `Frozen (${frozenForMin}m no price/trend movement)`;
             } else if (d.score <= 30) {
                 shouldPrune = true;
                 pruneReason = "Sustained Low Score";
@@ -3505,6 +3520,54 @@ function _summarizeStream(tickerRowsMap, fields, freezeThresholdMin, nowMs) {
         lastWriteAt: latestWriteMs ? new Date(latestWriteMs).toISOString() : null,
         lastWriteAgeMinutes,
     };
+}
+
+// 2026-09-16: genuine price-move-based freeze detection for ghost-pruning,
+// reusing the exact same _walkFreeze methodology as /api/system/feed-health
+// instead of trusting the browser-reported `freeze` column. That column
+// (like `breakout`, `close`, `netTrend`, `momScore` on the raw scan row) is
+// a raw Pine Script indicator kept for the user's own price-action reference
+// on the screener — never independently verified end-to-end, and vulnerable
+// to exactly the kind of per-ticker indicator error already confirmed live
+// (2026-09-16 audit: ETHFIUSDT.P/DOGEUSDT.P/1000PEPEUSDT.P/ENAUSDT.P all had
+// byte-identical close/netTrend/momScore for 30-66min while volSpike/breakout
+// kept changing on the same rows — a real per-ticker parsing failure the
+// backend has no reason to just take the scanner's word wasn't happening).
+//
+// Scoped to Stream A only (ghost-pruning's Frozen check only ever runs
+// against Stream A rows) and returns a Map ticker -> frozenMinutes for
+// O(1) lookups per coin in generateScannerFeedback()'s loop, computed ONCE
+// per invocation rather than once per ticker (avoids an N+1 query pattern —
+// see PERFORMANCE.md rule #4).
+function _getStreamAFrozenTickers(thresholdMin = 20) {
+    try {
+        const cutoffISO = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // same 3h window as feed-health
+        const scans = db.prepare(`
+            SELECT s.id, s.timestamp, sr.raw_data
+            FROM scans s JOIN scan_results sr ON sr.scan_id = s.id
+            WHERE s.timestamp > ? ORDER BY s.timestamp ASC
+        `).all(cutoffISO);
+        const tickerRows = {};
+        for (const scan of scans) {
+            let payload;
+            try { payload = JSON.parse(scan.raw_data); } catch { continue; }
+            for (const item of (payload.results || [])) {
+                const d = item.data || item;
+                const t = item.ticker || d.ticker;
+                if (!t) continue;
+                (tickerRows[t] = tickerRows[t] || []).push({ ts: scan.timestamp, close: d.close, netTrend: d.netTrend, momScore: d.momScore });
+            }
+        }
+        const frozen = new Map();
+        for (const [ticker, rowsAsc] of Object.entries(tickerRows)) {
+            const w = _walkFreeze(rowsAsc, ['close', 'netTrend', 'momScore']);
+            if (w && w.frozenMinutes >= thresholdMin) frozen.set(ticker, w.frozenMinutes);
+        }
+        return frozen;
+    } catch (e) {
+        console.error('[FreezeDetection] Failed to compute Stream A frozen tickers:', e.message);
+        return new Map(); // fail open — never block pruning entirely on a detector error
+    }
 }
 
 // v20.26-era refactor: pulled the full computation out of the route handler
