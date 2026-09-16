@@ -30,7 +30,7 @@ Editing `scripts/coin_scanner.js`, `scripts/technical_watchlist_coin_scanner.js`
 
 | File | Browser script name | Current version |
 |---|---|---|
-| `scripts/symbol_market_scanner.js` | Ultra Scalper - Connected Core (Master) — Stream A | **v16.8** (pending Tampermonkey paste — repo file updated, not yet confirmed live in browser via `script_version_reports`) |
+| `scripts/symbol_market_scanner.js` | Ultra Scalper - Connected Core (Master) — Stream A | **v16.9** (pending Tampermonkey paste — repo file updated, not yet confirmed live in browser via `script_version_reports`) |
 | `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional — Stream B | **v20.31** |
 | `scripts/technical_watchlist_coin_scanner.js` | Stream D Technical Watchlist Scanner | **v1.6** |
 | `scripts/indicators/tamper_streamA.txt` | Stream A macro scanner reference | — |
@@ -76,7 +76,26 @@ rate). Also caught and fixed in the same pass: the `@version` UserScript tag was
 bumped to 16.7 but the separate runtime `SCRIPT_VERSION` constant — the one actually
 sent to the backend with every payload and tracked in `script_version_reports` — was
 still `'16.6'`, so even a correctly-pasted v16.7 would have under-reported its own
-version. Both now stay in sync at 16.8.
+version. Both now stay in sync at 16.9.
+
+**2026-09-16 follow-up #2 — the v16.7/v16.8 description itself broke Tampermonkey's editor.**
+User sent a screenshot: Tampermonkey's own metadata-block parser (not ESLint — a real
+misdiagnosis on my part initially) flagged every wrapped continuation line of the
+multi-line `@description` I'd written for v16.7/16.8 with a red error marker. The
+UserScript metadata format requires every line between `==UserScript==` and
+`==/UserScript==` to be its own single-line `// @directive` — a plain wrapped comment
+continuation has no directive and isn't valid there. Fixed in v16.9 by collapsing the
+description back to one line, matching the rest of the file's (admittedly ugly but
+correct) convention. Also added `scripts/eslint.config.mjs` — a real ESLint config had
+never existed for this folder, so the Tampermonkey GM_* APIs and `unsafeWindow` had no
+declared globals; any actual linting reported them as `no-undef`. The config is
+self-contained (no `@eslint/js`/`globals` package imports — `scripts/` has no
+`node_modules` of its own and Node's ESM resolver won't reach into `client/node_modules`
+across sibling directories) and uses the `.mjs` extension specifically because the root
+`package.json` lacks `"type": "module"` (adding it there would break `server/index.js`
+and other root-level CJS scripts). Fixed the small number of genuine `no-unused-vars`
+errors it surfaced along the way — see the v16.9 changelog entry in the file itself for
+the details of which were removed vs. renamed vs. left in place pending a decision.
 
 | Workflow ID | Purpose | Wired how |
 |---|---|---|

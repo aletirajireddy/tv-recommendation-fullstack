@@ -1063,7 +1063,7 @@
                     auditLog("TELEMETRY_ERROR", null, `HTTP ${response.status}: ${response.responseText}`, "PRUNE");
                 }
             },
-            onerror: function (err) {
+            onerror: function () {
                 auditLog("TELEMETRY_FAILED", null, "Network request failed entirely.", "PRUNE");
             }
         });
