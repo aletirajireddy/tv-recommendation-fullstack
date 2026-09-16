@@ -405,16 +405,25 @@ class TelegramService {
     // GHOST QUEUE — operator approval required (was completely unalerted)
     // ─────────────────────────────────────────────────────────────────────────
 
-    async onGhostQueued({ ticker, reason }) {
+    // 2026-09-16: now fires in BOTH ghost_auto_approve modes (previously auto
+    // mode pruned instantly with no queue entry at all, so this only ever
+    // fired in manual mode). The "what happens if nobody acts" line has to
+    // say something different depending on mode now — auto mode WILL remove
+    // the coin once the ghost-hours window expires; manual mode still won't.
+    async onGhostQueued({ ticker, reason, autoApprove }) {
         // Ghost alerts are INFO — don't spam if coin keeps bouncing into ghost territory
         if (this._isTickerOnCooldown(ticker)) return;
         this._markTickerAlerted(ticker);
+
+        const outcomeLine = autoApprove
+            ? `Will auto-clear if it doesn't turn around — whitelist it in dashboard to protect it, or approve now to prune early.`
+            : `Approve in dashboard or it stays active.`;
 
         const msg =
             `👻 *GHOST QUEUE*\n` +
             `*${ticker}* needs review\n` +
             `Reason: _${reason}_\n` +
-            `Approve in dashboard or it stays active.\n` +
+            `${outcomeLine}\n` +
             `\`[SYSTEM] #GHOST_PENDING\``;
 
         await this.sendAlert(msg, 'GHOST', { ticker, reason }, 'INFO', 'ghost_queue');

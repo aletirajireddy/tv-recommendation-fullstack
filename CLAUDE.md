@@ -909,50 +909,72 @@ That clock gates two checkpoints, at two different durations:
 | Setting | Default | What it gates |
 |---|---|---|
 | **`watchdog_settle_hours`** | 12h | Below this age, a coin is **never evaluated** for pruning at all — the frozen/score/volume checks are skipped entirely, same treatment as a protected coin, just for a different reason (not enough continuous data yet). |
-| **`watchdog_ghost_hours`** | 36h | **Manual mode only** (`ghost_auto_approve` OFF). While a flagged coin sits in the queue, this is how long it's given to show momentum before being force-reset regardless of outcome. |
+| **`watchdog_ghost_hours`** | 36h | **Both modes as of 2026-09-16** (previously manual-only — see "Redesign" below). Once a coin fails its settle-mark judgment, this is how long it gets to show momentum before the window closes. |
 | **`watchdog_gap_tolerance_min`** | 15min | A scan gap bigger than this counts as "the system was offline" and triggers the system-wide reset above. |
 
 All three are adjustable at runtime — see "Settings API" below. No deploy needed to change them.
 
 ### How a coin's life actually plays out
 
-**At the settle mark (12h), first-ever judgment happens.** What happens next depends entirely on `ghost_auto_approve`:
+**At the settle mark (12h), first-ever judgment happens.** Both `ghost_auto_approve`
+modes now share the same second stage — a `ghost_hours` (default 36h) redemption
+window — and only differ in what happens when that window closes:
 
 ```
-                    ┌─ Auto-approve ON ──────────────────────────────┐
-                    │  Bad coin → pruned from watchlist IMMEDIATELY.  │
-                    │  Exactly like today. No queue entry (widget     │
-   settle_hours     │  stays invisible, same as always). No memory    │
-   clears, coin     │  carried forward — next appearance = brand new, │
-   is judged        │  fresh clock, from zero.                        │
-   for the first    └──────────────────────────────────────────────────┘
-   time
-                    ┌─ Auto-approve OFF (manual) ─────────────────────┐
-                    │  Bad coin → listed in Ghost Coin widget, STAYS   │
-                    │  on the actual TV watchlist (not removed) while  │
-                    │  awaiting your decision. ghost_hours clock       │
-                    │  starts now.                                     │
-                    │                                                   │
-                    │  ├─ Momentum returns before ghost_hours          │
-                    │  │  → immediately revived: pulled from queue,    │
-                    │  │    clock resets to 0, re-earns everything     │
-                    │  │    from scratch (existing "Momentum Rescue"   │
-                    │  │    behaviour, now also resetting the clock).  │
-                    │  │                                                │
-                    │  └─ No momentum by ghost_hours                   │
-                    │     → force-reset anyway. NOT held forever —     │
-                    │       just recycled to a clean slate. Removed    │
-                    │       from queue, clock restarts, stays on the   │
-                    │       watchlist the whole time (manual mode never │
-                    │       auto-removes it).                          │
-                    └───────────────────────────────────────────────────┘
+   settle_hours       Fails judgment (Frozen / Sustained Low Score / Ghost
+   clears, coin       Volume) → queued in ghost_approval_queue, ghost_hours
+   is judged          clock starts NOW (per-coin — this is that specific
+   for the first      coin's own queued_at, not a shared global timer).
+   time               Visible in the Ghost Coin widget in BOTH modes.
+                              │
+                              ├─ Momentum returns before ghost_hours
+                              │  → immediately revived: pulled from queue,
+                              │    confidence clock resets to 0, re-earns
+                              │    everything from scratch ("Momentum Rescue").
+                              │
+                              ├─ A human clicks Approve/Prune Now in the
+                              │  widget, any time, either mode
+                              │  → pruned immediately. Explicit human
+                              │    decision always bypasses the window.
+                              │
+                              └─ No momentum by the time ghost_hours expires:
+                                     │
+                    ┌─ Auto-approve ON ────────────────────┐
+                    │  Actually REMOVED from the watchlist   │
+                    │  now. No memory carried forward — next │
+                    │  appearance = brand new, fresh clock.  │
+                    └─────────────────────────────────────────┘
+                    ┌─ Auto-approve OFF (manual) ───────────┐
+                    │  Force-reset instead — NOT removed.    │
+                    │  Recycled to a clean slate: pulled from │
+                    │  queue, confidence clock restarts,     │
+                    │  stays on the watchlist the whole time │
+                    │  (manual mode still never auto-removes).│
+                    └─────────────────────────────────────────┘
 ```
 
-**Auto-approve ON is your default operating mode**, so in practice: this
-feature's day-to-day effect is a single sentence — *"a coin now needs 12
-continuous hours of history before it can be silently pruned."* The
-`ghost_hours`/manual-queue machinery only becomes relevant if you switch to
-manual review.
+**Total time from a coin's own clock start to a possible removal, at the
+defaults: 12h (settle) + 36h (ghost) = 48h** — always measured from that
+individual coin's own `clock_start_at`/`queued_at`, never a shared calendar
+window across coins.
+
+**2026-09-16 redesign — why this changed.** Before this, `ghost_auto_approve`
+ON skipped the ghost_hours window entirely and pruned instantly at the 12h
+mark, while OFF gave a flagged coin the full 36h to redeem itself before
+only ever being *recycled* (never removed). That was a real asymmetry: the
+exact same 12h reading could end a coin permanently in auto mode while the
+identical coin got 36h more to prove itself in manual mode, for no principled
+reason. Diagnosed live 2026-09-16 while investigating "why isn't anything
+getting pruned" (the actual cause that day was `_checkMonitoringGap()` firing
+a system-wide clock reset from an unrelated Stream A outage — see the
+zombie-record note below — but tracing it surfaced this design gap too).
+Fixed by giving every flagged coin the same window regardless of mode; only
+the terminal outcome (removed vs. recycled) still depends on
+`ghost_auto_approve`. Practical effect: the Ghost Coin widget is no longer
+silent in auto mode — a coin's 36h countdown is now visible there too, with
+a live "auto-clears in Xh Ym" / "resets in Xh Ym" line per row, and the
+approve/prune-now button works in both modes (prunes early instead of
+waiting out the rest of the window).
 
 ### Why BTC/ETH and whitelisted coins are unaffected
 

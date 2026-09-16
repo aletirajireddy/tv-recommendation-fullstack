@@ -302,7 +302,14 @@ function GhostQueue({ containerRef }) {
                         <input type="checkbox" checked={autoApprove} onChange={toggleAutoApprove} />
                         <span className={styles.slider} />
                     </label>
-                    {queue.length > 0 && !autoApprove && (() => {
+                    {queue.length > 0 && (() => {
+                        // 2026-09-16: this button used to be hidden entirely in
+                        // auto-prune mode, back when auto mode never produced
+                        // queue entries at all (instant prune, no window). Now
+                        // that both modes share the same ghost-hours watch
+                        // window, this is how you prune a coin early instead
+                        // of waiting out the rest of its countdown — still
+                        // useful in auto mode, not just manual.
                         const prunable   = queue.filter(c => !c.is_whitelisted).length;
                         const protected_ = queue.length - prunable;
                         return (
@@ -317,7 +324,7 @@ function GhostQueue({ containerRef }) {
                                     ? 'Pruning…'
                                     : protected_ > 0
                                         ? `Prune ${prunable} (${protected_} protected)`
-                                        : 'Approve All'}
+                                        : autoApprove ? 'Prune Now' : 'Approve All'}
                             </button>
                         );
                     })()}
@@ -337,7 +344,7 @@ function GhostQueue({ containerRef }) {
                         { key: 'settleHours', label: 'Settle hours', value: settleHours, setValue: setSettleHours, min: 0, max: 72, step: 1,
                           hint: 'A coin younger than this is never judged for pruning at all. Coins that already passed momentum-watch skip this.' },
                         { key: 'ghostHours', label: 'Ghost hours', value: ghostHours, setValue: setGhostHours, min: 1, max: 336, step: 1,
-                          hint: 'Manual mode only — how long a flagged coin waits for momentum before auto-reset.' },
+                          hint: '2026-09-16: now applies in both modes — how long a flagged coin gets to show momentum before the window closes. Auto-Prune ON: removed from the watchlist when it expires. Auto-Prune OFF: reset to a fresh clock instead, stays on the watchlist.' },
                         { key: 'watchlistMaxCoins', label: 'Max watchlist coins', value: watchlistMaxCoins, setValue: setWatchlistMaxCoins, min: 2, max: 200, step: 1,
                           hint: 'Cap on the real TV watchlist. Majors (BTC/ETH) and whitelist pins are never evicted. Beyond that, the lowest current-volume coins are dropped first when over the cap.' },
                         { key: 'gapToleranceMin', label: 'Gap tolerance (min)', value: gapToleranceMin, setValue: setGapToleranceMin, min: 1, max: 120, step: 1,
@@ -653,6 +660,21 @@ function GhostQueue({ containerRef }) {
                                         )}
                                     </div>
                                     <div className={styles.reason}>{coin.reason} · {ageMin}m ago</div>
+                                    {!isProtected && (() => {
+                                        // 2026-09-16: both modes now share the same ghost_hours
+                                        // window — show what's actually about to happen and when,
+                                        // since the outcome at expiry differs by mode.
+                                        const remainingMin = Math.max(0, Math.round(ghostHours * 60) - ageMin);
+                                        const h = Math.floor(remainingMin / 60);
+                                        const m = remainingMin % 60;
+                                        const remainingLabel = remainingMin <= 0 ? 'due now' : `${h}h ${m}m`;
+                                        const outcomeLabel = autoApprove ? 'auto-clears in' : 'resets in';
+                                        return (
+                                            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
+                                                {outcomeLabel} <strong style={{ color: remainingMin <= 0 ? '#f6ad55' : 'var(--text-muted)' }}>{remainingLabel}</strong>
+                                            </div>
+                                        );
+                                    })()}
                                     {score != null && (
                                         <div style={{ marginTop: 5 }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 2, color: 'var(--text-muted)' }}>

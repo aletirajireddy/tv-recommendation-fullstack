@@ -1743,36 +1743,67 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
 
         if (shouldPrune) {
             // Ghost Approval Queue Logic
+            //
+            // 2026-09-16 redesign — unify the two modes around one shared
+            // redemption window instead of two different-length ones.
+            //
+            // BEFORE: auto_approve=ON pruned INSTANTLY at the settle_hours
+            // mark with zero grace period, while auto_approve=OFF gave a
+            // flagged coin the full ghost_hours (default 36h) window to show
+            // real momentum before being force-reset (never removed). That
+            // meant the exact same 12h reading could permanently end a coin
+            // in auto mode while the identical coin got 36h more to redeem
+            // itself in manual mode — an asymmetry with no real justification.
+            //
+            // AFTER: every flagged coin gets the same ghost_hours watch
+            // window regardless of mode (settle_hours base + ghost_hours
+            // watch = 48h total before anything final happens, at the
+            // defaults). Only the OUTCOME at expiry still differs by mode:
+            //   auto_approve ON  -> actually removed from the watchlist now
+            //                       (this is the new behavior)
+            //   auto_approve OFF -> force-reset to a fresh clock, stays on
+            //                       the watchlist (unchanged from before —
+            //                       manual mode still never auto-removes)
+            // A human clicking "Approve" in the widget still bypasses the
+            // window entirely and prunes immediately, in either mode — that
+            // remains an explicit human decision, not something the window
+            // duration should gate.
             const queuedGhost = ghostQueueMap[cleanTicker];
-            let bypassQueue = false;
+            const humanApproved = queuedGhost && queuedGhost.is_approved === 1;
+            const ghostWindowExpired = queuedGhost && !humanApproved
+                && (now - new Date(queuedGhost.queued_at).getTime()) >= ghostMs;
 
-            if (autoApprove) {
-                bypassQueue = true;
-            } else if (queuedGhost && queuedGhost.is_approved === 1) {
-                bypassQueue = true;
+            if (humanApproved) {
                 // Once pruned, remove from queue
                 db.prepare("DELETE FROM ghost_approval_queue WHERE ticker = ?").run(cleanTicker);
-            }
-
-            if (bypassQueue) {
-                // Auto-approve mode: pruned immediately, exactly like today.
-                // No ghost_hours tracking applies here — the coin carries no
-                // memory forward; its next appearance starts a clean slate.
                 pruneList.push(fullTicker);
                 ghostList.push({ ticker: cleanTicker, reason: pruneReason, state: 'PRUNING' });
                 db.prepare("UPDATE coin_lifecycles SET status = 'DEAD', death_at = ? WHERE ticker = ?").run(nowISO, cleanTicker);
-            } else if (queuedGhost && (now - new Date(queuedGhost.queued_at).getTime()) >= ghostMs) {
-                // [WATCHDOG CLOCK] Manual mode only — this coin has sat in the
-                // ghost queue for the full ghost_hours window with no momentum
-                // ever returning. Not held indefinitely: force-reset to a clean
-                // slate now, same as a fresh coin. It stays on the watchlist
-                // throughout (manual mode never auto-removes it); only the
-                // queue entry and its confidence clock reset.
+            } else if (ghostWindowExpired && autoApprove) {
+                // Auto mode: the ghost_hours redemption window is over with no
+                // rescue — clear it now. This is the new auto-clear path;
+                // previously auto mode never reached here at all (it pruned
+                // on the very first flagged cycle, before any queue entry
+                // could even exist).
+                db.prepare("DELETE FROM ghost_approval_queue WHERE ticker = ?").run(cleanTicker);
+                pruneList.push(fullTicker);
+                ghostList.push({ ticker: cleanTicker, reason: pruneReason, state: 'PRUNING' });
+                db.prepare("UPDATE coin_lifecycles SET status = 'DEAD', death_at = ? WHERE ticker = ?").run(nowISO, cleanTicker);
+                console.log(`[GHOST-ENGINE] 🧹 ${cleanTicker} ghost window (${watchdogSettings.ghostHours}h) expired with no momentum, auto_approve=ON — auto-cleared from watchlist.`);
+            } else if (ghostWindowExpired && !autoApprove) {
+                // Manual mode: same window, but expiry recycles instead of
+                // removing — stays on the watchlist, clock restarts fresh.
+                // Unchanged from before.
                 db.prepare("DELETE FROM ghost_approval_queue WHERE ticker = ?").run(cleanTicker);
                 db.prepare("UPDATE coin_lifecycles SET clock_start_at = ?, status = 'ACTIVE' WHERE ticker = ?").run(nowISO, cleanTicker);
                 console.log(`[GHOST-ENGINE] 🔄 ${cleanTicker} ghost window (${watchdogSettings.ghostHours}h) expired with no momentum — reset to fresh, clock restarted.`);
             } else {
-                // Upsert into queue if not already there
+                // Still inside the watch window (or just entering it now) —
+                // queue it in EITHER mode. auto_approve no longer bypasses
+                // this step; it only changes what happens once the window
+                // later expires. Practical effect: the Ghost Coin widget is
+                // no longer silent in auto mode — a coin sitting in its 36h
+                // countdown is now visible there too, not just in manual mode.
                 if (!queuedGhost) {
                     db.prepare(`
                         INSERT INTO ghost_approval_queue (ticker, reason, queued_at, is_approved)
@@ -1780,14 +1811,14 @@ function generateScannerFeedback(clientWatchlistCount = -1) {
                         ON CONFLICT(ticker) DO UPDATE SET reason = excluded.reason
                     `).run(cleanTicker, pruneReason, nowISO);
 
-                    // 📣 Telegram: ghost queued — new coin needs approval (Phase 1 gap fix)
+                    // 📣 Telegram: ghost queued — new coin needs review/watching
                     setImmediate(() => {
                         try {
-                            TelegramService.onGhostQueued({ ticker: cleanTicker, reason: pruneReason });
+                            TelegramService.onGhostQueued({ ticker: cleanTicker, reason: pruneReason, autoApprove });
                         } catch (e) { console.error('[Ghost] Telegram hook error:', e.message); }
                     });
                 }
-                ghostList.push({ ticker: cleanTicker, reason: pruneReason, state: 'WAITING' });
+                ghostList.push({ ticker: cleanTicker, reason: pruneReason, state: autoApprove ? 'AUTO_WATCHING' : 'WAITING' });
                 db.prepare("UPDATE coin_lifecycles SET status = 'GHOST' WHERE ticker = ?").run(cleanTicker);
             }
         } else {
