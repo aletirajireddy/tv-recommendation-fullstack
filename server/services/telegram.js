@@ -143,7 +143,18 @@ class TelegramService {
     }
 
     _markTickerAlerted(ticker) {
-        this.tickerLastAlerted.set(ticker, Date.now());
+        const now = Date.now();
+        this.tickerLastAlerted.set(ticker, now);
+        // 2026-09-16: unlike knownTickers (which already prunes 24h-stale entries
+        // a few lines up), this Map had no eviction at all — every distinct
+        // ticker ever alerted (including one-off zombie/contaminated tickers,
+        // see CLAUDE.md's ghost/prune audit notes) stayed in memory for the
+        // life of the process. Same 24h memory guard, applied lazily here
+        // rather than on its own timer, since this already runs on every alert.
+        const H24 = 24 * 60 * 60 * 1000;
+        for (const [tk, ts] of this.tickerLastAlerted) {
+            if (now - ts > H24) this.tickerLastAlerted.delete(tk);
+        }
     }
 
     // Format a price intelligently depending on magnitude
@@ -462,8 +473,35 @@ class TelegramService {
     async onFeedHealthCheck(streams) {
         for (const [stream, info] of Object.entries(streams || {})) {
             const label = FEED_HEALTH_LABELS[stream] || `Stream ${stream}`;
-            const isDown = info.status === 'stalled' || info.status === 'frozen';
+            // 2026-09-16: a 'frozen' status alone used to always count as "down" —
+            // but as of the same day's peer-corroboration work, 'frozen' can mean
+            // either an isolated per-ticker data issue (most other tickers ARE
+            // moving — already self-healing via the ghost-prune redemption window,
+            // no human action needed) or a genuine tab-wide freeze (needs a human).
+            // Without this, a handful of isolated frozen tickers (the exact live
+            // case found 2026-09-16: 6-8/28 Stream A tickers, tabLikelyAlive=true)
+            // would fire an hourly "DATA FEED DOWN" HIGH-tier alert for something
+            // already correctly handled elsewhere — the alert-fatigue problem this
+            // whole signal exists to prevent. Only tabLikelyAlive === true (a
+            // positive confirmation peers are moving) downgrades this; unknown
+            // (null, e.g. no ticker data at all) still alerts, failing safe.
+            const isIsolatedFreeze = info.status === 'frozen' && info.tabLikelyAlive === true;
+            const isDown = info.status === 'stalled' || (info.status === 'frozen' && !isIsolatedFreeze);
             const wasDown = this.feedHealthWasDown.get(stream) || false;
+
+            if (isIsolatedFreeze) {
+                // Not "down" — clear any previous down-state so a real recovery
+                // message doesn't fire later for something that was never
+                // announced as broken, but don't alert now either. Visible
+                // already in the Ghost Coin widget / dashboard; a push
+                // notification for a self-healing, non-urgent situation would
+                // just be noise.
+                if (wasDown) {
+                    this.feedHealthWasDown.set(stream, false);
+                    this.feedHealthLastAlertedAt.delete(stream);
+                }
+                continue;
+            }
 
             if (isDown) {
                 const lastAlertedAt = this.feedHealthLastAlertedAt.get(stream) || 0;
