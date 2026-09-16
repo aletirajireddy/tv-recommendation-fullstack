@@ -463,8 +463,19 @@
     *(End of Document)*
 
     ### Rule #23: The Ghost Coin Gatekeeper Protocol
+    > **2026-09-16 correction**: point 1 below describes the ORIGINAL design.
+    > It was redesigned that day — Auto Mode no longer bypasses the queue.
+    > Both modes now share the same `ghost_hours` redemption window (default
+    > 36h, on top of a 12h settle gate); only the OUTCOME at expiry differs
+    > (Auto Mode actually removes the coin, Manual Mode recycles it). See
+    > CLAUDE.md's "Watchdog Confidence Clock" → "2026-09-16 redesign" for the
+    > current authoritative design — this file was not fully rewritten to
+    > match, only flagged, since it predates the confidence-clock work
+    > (2026-08-18) by a wide margin and several other sections here may carry
+    > the same kind of drift.
+
     Standard autonomous systems fail by either being too "trigger-happy" (aggressive pruning) or too "bloated" (keeping dead weight). The Gatekeeper Protocol balances this.
-    1.  **Approval vs. Auto-Prune**: 
+    1.  **Approval vs. Auto-Prune** *(superseded 2026-09-16 — see correction above)*:
         *   **Manual Mode (Default)**: Identified ghosts are held in a `ghost_approval_queue` table. They are **HELD** in the watchlist but surface in the widget for human execution.
         *   **Auto Mode**: Enabled via a toggle. Bypasses the queue for immediate legacy-style pruning.
     2.  **The Double Rescue (Live Immunity)**:

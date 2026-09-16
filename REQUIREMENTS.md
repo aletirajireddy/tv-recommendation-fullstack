@@ -279,11 +279,12 @@ All widgets live in `client/src/components/AnalyticsWidgets/` and follow the sam
 - [x] **Poll**: 5 min auto-refresh.
 
 #### 6.6 GhostCoinWidget
-- [x] **Confidence score bar**: Per coin with breakdown tooltip (base_win_rate, regime_mood, regime_multiplier, sample_count).
-- [x] **Per-ticker scoring**: `validation_trials` direct query with recency-weighted win rate (priority), falls back to `pattern_statistics`.
-- [x] **Auto-Prune toggle**: Configurable automatic ghost pruning.
-- [x] **Bulk actions**: Prune All / Approve All buttons.
-- [x] **Poll**: 60s.
+- [x] **Confidence score bar**: Per coin, 0–100 scale, with breakdown tooltip (base_win_rate, regime_mood + direction, regime_multiplier, sample_count).
+- [x] **Per-ticker scoring**: `validation_trials` direct query with recency-weighted win rate (priority), falls back to `pattern_statistics`, then global average.
+- [x] **Auto-Prune toggle**: Governs the *outcome* of a coin's ghost window at expiry — removed (ON) vs. recycled (OFF) — not whether it gets a window at all.
+- [x] **Unified 48h redemption window** (2026-09-16): every flagged coin gets the same 12h settle + 36h ghost window regardless of mode; widget is no longer silent in auto mode, with a live per-row "auto-clears in Xh Ym" / "resets in Xh Ym" countdown.
+- [x] **Bulk actions**: Approve All (works in both modes now, labeled "Prune Now" in auto mode).
+- [x] **Poll**: 30s, socket-driven refresh on `ghost-update`.
 
 #### 6.7 SmartAlertsWidget
 - [x] **Alert list**: Ticker, TF, direction (LONG/SHORT/BOTH), ATR multiplier, active toggle, edit/delete actions.

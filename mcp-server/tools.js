@@ -659,13 +659,89 @@ async function getCoinLifecycles(status) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TOOL 15 — get_ghost_approval_queue
+//
+// 2026-09-16: previously a raw `SELECT *` with no context — an agent had no
+// way to tell, from this alone, what actually happens to a queued coin or
+// when. Enhanced to match the 2026-09-16 ghost-window redesign (see
+// CLAUDE.md "Watchdog Confidence Clock" -> "2026-09-16 redesign"): both
+// ghost_auto_approve modes now share the same ghost_hours redemption window
+// (default 36h, on top of a 12h settle_hours gate elsewhere) -- only the
+// OUTCOME at expiry differs by mode. Each row now carries the same
+// remaining-time / outcome computation the widget itself shows, plus
+// whitelist status (whitelisted coins are immune regardless of the numbers).
 // ─────────────────────────────────────────────────────────────────────────────
 async function getGhostApprovalQueue() {
     try {
-        const rows = db.prepare(
-            'SELECT * FROM ghost_approval_queue WHERE is_approved = 0 ORDER BY queued_at DESC'
-        ).all();
-        return { count: rows.length, queue: rows };
+        const autoApproveRow = db.prepare(
+            "SELECT value FROM system_settings WHERE key = 'ghost_auto_approve'"
+        ).get();
+        const autoApprove = autoApproveRow ? autoApproveRow.value === '1' : false;
+
+        const ghostHoursRow = db.prepare(
+            "SELECT value FROM system_settings WHERE key = 'watchdog_ghost_hours'"
+        ).get();
+        const ghostHours = ghostHoursRow ? parseFloat(ghostHoursRow.value) : 36;
+        const ghostMs = ghostHours * 3600000;
+
+        const now = Date.now();
+        const rows = db.prepare(`
+            SELECT g.*, CASE WHEN w.ticker IS NOT NULL THEN 1 ELSE 0 END AS is_whitelisted
+            FROM ghost_approval_queue g
+            LEFT JOIN coin_whitelist w ON w.ticker = g.ticker
+            WHERE g.is_approved = 0
+            ORDER BY g.queued_at DESC
+        `).all().map(row => {
+            const ageMs = now - new Date(row.queued_at).getTime();
+            const remainingMs = Math.max(0, ghostMs - ageMs);
+            return {
+                ...row,
+                is_whitelisted: row.is_whitelisted === 1,
+                age_min: Math.floor(ageMs / 60000),
+                remaining_min: row.is_whitelisted ? null : Math.round(remainingMs / 60000),
+                // What happens if nothing changes and the window closes as-is.
+                // Whitelisted coins never reach this regardless of mode.
+                outcome_at_expiry: row.is_whitelisted
+                    ? 'protected (whitelisted — immune)'
+                    : autoApprove
+                        ? 'removed from watchlist'
+                        : 'recycled (clock resets, stays on watchlist)',
+            };
+        });
+
+        return {
+            count: rows.length,
+            ghost_auto_approve: autoApprove,
+            ghost_hours: ghostHours,
+            queue: rows,
+        };
+    } catch(e) { return { error: e.message }; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOOL — get_watchdog_settings (2026-09-16)
+//
+// Surfaces the confidence-clock / ghost-window settings in one call instead
+// of requiring raw SQL against system_settings for each key. Mirrors
+// server/index.js's _getWatchdogSettings() for the prune-relevant subset
+// (the Automa workflow-ID fields live there too but aren't included here —
+// out of scope for ghost/prune analysis, use run_readonly_sql_query against
+// system_settings directly if those are ever needed).
+// ─────────────────────────────────────────────────────────────────────────────
+async function getWatchdogSettings() {
+    try {
+        const get = (key) => db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key)?.value;
+        const num = (key, def) => { const v = parseFloat(get(key)); return isFinite(v) ? v : def; };
+        return {
+            ghost_auto_approve:     get('ghost_auto_approve') === '1',
+            settle_hours:           num('watchdog_settle_hours', 12),
+            ghost_hours:            num('watchdog_ghost_hours', 36),
+            momentum_hours:         num('watchdog_momentum_hours', 2),
+            gap_tolerance_min:      num('watchdog_gap_tolerance_min', 15),
+            fresh_session_veto_mode: get('fresh_session_veto_mode') || 'bypass',
+            // Informational — total window from a coin's own clock_start_at to a
+            // possible removal, at current settings, if ghost_auto_approve is ON.
+            total_window_hours_if_auto: num('watchdog_settle_hours', 12) + num('watchdog_ghost_hours', 36),
+        };
     } catch(e) { return { error: e.message }; }
 }
 
@@ -1574,6 +1650,7 @@ module.exports = {
     getTrialDetails,
     getCoinLifecycles,
     getGhostApprovalQueue,
+    getWatchdogSettings,
     queryMasterCoinStore,
     getTrialFullContext,
     // NEW v2

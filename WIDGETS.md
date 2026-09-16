@@ -593,123 +593,160 @@ This replaces two correlated subqueries per coin that caused "today" to show bla
 **File**: `client/src/components/AnalyticsWidgets/GhostCoinWidget.jsx`
 **CSS**: `GhostCoinWidget.module.css`
 
+> This section was fully rewritten 2026-09-16 — the previous version described
+> a `confidence_score` 0.0–1.0 scale, `/api/ghosts/prune` and `/api/ghosts/prune-all`
+> endpoints, and threshold-based auto-prune, none of which match the actual
+> implementation (predates the Watchdog Confidence Clock, 2026-08-18, by a wide
+> margin). See CLAUDE.md's "Watchdog Confidence Clock" and
+> "2026-09-16 redesign" sections for the full narrative — this section covers
+> the widget/API contract only.
+
 ### Purpose
 
-Manages the ghost approval queue — a holding area for coins that have left active trading but are not yet permanently removed from the system. Each ghost coin has a confidence score derived from its personal trading history, allowing informed approval or pruning decisions.
+Manages the ghost approval queue — coins that failed their prune-eligibility
+judgment (Frozen / Sustained Low Score / Ghost Volume) and are sitting in a
+shared redemption window before a final outcome (removed or recycled). As of
+the 2026-09-16 redesign, this window applies in **both**
+`ghost_auto_approve` modes — the widget is no longer silent in auto mode.
 
 ### API Endpoints
 
-**Queue data**:
+**Queue data** (also runs a fresh re-score pass and evicts any stale
+whitelisted entries before responding):
 ```
 GET /api/ghosts/queue
+→ { auto_approve: boolean, queue: [...] }
 ```
 
-**Single coin approve**:
+**Approve a single coin** (prunes it immediately, bypassing the rest of its
+ghost-hours window — works in either mode):
 ```
 POST /api/ghosts/approve
-Body: { "ticker": "AVAX" }
+Body: { "ticker": "AVAXUSDT.P" }
 ```
 
-**Single coin prune**:
-```
-POST /api/ghosts/prune
-Body: { "ticker": "AVAX" }
-```
-
-**Bulk prune** (all below threshold):
-```
-POST /api/ghosts/prune-all
-Body: { "threshold": 0.5 }
-```
-
-**Bulk approve** (all above threshold):
+**Bulk approve** (approves every non-whitelisted queue entry immediately):
 ```
 POST /api/ghosts/approve-all
-Body: { "threshold": 0.65 }
 ```
+
+**Toggle auto-prune**:
+```
+POST /api/ghosts/toggle-auto
+Body: { "enabled": true }
+```
+
+**Watchdog settings** (settle/ghost/gap-tolerance/momentum hours, veto mode,
+tab-activate + sync-fallback config — see CLAUDE.md's "Settings API
+reference" for the full field list):
+```
+GET  /api/ghosts/watchdog-settings
+POST /api/ghosts/watchdog-settings
+```
+
+There is no `/api/ghosts/prune`, `/api/ghosts/prune-all`, or threshold body
+param on any endpoint — pruning is driven entirely by the confidence-clock
+evaluation inside `generateScannerFeedback()`, not by a client-supplied score
+cutoff.
 
 ### Queue Response Shape
 
 ```json
 {
+  "auto_approve": true,
   "queue": [
     {
-      "ticker": "AVAX",
-      "ghosted_at": 1714000000000,
-      "confidence_score": 0.61,
-      "base_win_rate": 0.68,
-      "regime_mood": "NEUTRAL_BULLISH",
-      "regime_multiplier": 0.9,
-      "sample_count": 7,
-      "last_scored_at": 1714003600000
+      "ticker": "AVAXUSDT.P",
+      "reason": "Sustained Low Score",
+      "queued_at": "2026-09-16T06:58:20.793Z",
+      "confidence_score": 61.2,
+      "score_breakdown": {
+        "base_win_rate": 68.0,
+        "regime_mood": "BULLISH",
+        "regime_multiplier": 1.15,
+        "direction_used": "LONG",
+        "sample_count": 7,
+        "confidence": "MEDIUM"
+      },
+      "is_whitelisted": false
     }
-  ],
-  "auto_prune_threshold": 0.4,
-  "auto_prune_enabled": false
+  ]
 }
 ```
 
 **Field Notes**:
-- `confidence_score`: Final blended score (0.0–1.0). Computed as `recencyWeightedWinRate * regimeMultiplier`, clamped to [0, 1].
-- `base_win_rate`: The per-ticker recency-weighted win rate from `validation_trials` (priority 1) or `pattern_statistics` (fallback). May differ from raw `winRate` due to exponential decay weighting.
-- `regime_multiplier`: Applied to `base_win_rate` to account for current market conditions. Derived from normalized `regime_mood` label.
-- `sample_count`: Number of resolved trials used to compute `base_win_rate`. Below 3 = fallback to `pattern_statistics`.
-- `auto_prune_threshold`: The system_settings threshold for automatic pruning (only applied when `auto_prune_enabled` is true).
+- `confidence_score`: 0–100 scale (not 0.0–1.0), rounded to 1 decimal. `base_win_rate × regime_multiplier × sample_confidence_weight`, capped to [0, 100]. See "Scoring Algorithm Reference" below.
+- `reason`: one of `"Frozen"`, `"Sustained Low Score"`, `"Ghost Volume"`, or `"No Momentum (Xh)"` (Momentum Watcher discard).
+- `queued_at`: when *this* coin first entered its ghost window — per-coin, not a shared timestamp. Combined with `watchdog_ghost_hours`, this is what the widget's per-row countdown counts down from.
+- `is_whitelisted`: coins on `coin_whitelist` are immune to ghost pruning; shown with a shield badge and excluded from bulk-approve counts, but a defensive belt-and-suspenders eviction also runs on every `GET` in case one was queued before being whitelisted.
+- `auto_approve`: current `ghost_auto_approve` setting — governs only what happens when a queued coin's window expires (see below), not whether it gets queued in the first place.
 
 ### Key Component State
 
 | State | Type | Description |
 |-------|------|-------------|
-| `queue` | array or null | Ghost queue data |
-| `autoPruneEnabled` | boolean | Toggle state for auto-prune feature |
-| `pendingAction` | string or null | Ticker currently being approved/pruned (for loading state) |
+| `queue` | array | Ghost queue data |
+| `autoApprove` | boolean | Current `ghost_auto_approve` setting, from `GET /api/ghosts/queue` |
+| `settingsOpen` | boolean | Watchdog settings panel (⚙) expanded/collapsed |
+| `settleHours`, `ghostHours`, `momentumHours`, `gapToleranceMin`, `watchlistMaxCoins`, `freshSessionVetoMode`, plus the tab-activate/sync-fallback fields | various | Live-editable watchdog settings, auto-save on blur |
+| `pruningSet` | Set | Tickers currently mid-approve (for row fade/loading state) |
+| `approvingAll` | boolean | Bulk-approve in flight |
 | `error` | Error or null | Last operation error |
 
 ### Render Structure
 
-1. **Header**: Widget title, coin count badge
-2. **Action bar**: Auto-Prune toggle switch, "Prune All" button (below threshold), "Approve All" button (above threshold)
-3. **Ghost coin list**: One row per coin:
-   - Ticker label
-   - Confidence score bar: horizontal bar (0–100%), colour-coded (green ≥ 0.65, amber 0.4–0.65, red < 0.4)
-   - Score percentage label (e.g., "61%")
-   - Score breakdown tooltip (hover): base_win_rate, regime_mood, regime_multiplier, sample_count, ghosted_at
-   - "Approve" button (green)
-   - "Prune" button (red)
-   - Ghosted-since label (age since `ghosted_at`)
+1. **Header**: Widget title, queue count badge, freshness chip, ⚙ settings toggle, Auto-Prune switch, and (when the queue is non-empty, either mode) an Approve-All/Prune-Now button — labeled "Prune X (Y protected)" when whitelisted coins are present, otherwise "Approve All" in manual mode or "Prune Now" in auto mode.
+2. **Settings panel** (⚙, collapsible): number inputs for every watchdog setting (settle/ghost/momentum hours, gap tolerance, watchlist cap, tab-activate thresholds per stream, sync-fallback escalation/cooldown) plus the Fresh Session veto-mode dropdown and the Fresh Session button + round-trip log — see CLAUDE.md for what each field does.
+3. **Ghost coin list**: One row per queued coin:
+   - Ticker label, PROTECTED shield badge if whitelisted
+   - Reason + age (`{reason} · {ageMin}m ago`)
+   - **Countdown line** (2026-09-16, hidden for whitelisted rows): `auto-clears in Xh Ym` (auto mode) or `resets in Xh Ym` (manual mode), computed from `ghostHours * 60 - ageMin`; turns amber and reads "due now" once expired
+   - Confidence score bar (0–100%) with breakdown on the score line (win rate, regime, direction, sample count)
 
 ### Scoring Algorithm Reference
 
-The `GhostScoringEngine` (backend, `server/services/GhostScoringEngine.js`) scores coins as follows:
+The `GhostScoringEngine` (backend, `server/services/GhostScoringEngine.js`) scores coins as follows — all components normalized 0–100:
 
-1. **Priority 1 — Per-ticker trial history** (requires ≥ 3 resolved trials):
-   ```
-   weight_i = exp(-days_ago_i / 14)
-   score = Σ(weight_i * isConfirmed_i) / Σ(weight_i)
-   ```
-   Half-life = 14 days. More recent trials have higher weight.
+1. **base_win_rate** (priority order):
+   a. Per-ticker recency-weighted win rate from `validation_trials`, when ≥ 5 resolved trials exist:
+      ```
+      weight_i = exp(-days_ago_i / 14)   // 14-day half-life
+      win_rate = Σ(weight_i * isConfirmed_i) / Σ(weight_i) × 100
+      ```
+   b. Fallback — best matching `pattern_statistics` row for the ticker's last direction, when per-ticker data is sparse.
+   c. Last resort — global average win rate when no stats exist at all.
 
-2. **Priority 2 — Pattern statistics fallback**:
-   ```
-   score = pattern_statistics.win_rate
-         WHERE direction = ticker.direction
-           AND has_vol = ticker.has_vol
-           AND ema_state = ticker.ema_state
-   ```
+2. **regime_multiplier** (0.5–1.5), from the latest `raw_market_sentiment_log` mood, direction-aware (a LONG confidence-boosts in a bullish regime, a SHORT confidence-boosts in a bearish one — see the `REGIME_MULTIPLIERS` table in the source for the full STRONGLY_BULLISH…PANIC × LONG/SHORT matrix).
 
-3. **Regime multiplier** (applied to both paths):
-   ```
-   normalized_mood = rawMood.replace(/\s+/g, '_').toUpperCase()
-   multiplier = REGIME_MULTIPLIERS[normalized_mood] ?? 1.0
-   final_score = clamp(score * multiplier, 0, 1)
-   ```
+3. **sample_confidence_weight** (0.6–1.0): scales down when `sample_count < 20`, full weight at 20+.
+
+`final_score = clamp(base_win_rate × regime_multiplier × sample_confidence_weight, 0, 100)`, rounded to 1dp. `CONFIDENCE_LABEL`: HIGH ≥72, MEDIUM ≥52, LOW ≥35, else VERY_LOW.
+
+### The Ghost Window (2026-09-16 redesign)
+
+A coin enters the queue when it fails its confidence-clock judgment (see
+CLAUDE.md's "Watchdog Confidence Clock") — `settle_hours` (default 12h) must
+have passed since that coin's own `clock_start_at` first. From there, both
+`ghost_auto_approve` modes now share the same `ghost_hours` (default 36h)
+redemption window, measured from that coin's own `queued_at`:
+
+| Outcome | `ghost_auto_approve` ON | `ghost_auto_approve` OFF |
+|---|---|---|
+| Momentum returns before the window closes | Rescued — pulled from queue, confidence clock resets to 0 | Same |
+| A human clicks Approve, any time | Pruned immediately | Same |
+| Window expires with no rescue | **Removed from the watchlist** | Recycled — clock resets, **stays on the watchlist** |
+
+Total time from a coin's own clock start to a possible removal, at the
+defaults: 12h + 36h = 48h — always per-coin, never a shared calendar window.
+Manual mode still never auto-removes a coin on its own; a persistently
+non-performing coin there can cycle through repeated windows indefinitely
+until a human approves it or a Fresh Session resets everything.
 
 ### Performance Notes
 
-- Poll: 60s.
-- Approve/Prune actions call mutating POST endpoints then immediately re-fetch the queue (optimistic update not used — server is source of truth for re-score).
-- Bulk actions include confirmation via `window.confirm` before sending the request.
-- Scores are re-computed server-side on every `GET /api/ghosts/queue` call — always fresh.
+- Poll: 30s (`fetchQueue`, `setInterval`) plus immediate reload on any socket `ghost-update`/`market-context-update` event and on viewport-priority invalidation (`useDataInvalidation`) — the 30s interval is the safety-net fallback, not the primary refresh path.
+- `GhostScoringEngine.scoreAllGhosts()` re-scores the whole queue in a transaction on every `GET` — typically <5ms, always fresh, no caching needed.
+- Approve/Approve-All call their mutating endpoint then immediately re-fetch the queue (server is source of truth for the post-action state, no optimistic update).
 
 ---
 

@@ -341,6 +341,14 @@ Pine Script data-quality issue on that specific symbol, not a systemic freeze.
 | `tv-client` | **5173** | `vite preview` serving `client/dist`. Proxies all `/api`, `/socket.io`, `/health`, `/scan-report`, `/mcp` to backend. |
 | `mcp-server` | **3001** | MCP server. Accessible via proxy at `/mcp`. |
 
+**MCP tools** (`mcp-server/tools.js` + registrations in `mcp-server/index.js`) let an
+agent query the live DB read-only without hand-writing SQL each time — full list and
+schemas live in `index.js`, not duplicated here. `get_ghost_approval_queue` and
+`get_watchdog_settings` (2026-09-16) were updated/added to match the ghost-window
+redesign below — `get_ghost_approval_queue` now returns per-coin `age_min`,
+`remaining_min`, and `outcome_at_expiry` instead of a raw table dump, and
+`get_watchdog_settings` surfaces settle/ghost/momentum/gap-tolerance hours in one call.
+
 **How requests flow through Tailscale:**
 ```
 https://desktop-c92c19n.tailbf6529.ts.net  →  port 5173 (tv-client / vite preview)

@@ -220,7 +220,12 @@ function createMcpServer() {
             },
             {
                 name: "get_ghost_approval_queue",
-                description: "Returns coins awaiting manual GHOST approval with confidence_score and score_breakdown. GHOST means the algo has identified them as dead/inactive momentum coins pending human confirmation.",
+                description: "Returns coins that failed their confidence-clock judgment (Frozen / Sustained Low Score / Ghost Volume / no momentum) and are sitting in a shared ghost_hours redemption window (default 36h) before a final outcome.\n\n2026-09-16 redesign: this window now applies in BOTH ghost_auto_approve modes -- it is NOT 'awaiting manual approval' by itself. Each row includes age_min, remaining_min, and outcome_at_expiry ('removed from watchlist' | 'recycled (clock resets, stays on watchlist)' | 'protected (whitelisted -- immune)') so you can tell exactly what happens and when, per coin. Top-level ghost_auto_approve and ghost_hours give the mode/window currently in effect. Use get_watchdog_settings for the full settle/ghost/momentum/gap-tolerance picture.",
+                inputSchema: { type: "object", properties: {} }
+            },
+            {
+                name: "get_watchdog_settings",
+                description: "Returns the confidence-clock / ghost-window settings in one call: settle_hours (age before a coin is ever judged), ghost_hours (redemption window after failing judgment -- both ghost_auto_approve modes as of 2026-09-16), momentum_hours (post-graduation grace window), gap_tolerance_min (scan gap that triggers a system-wide clock reset), ghost_auto_approve, fresh_session_veto_mode, and total_window_hours_if_auto (settle+ghost combined -- the worst-case time from a coin's own clock start to actual removal when auto-prune is ON).",
                 inputSchema: { type: "object", properties: {} }
             },
 
@@ -466,6 +471,7 @@ function createMcpServer() {
                 case 'get_master_watchlist':    result = await tools.getMasterWatchlist(); break;
                 case 'get_coin_lifecycles':     result = await tools.getCoinLifecycles(args?.status); break;
                 case 'get_ghost_approval_queue': result = await tools.getGhostApprovalQueue(); break;
+                case 'get_watchdog_settings':    result = await tools.getWatchdogSettings(); break;
 
                 // NEW v4 — Composite momentum & cascade
                 case 'get_momentum_pulse':       result = await tools.getMomentumPulse(args || {}); break;

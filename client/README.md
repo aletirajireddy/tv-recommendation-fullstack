@@ -147,9 +147,9 @@ Embedded inside each 3rd Umpire trial card. Shows real price data for the trial'
 7-day performance calendar. Each day cell shows market mood, mood score, trial count, win rate, and top gainer/loser. Clicking a cell opens a drill modal with a full per-coin heatmap (open/close/day change/range/trials/win rate/verdict mix), all sortable. A `DrillErrorBoundary` prevents single bad rows from blanking the modal.
 
 ### 6. GhostCoinWidget
-**File**: `GhostCoinWidget.jsx` | **API**: `GET /api/ghosts/queue` + mutating POST endpoints | **Poll**: 60s
+**File**: `GhostCoinWidget.jsx` | **API**: `GET /api/ghosts/queue` + `POST /api/ghosts/approve[-all]`, `/toggle-auto`, `/watchdog-settings` | **Poll**: 30s + socket-driven
 
-Ghost approval queue for coins leaving the active watchlist. Each coin has a confidence score bar with a breakdown tooltip (base win rate, regime mood, multiplier, sample count). Scores are computed per-ticker from actual trial history (recency-weighted, 14-day half-life exponential decay) with fallback to pattern statistics. Supports single approve/prune actions and bulk Approve All / Prune All with confirmation.
+Ghost approval queue for coins that failed their confidence-clock judgment (Frozen / Sustained Low Score / Ghost Volume / no momentum). Each coin gets a shared `ghost_hours` redemption window (default 36h, on top of a 12h settle gate — 48h total, per-coin) regardless of `ghost_auto_approve` mode as of the 2026-09-16 redesign; only the outcome at expiry differs — auto mode actually removes the coin, manual mode recycles it (resets the clock, stays on the watchlist). Each row shows a confidence score bar (0–100, from `GhostScoringEngine` — win rate × regime multiplier × sample weight) and a live countdown ("auto-clears in Xh Ym" / "resets in Xh Ym"). Approve/Approve-All prune immediately in either mode, bypassing the rest of the window. See CLAUDE.md's "Watchdog Confidence Clock" for the full design.
 
 ---
 
@@ -158,9 +158,9 @@ Ghost approval queue for coins leaving the active watchlist. Each coin has a con
 | Method | Endpoint | Widget |
 |--------|----------|--------|
 | POST | `/scan-report` | Stream A ingest |
-| POST | `/api/stream/b-heartbeat` | Stream B ingest |
-| POST | `/api/stream/c-alert` | Stream C ingest |
-| POST | `/api/stream/d-technicals` | Stream D ingest |
+| POST | `/api/market-context` | Stream B ingest |
+| POST | `/api/webhook/smart-levels` | Stream C ingest |
+| POST | `/api/stream-d/technicals` | Stream D ingest |
 | GET | `/api/ema-cascade?ticker&window_min&interval` | EMACascadeMonitor |
 | GET | `/api/ema-distance-board?limit&max_dist&active_min` | DistanceTracker |
 | GET | `/api/level-reactions?window_min&interval&limit&max_dist` | LevelReactionWidget |
@@ -172,9 +172,9 @@ Ghost approval queue for coins leaving the active watchlist. Each coin has a con
 | GET | `/api/calendar/day/:date` | DailyCalendarWidget (drill) |
 | GET | `/api/ghosts/queue` | GhostCoinWidget |
 | POST | `/api/ghosts/approve` | GhostCoinWidget |
-| POST | `/api/ghosts/prune` | GhostCoinWidget |
-| POST | `/api/ghosts/prune-all` | GhostCoinWidget |
 | POST | `/api/ghosts/approve-all` | GhostCoinWidget |
+| POST | `/api/ghosts/toggle-auto` | GhostCoinWidget |
+| GET/POST | `/api/ghosts/watchdog-settings` | GhostCoinWidget (⚙ panel) |
 
 ---
 

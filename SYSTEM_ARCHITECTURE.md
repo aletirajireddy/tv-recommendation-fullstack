@@ -769,40 +769,55 @@ The Analytics Widget Layer is a collection of standalone React components that e
 
 ### Widget 6: GhostCoinWidget (`GhostCoinWidget.jsx`)
 
-**Purpose**: Manages the ghost approval queue — coins leaving the active watchlist that need a confidence review before being permanently dropped.
+> Rewritten 2026-09-16 — see WIDGETS.md's Widget 6 section for the full
+> contract and CLAUDE.md's "Watchdog Confidence Clock" / "2026-09-16
+> redesign" for the narrative. The previous version of this section
+> described a pre-confidence-clock API shape (`/api/ghosts/prune`,
+> 0.0–1.0 score scale) that no longer exists.
 
+**Purpose**: Manages the ghost approval queue — coins that failed their
+prune-eligibility judgment and are sitting in a shared `ghost_hours`
+redemption window (default 36h) before a final outcome. As of the
+2026-09-16 redesign this window — and the widget's visibility into it —
+applies in **both** `ghost_auto_approve` modes, not just manual.
 
 **API Endpoints**:
-- `GET /api/ghosts/queue` — full queue with re-scored confidence
-- `POST /api/ghosts/approve` — approve a single coin
-- `POST /api/ghosts/prune` — prune a single coin
-- `POST /api/ghosts/prune-all` — bulk prune below threshold
-- `POST /api/ghosts/approve-all` — bulk approve above threshold
+- `GET /api/ghosts/queue` — `{ auto_approve, queue: [...] }`, re-scores the whole queue first
+- `POST /api/ghosts/approve` — approve one coin, prunes immediately (either mode)
+- `POST /api/ghosts/approve-all` — bulk approve every non-whitelisted entry
+- `POST /api/ghosts/toggle-auto` — flip `ghost_auto_approve`
+- `GET`/`POST /api/ghosts/watchdog-settings` — settle/ghost/momentum hours, gap tolerance, veto mode, tab-activate + sync-fallback config
 
 **Queue Response Shape**:
 ```json
 {
+  "auto_approve": true,
   "queue": [
     {
-      "ticker": "AVAX",
-      "ghosted_at": 1714000000000,
-      "confidence_score": 0.61,
-      "base_win_rate": 0.68,
-      "regime_mood": "NEUTRAL_BULLISH",
-      "regime_multiplier": 0.9,
-      "sample_count": 7,
-      "last_scored_at": 1714003600000
+      "ticker": "AVAXUSDT.P",
+      "reason": "Sustained Low Score",
+      "queued_at": "2026-09-16T06:58:20.793Z",
+      "confidence_score": 61.2,
+      "score_breakdown": { "base_win_rate": 68.0, "regime_mood": "BULLISH", "regime_multiplier": 1.15, "direction_used": "LONG", "sample_count": 7, "confidence": "MEDIUM" },
+      "is_whitelisted": false
     }
   ]
 }
 ```
+`confidence_score` is 0–100 (not 0.0–1.0). `queued_at` is per-coin — that plus `watchdog_ghost_hours` is what the widget's row countdown counts down from.
 
 **Key Features**:
-- Confidence score bar per coin (0–100%) with score breakdown tooltip: base_win_rate, regime_mood, regime_multiplier, sample_count
-- Per-ticker scoring: queries `validation_trials` directly (recency-weighted, 14-day half-life) before falling back to `pattern_statistics`
-- Auto-Prune toggle: when enabled, coins below confidence threshold are pruned automatically on next ghost check cycle
-- Prune All / Approve All bulk action buttons with confirmation prompt
-- Poll interval: 60s
+- Confidence score bar per coin (0–100) with breakdown: base_win_rate, regime_mood + direction, regime_multiplier, sample_count
+- Per-ticker scoring: `validation_trials` direct query (recency-weighted, 14-day half-life, needs ≥5 resolved trials) → `pattern_statistics` fallback → global average last resort
+- Per-row countdown: "auto-clears in Xh Ym" (auto mode) or "resets in Xh Ym" (manual mode) — the outcome at expiry genuinely differs by mode (removed vs. recycled), see below
+- Approve-All/Prune-Now button works in both modes now (label changes by mode) — previously hidden entirely in auto mode, back when auto mode never produced queue entries at all
+- Poll: 30s, with immediate socket-driven refresh on `ghost-update`/`market-context-update`
+
+**The ghost window, by mode** (total 12h settle + 36h ghost = 48h at the defaults, always per-coin):
+
+| At window expiry | `ghost_auto_approve` ON | OFF |
+|---|---|---|
+| No momentum returned | Removed from the watchlist | Recycled — clock resets, stays on the watchlist |
 
 ### Widget 7: SmartAlertsWidget (`SmartAlertsWidget.jsx`)
 
