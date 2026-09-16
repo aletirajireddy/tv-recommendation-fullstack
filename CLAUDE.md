@@ -341,6 +341,18 @@ Pine Script data-quality issue on that specific symbol, not a systemic freeze.
 | `tv-client` | **5173** | `vite preview` serving `client/dist`. Proxies all `/api`, `/socket.io`, `/health`, `/scan-report`, `/mcp` to backend. |
 | `mcp-server` | **3001** | MCP server. Accessible via proxy at `/mcp`. |
 
+> **⚠️ PORT RESERVATION — DO NOT REASSIGN (2026-09-16)**
+> `3000` (backend/webhooks), `5173` (frontend), and `3001` (MCP) are fixed and
+> load-bearing — Tampermonkey scripts POST directly to `3000` by hardcoded URL,
+> the Vite proxy config points at these exact ports (`client/vite.config.js`),
+> and Tailscale Funnel's external routing assumes them (see the request-flow
+> diagram above). **Never repurpose an existing port for a new capability,
+> including future MCP work** — if something new needs a port, pick an unused
+> one and add it to this table; don't reassign `3000`/`5173`/`3001` to
+> anything else. The dev-instance ports (`3010`/`5174`/`3011` below) are the
+> existing pattern for "I need a parallel instance" — reuse that pattern
+> rather than inventing a new scheme.
+
 **MCP tools** (`mcp-server/tools.js` + registrations in `mcp-server/index.js`) let an
 agent query the live DB read-only without hand-writing SQL each time — full list and
 schemas live in `index.js`, not duplicated here. `get_ghost_approval_queue` and
@@ -1485,6 +1497,12 @@ pm2 start ecosystem.config.js --only tv-client
 
 > **PM2 orphan warning**: On Windows, rapid `pm2 restart` can leave orphan Node processes holding ports.
 > If EADDRINUSE persists after restart, kill all PIDs on ports 3000 and 5173 first (see above), then do a fresh start.
+> **Confirmed live 2026-09-16**: a `pm2 restart tv-backend` hit exactly this — the new process couldn't
+> bind :3000, pm2 auto-respawned it in a tight loop (25 restarts in seconds), each spawn leaving another
+> orphan `node.exe` still holding the port. Fix that worked: `pm2 stop tv-backend` first (halts the
+> respawn loop), then find+kill the PID(s) on :3000 (`Get-NetTCPConnection -LocalPort 3000 -State Listen`
+> in PowerShell), confirm the port is free, then `pm2 delete tv-backend` + `pm2 start ecosystem.config.js
+> --only tv-backend` — a plain `restart` on an already-wedged process just re-triggers the same race.
 
 ### Force PM2 to pick up new env vars from ecosystem.config.js
 
