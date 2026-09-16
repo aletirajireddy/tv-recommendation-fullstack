@@ -1221,10 +1221,53 @@ const STREAM_LAST_WRITE_QUERIES = {
     },
 };
 
+// 2026-09-16: user feedback — the tab-activate coordinator's whole priority
+// scheme was based purely on raw last-write timestamp age, with zero
+// awareness of whether those writes actually carried genuine, moving data.
+// A tab can keep firing its scan-click timer on schedule (fresh timestamps
+// every cycle) while reading a frozen/stuck DOM — the exact "looks healthy
+// by lastWriteAgeMinutes alone" trap this whole feed-health system exists to
+// catch (see CLAUDE.md's "Verifying real data flow" methodology). Without
+// this, that tab would NEVER get prioritized for reactivation, since its
+// timestamp always looks fresh — it needs a reload/reactivation MORE than a
+// stream that's gone silent, not less.
+//
+// Reuses the same feed-health cache the /api/system/feed-health route and
+// the 15-minute FEED HEALTH ALERTING background job both populate
+// (_feedHealthCache) — this runs on every Stream A/B/D ingest (a hot path
+// across 3 endpoints), so it must never trigger a fresh _computeFeedHealth()
+// call itself. Deliberately NOT gated on FEED_HEALTH_CACHE_TTL (30s) — that's
+// calibrated for the interactive dashboard endpoint, but the only thing
+// reliably refreshing this cache in the background is the 15-minute alerting
+// job, so a 30s staleness bound would make this signal "stale" (and silently
+// unused) for nearly the entire 15-minute gap between refreshes. A tab's
+// genuine-data-health status doesn't change minute-to-minute anyway (the
+// freeze detector itself needs 20+ min of unchanged data before it even
+// triggers) — a health read up to ~20min old is still meaningfully current
+// for this purpose, so that's the bound used here instead.
+const STREAM_DATA_HEALTH_MAX_AGE_MS = 20 * 60 * 1000;
+function _getStreamDataHealthy(stream) {
+    if (!_feedHealthCache.data || (Date.now() - _feedHealthCache.ts) >= STREAM_DATA_HEALTH_MAX_AGE_MS) {
+        return null; // unknown — cache is cold/too old, don't force a recompute here
+    }
+    const summary = _feedHealthCache.data.streams?.[stream];
+    return summary ? summary.tabLikelyAlive : null; // true | false | null
+}
+
 function _getStreamAgeMin(stream) {
     const raw = STREAM_LAST_WRITE_QUERIES[stream]();
     if (!raw) return Infinity; // never written at all — maximally stale
-    return (Date.now() - new Date(raw).getTime()) / 60000;
+    const rawAgeMin = (Date.now() - new Date(raw).getTime()) / 60000;
+
+    // Data-health override: a stream whose recent writes are confirmed mostly
+    // frozen (tabLikelyAlive === false) is treated as at least as urgent as
+    // one that's gone completely silent — inflate its effective age past any
+    // realistic threshold so the coordinator prioritizes it for reactivation
+    // even though its raw timestamp looks fine.
+    if (_getStreamDataHealthy(stream) === false) {
+        return Math.max(rawAgeMin, 9999);
+    }
+    return rawAgeMin;
 }
 
 // 2026-09-11: wait-and-listen handshake + failure backoff, per user's
@@ -3482,6 +3525,18 @@ function _summarizeStream(tickerRowsMap, fields, freezeThresholdMin, nowMs) {
     const frozenTickers = [];
     let latestWriteMs = 0;
     let totalTickers = 0;
+    // 2026-09-16: peer-corroboration signal — user feedback: a low-priced coin
+    // (e.g. close ~0.00413) can round/truncate to the same displayed value
+    // across ticks while the real underlying price is still moving, making a
+    // single ticker's own history an ambiguous freeze signal on its own. The
+    // fix isn't to trust one ticker's numbers harder — it's to check whether
+    // OTHER tickers in the same batch are genuinely moving. If most peers are
+    // moving, a specific frozen ticker is a real per-ticker data problem
+    // (Pine Script indicator error etc, not a tab-wide freeze). If almost
+    // NOTHING is moving, that's evidence the whole tab may be stuck
+    // (backgrounded/crashed) — a different, more severe problem that needs
+    // tab activation/reload, not per-coin pruning.
+    let movingTickerCount = 0;
     for (const [ticker, rowsAsc] of Object.entries(tickerRowsMap)) {
         if (rowsAsc.length === 0) continue;
         totalTickers++;
@@ -3497,9 +3552,15 @@ function _summarizeStream(tickerRowsMap, fields, freezeThresholdMin, nowMs) {
                 lastWriteAgeMinutes: Math.round((nowMs - latestMs) / 60000),
                 values: w.sample,
             });
+        } else {
+            movingTickerCount++; // genuinely fresh within this window — a "peer is alive" vote
         }
     }
     frozenTickers.sort((a, b) => b.frozenMinutes - a.frozenMinutes);
+    // Ratio-based read on tab health: if most tracked tickers are moving, the
+    // tab is confirmed alive and any frozen entries are isolated per-ticker
+    // issues. If almost nothing is moving, treat it as tab-wide, not per-coin.
+    const tabLikelyAlive = totalTickers === 0 ? null : (movingTickerCount / totalTickers) >= 0.3;
     const lastWriteAgeMinutes = latestWriteMs ? Math.round((nowMs - latestWriteMs) / 60000) : null;
     // "stalled" = the whole stream hasn't written anything in a long time (different
     // symptom than a specific ticker being frozen — both matter, both surfaced).
@@ -3517,6 +3578,13 @@ function _summarizeStream(tickerRowsMap, fields, freezeThresholdMin, nowMs) {
         status,
         totalTickers,
         frozenTickers,
+        // 2026-09-16 additions — additive only, existing `status` contract
+        // (healthy|stalled|frozen) is unchanged so nothing downstream that
+        // switches on it (e.g. DataFeedHealthWidget's STATUS_META map) breaks.
+        movingTickerCount,
+        tabLikelyAlive, // true = most peers moving, frozen entries are per-ticker issues.
+                         // false = almost nothing moving, likely a tab-wide freeze, not per-coin.
+                         // null = no tickers at all this window (can't judge).
         lastWriteAt: latestWriteMs ? new Date(latestWriteMs).toISOString() : null,
         lastWriteAgeMinutes,
     };
@@ -3558,11 +3626,23 @@ function _getStreamAFrozenTickers(thresholdMin = 20) {
                 (tickerRows[t] = tickerRows[t] || []).push({ ts: scan.timestamp, close: d.close, netTrend: d.netTrend, momScore: d.momScore });
             }
         }
-        const frozen = new Map();
-        for (const [ticker, rowsAsc] of Object.entries(tickerRows)) {
-            const w = _walkFreeze(rowsAsc, ['close', 'netTrend', 'momScore']);
-            if (w && w.frozenMinutes >= thresholdMin) frozen.set(ticker, w.frozenMinutes);
+        const summary = _summarizeStream(tickerRows, ['close', 'netTrend', 'momScore'], thresholdMin, Date.now());
+
+        // 2026-09-16: if the tab itself looks dead (almost no ticker is showing
+        // real movement — see _summarizeStream's peer-corroboration comment),
+        // withhold ALL freeze-based pruning this cycle rather than mass-pruning
+        // every coin the scan happens to be tracking. A tab-wide freeze needs
+        // tab reactivation (already handled independently by the tab-activate
+        // coordinator), not individual coin removal — pruning here would just
+        // be punishing coins for a browser-side problem that has nothing to do
+        // with whether they're actually worth keeping.
+        if (summary.tabLikelyAlive === false) {
+            console.warn(`[FreezeDetection] Stream A tab looks widely stuck (only ${summary.movingTickerCount}/${summary.totalTickers} tickers moving) — withholding Frozen pruning this cycle, this needs tab reactivation, not per-coin removal.`);
+            return new Map();
         }
+
+        const frozen = new Map();
+        for (const f of summary.frozenTickers) frozen.set(f.ticker, f.frozenMinutes);
         return frozen;
     } catch (e) {
         console.error('[FreezeDetection] Failed to compute Stream A frozen tickers:', e.message);
