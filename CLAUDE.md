@@ -309,17 +309,117 @@ GET/POST /api/ghosts/watchdog-settings
 All editable from the Ghost Coin widget's settings panel (⚙), auto-save on blur —
 no script or backend redeploy needed to change an ID or threshold.
 
-### Verifying real data flow (not just timestamps) — methodology
+### Genuine Data-Health Verification Architecture (2026-09-16)
 
-A stream can look "healthy" by `lastWriteAgeMinutes` alone while actually punching
-frozen values with fresh timestamps (the original bug class this whole session
-started from). The real check: walk back through a ticker's recent rows and find
-how far back the tracked fields have been byte-identical — a fresh timestamp with
-an unchanged value for many consecutive rows means the tab is stuck, not healthy.
-Confirmed via this method on 2026-09-11 that the vast majority of A/B/D data is
-genuinely changing cycle-to-cycle (not just tab-switch cosmetics) — one real
-exception found: `1000PEPEUSDT.P` on Stream A stuck at `close: 0` for ~1h, a
-Pine Script data-quality issue on that specific symbol, not a systemic freeze.
+> Read this before touching `_walkFreeze`, `_summarizeStream`,
+> `_getStreamAFrozenTickers`, `_getStreamDataHealthy`, the "Frozen" ghost-prune
+> branch, the Momentum Watcher's `showsMomentumNow` check, or
+> `_getWatchlistSyncFallbackSignal`'s dispatch precedence. These all share one
+> underlying design, built out over one session from a single starting
+> question — this section is the canonical writeup; several of the functions
+> below carry shorter dated comments that assume this context.
+
+#### The core problem: raw scanner columns can't be trusted for automated decisions
+
+Every ticker row Stream A sends carries columns like `close`, `netTrend`,
+`momScore`, `volSpike`, `breakout`, and `freeze` — all raw Pine Script
+indicator values read straight off the TradingView screener DOM. The user
+kept several of these (`freeze`, `breakout`, `close`) for their **own
+price-action reference** on the screener, not as vetted, backend-verified
+signals. Two things make trusting them blindly for automated decisions
+(pruning a coin, confirming momentum, prioritizing tab reactivation) unsafe:
+
+1. **The same per-ticker Pine Script parsing failures that corrupt one
+   column can corrupt any of them.** Confirmed live 2026-09-16: `ETHFIUSDT.P`,
+   `DOGEUSDT.P`, `1000PEPEUSDT.P`, and `ENAUSDT.P` all had byte-identical
+   `close`/`netTrend`/`momScore` for 30–91 minutes despite fresh timestamps
+   every cycle, while `volSpike`/`breakout` kept changing on the exact same
+   rows — a genuine per-ticker indicator read failure, not a whole-tab freeze
+   (matches an earlier-documented precedent: `1000PEPEUSDT.P` stuck at
+   `close: 0` for ~1h on 2026-09-11). If the parser can corrupt `close`, it can
+   just as easily leave a stale `freeze=0` or `breakout=1` sitting on that same
+   broken row.
+2. **A single ticker's own price history is an ambiguous freeze signal on its
+   own.** A low-priced coin (e.g. `close` ≈ 0.00413) can round/truncate to the
+   same displayed value across ticks while the real underlying price is still
+   moving — comparing one ticker's numbers in isolation can't distinguish
+   "genuinely stuck" from "genuinely moving but low precision."
+
+#### The fix: independently verify price movement, corroborated across peers
+
+**Building block 1 — `_walkFreeze(rowsAsc, fields)`** (shared, ~line 3530):
+given one ticker's rows ordered oldest→newest, walks backward from the most
+recent row and finds how far back ALL of `fields` have stayed byte-identical.
+Returns `frozenMinutes`. This is the one, single implementation of "has this
+actually changed" — every consumer below calls into it, directly or via
+`_summarizeStream`, rather than re-implementing the comparison.
+
+**Building block 2 — `_summarizeStream(tickerRowsMap, fields, thresholdMin, nowMs)`**
+(shared, ~line 3541): runs `_walkFreeze` across every ticker in a stream's
+recent window and produces the peer-corroboration signal —
+
+- `movingTickerCount` / `totalTickers` — how many tickers are genuinely
+  changing right now, out of how many are tracked.
+- `tabLikelyAlive` — `true` when ≥30% of tracked tickers are moving. This is
+  the disambiguator: if most peers ARE moving, a specific frozen ticker is an
+  isolated per-ticker data problem. If almost NOTHING is moving, that's
+  evidence the whole tab is stuck (backgrounded/crashed) — a different,
+  more severe class of problem that needs tab reactivation, not per-coin
+  action. Additive-only field — the existing `status` contract
+  (`healthy`\|`stalled`\|`frozen`) is untouched so nothing that switches on it
+  (e.g. `DataFeedHealthWidget`'s `STATUS_META` map) breaks.
+
+Powers `/api/system/feed-health` for all of A/B/D (Stream C isn't part of the
+tab-activation system and isn't scored this way).
+
+**Building block 3 — `_getStreamAFrozenTickers(thresholdMin)`** (~line 3627):
+Stream-A-scoped wrapper around `_summarizeStream`, computed **once per
+`generateScannerFeedback()` invocation** (not once per ticker — would
+otherwise be an N+1 query pattern, see PERFORMANCE.md rule #4), returning a
+`Map<ticker, frozenMinutes>` for O(1) lookups in the per-coin loop. If
+`tabLikelyAlive` comes back `false` for Stream A, this returns an **empty
+Map** — i.e. withholds ALL freeze-based pruning that cycle. Mass-pruning
+every tracked coin because the tab itself died would be exactly backwards;
+the fix needed there is tab reactivation (already handled independently by
+the coordinator below), not removing coins for a browser-side problem that
+has nothing to do with whether they're worth keeping.
+
+**Building block 4 — `_getStreamDataHealthy(stream)`** (~line 1249): reads
+`tabLikelyAlive` for a given stream out of `_feedHealthCache` — the same
+cache `/api/system/feed-health` and the 15-minute feed-health alerting job
+both populate. Runs on every Stream A/B/D ingest (a hot path across 3
+endpoints), so it **only ever reads the cache, never triggers its own
+`_computeFeedHealth()`** — cold/too-old cache (>20min, deliberately NOT the
+dashboard endpoint's 30s TTL, since the only thing reliably refreshing this
+in the background is the 15-min job) reads as "unknown," falling back to pure
+write-age rather than forcing an expensive recompute on the ingest path.
+
+#### The four consumers this feeds
+
+| Consumer | Before | After (2026-09-16) |
+|---|---|---|
+| Ghost-prune "Frozen" reason (`generateScannerFeedback()`, ~line 1801) | Trusted the raw `d.freeze === 1` column directly | Reads `_getStreamAFrozenTickers()`'s Map; reason text now includes the real minute count |
+| Momentum Watcher's `showsMomentumNow` (~line 1756) | `d.score > 30 \|\| d.breakout === 1` alone | Same, but ANDed with "ticker is not in the frozen set" — a stale `breakout=1` on a provably frozen row can no longer force a false momentum-proven verdict |
+| Tab-activate coordinator priority (`_getStreamAgeMin`, ~line 1257) | Raw last-write timestamp age only — a tab firing its scan timer on schedule while reading a stuck DOM would never look stale | Inflates effective age to `9999` when `_getStreamDataHealthy()` reads `false` — a "looks fresh, actually frozen" tab now gets prioritized for reactivation, not ignored |
+| Watchlist sync fallback dispatch precedence (`_getWatchlistSyncFallbackSignal`, ~line 1388) | Computed fully independently of tab-activation — could fire in the SAME response as `activate_tab_workflow_id` (both land in `/api/market-context`'s response object), risking two Automa workflows dispatched back-to-back in one tick | Defers (`return null`, without touching its own cooldown) whenever `_getPendingActivation()` shows a tab-activation handshake in flight — explicit low priority relative to live-data reactivation, verified to actually close the same-response race since `generateScannerFeedback()`'s synchronous DB write completes before this check runs |
+
+Other `d.breakout` references in the codebase (scenario-generation, dashboard
+badges — not lifecycle decisions) were deliberately left reading the raw
+column — lower stakes if occasionally wrong, out of scope for this pass.
+
+#### Why this matters together, not just individually
+
+Before this work, a specific bad scenario was possible end-to-end: a tab
+freezes but keeps firing its scan cycle → `d.freeze`/`d.breakout` on the
+frozen rows silently go stale in whatever state they last held → ghost-prune
+either force-removes coins that don't deserve it (auto mode) or Momentum
+Watcher wrongly verifies "proven momentum" on a coin that hasn't moved →
+meanwhile the tab-activate coordinator, looking only at write-recency, never
+even considers that tab stale enough to need reactivation, because it's
+still writing *something* on schedule. Every one of those four steps is now
+independently guarded by the same underlying genuine-movement check, so a
+tab-wide freeze gets *worse* at triggering wrong lifecycle decisions and
+*better* at triggering the one action that actually fixes it (reactivation).
 
 ---
 
