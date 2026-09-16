@@ -30,7 +30,7 @@ Editing `scripts/coin_scanner.js`, `scripts/technical_watchlist_coin_scanner.js`
 
 | File | Browser script name | Current version |
 |---|---|---|
-| `scripts/symbol_market_scanner.js` | Ultra Scalper - Connected Core (Master) — Stream A | **v16.7** (pending Tampermonkey paste — repo file updated, not yet confirmed live in browser) |
+| `scripts/symbol_market_scanner.js` | Ultra Scalper - Connected Core (Master) — Stream A | **v16.8** (pending Tampermonkey paste — repo file updated, not yet confirmed live in browser via `script_version_reports`) |
 | `scripts/coin_scanner.js` | Institutional Conviction Engine - Bidirectional — Stream B | **v20.31** |
 | `scripts/technical_watchlist_coin_scanner.js` | Stream D Technical Watchlist Scanner | **v1.6** |
 | `scripts/indicators/tamper_streamA.txt` | Stream A macro scanner reference | — |
@@ -63,6 +63,20 @@ response (same pattern as `activate_tab_workflow_id`), and the script (v16.7+)
 dispatches that live value, falling back to the hardcoded default only until the
 first successful response of a fresh page load. **Requires the Tampermonkey paste
 — not live until the user confirms it.**
+
+**2026-09-16 follow-up — setup-check timing was too aggressive for a real reload.**
+User feedback after pasting v16.7: `STREAM_A_SETUP_INITIAL_SETTLE_MS` was still 45s,
+too tight for a heavier Pine screener to finish populating real columns after a
+fresh page load — risked judging (and dispatching Automa against) a page that was
+still genuinely loading, not actually broken. v16.8 bumps it to 90s, replaces the
+flat 5min retry cooldown with a progressive backoff (`STREAM_A_SETUP_COOLDOWN_STEPS_MS`
+— 5min, 7min, 10min), and widens the monitor's own poll interval 15s → 20s (cosmetic;
+that interval only controls how often the cheap DOM check re-reads, never dispatch
+rate). Also caught and fixed in the same pass: the `@version` UserScript tag was
+bumped to 16.7 but the separate runtime `SCRIPT_VERSION` constant — the one actually
+sent to the backend with every payload and tracked in `script_version_reports` — was
+still `'16.6'`, so even a correctly-pasted v16.7 would have under-reported its own
+version. Both now stay in sync at 16.8.
 
 | Workflow ID | Purpose | Wired how |
 |---|---|---|

@@ -1,8 +1,19 @@
 // ==UserScript==
 // @name         Ultra Scalper v16.0 - Connected Core (Master)
 // @namespace    http://tampermonkey.net/
-// @version      16.7
-// @description  v16.7: streamAInitialSetupWorkflowId (Ghost Coin widget settings panel) was
+// @version      16.8
+// @description  v16.8: user feedback (2026-09-16) — the setup-check's timing was too aggressive
+//               for a real page reload. Bumped STREAM_A_SETUP_INITIAL_SETTLE_MS 45s -> 90s (a
+//               heavier Pine screener genuinely needs more than 45s to finish populating real
+//               columns after a fresh load, same DOM-timing evidence that already justified the
+//               3min->5min cooldown bump in v16.6 — the settle window just never got the same
+//               treatment). Replaced the flat 5min retry cooldown with a progressive backoff
+//               (5min, 7min, 10min via STREAM_A_SETUP_COOLDOWN_STEPS_MS) so a screener still
+//               broken on a later retry gets more breathing room instead of another dispatch
+//               stacked close behind the last one. Widened the monitor's own poll interval
+//               15s -> 20s (cosmetic — this only controls how often the cheap DOM check
+//               re-reads, not dispatch rate, which was already gated by the settle window and
+//               cooldown). v16.7: streamAInitialSetupWorkflowId (Ghost Coin widget settings panel) was
 //               settable via the watchdog-settings API but had nowhere to go — the script
 //               only ever dispatched its own hardcoded CONFIG.STREAM_A_SETUP_AUTOMA_WORKFLOW_ID,
 //               so editing the field in the UI silently did nothing (confirmed: DB value read
@@ -97,8 +108,28 @@
         // error) — the table can take a while to actually populate after the
         // pills render, so a tighter cooldown risked misjudging "still
         // loading" as "still broken" and burning retries too fast.
+        //
+        // 2026-09-16: this is now the BASE cooldown for a progressive backoff
+        // (see STREAM_A_SETUP_COOLDOWN_STEPS_MS below) rather than one flat
+        // value for every retry — same reasoning taken further: a screener
+        // that's still broken on retry 2 or 3 is less likely to resolve on
+        // its own in the next few minutes than a freshly-reloaded one was, so
+        // spacing dispatches out further on later retries avoids stacking
+        // redundant Automa actions on top of one that may still be in flight.
         STREAM_A_SETUP_COOLDOWN_MS: 5 * 60 * 1000,
-        STREAM_A_SETUP_INITIAL_SETTLE_MS: 45000,
+        // Per-retry cooldown before the next dispatch: 5min, 7min, 10min.
+        // Indexed by current retry count (0-based) — falls back to the last
+        // entry (or the flat STREAM_A_SETUP_COOLDOWN_MS) if retries somehow
+        // exceed the list length.
+        STREAM_A_SETUP_COOLDOWN_STEPS_MS: [5 * 60 * 1000, 7 * 60 * 1000, 10 * 60 * 1000],
+        // 2026-09-16: bumped 45s -> 90s. User feedback + the same DOM
+        // evidence behind the cooldown bump above: 45s wasn't reliably
+        // enough time for TradingView's Pine screener to finish populating
+        // real columns after a full page reload (heavier Pine scripts can
+        // take noticeably longer), so the very first judgment after a reload
+        // risked firing an unnecessary Automa "fix" dispatch against a page
+        // that was still genuinely loading, not actually broken.
+        STREAM_A_SETUP_INITIAL_SETTLE_MS: 90000,
         STREAM_A_FILTER_MIN_PILLS: 4,    // pills container must have MORE than this many direct children
         STREAM_A_MIN_TABLE_COLUMNS: 5,   // thead th[data-field] count must be MORE than this
         STREAM_A_MIN_TABLE_ROWS: 2,      // tbody tr[data-rowkey] count must be AT LEAST this many
@@ -124,7 +155,7 @@
     // us if the browser is actually running what we think it's running,
     // instead of relying on "I pasted it" going unconfirmed. Bump this any
     // time @version above changes.
-    const SCRIPT_VERSION = '16.6';
+    const SCRIPT_VERSION = '16.8';
 
     // ── Backgrounded-tab guard ───────────────────────────────────────────────
     // Same class of bug fixed in Stream B/D: Chrome throttles setInterval in
@@ -236,7 +267,12 @@
             return false;
         }
 
-        if (Date.now() - lastTriggerAt < CONFIG.STREAM_A_SETUP_COOLDOWN_MS) {
+        // Progressive backoff: cooldown grows with each successive retry
+        // (5min, 7min, 10min) instead of a flat 5min for every attempt —
+        // gives a still-broken screener more breathing room on later
+        // retries rather than stacking Automa dispatches close together.
+        const cooldownMs = CONFIG.STREAM_A_SETUP_COOLDOWN_STEPS_MS[count] ?? CONFIG.STREAM_A_SETUP_COOLDOWN_MS;
+        if (Date.now() - lastTriggerAt < cooldownMs) {
             return false; // already triggered recently — give the workflow time to land
         }
 
@@ -2471,9 +2507,15 @@
     // so the Automa setup workflow gets a chance to fire and fix the page
     // even while everything else is stuck waiting.
     function startStreamASetupMonitor() {
+        // 2026-09-16: bumped 15s -> 20s. This interval only controls how
+        // often the (cheap, read-only) DOM check re-evaluates — it does NOT
+        // control dispatch rate, which is separately gated by the 90s
+        // initial settle window and the progressive cooldown between actual
+        // Automa dispatches (see checkStreamAFilterSetup()). Widened anyway
+        // for a bit more breathing room on lower-end machines/heavier pages.
         setInterval(() => {
             checkStreamAFilterSetup();
-        }, 15000);
+        }, 20000);
     }
 
     function startAutoScan() {
