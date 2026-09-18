@@ -286,6 +286,9 @@ app.post('/scan-report', (req, res) => {
             if (payload.results.length !== rawCount) {
                 console.log(`[Stream A] Deduped ${rawCount} → ${payload.results.length} unique .P coins`);
             }
+            if (payload.results.length === 0) {
+                _flagWatchlistZeroAlarm('A', timestamp);
+            }
         }
 
         // [INSTITUTIONAL GRADE]: Ingress Sanitization
@@ -452,6 +455,26 @@ db.prepare(`
         last_seen_at TEXT NOT NULL
     )
 `).run();
+
+// Automa Workflow Events — direct success/fail hooks wired into each workflow's
+// "Finish (success)"/"Finish (failed)" events (Automa-native, not per-block —
+// see CLAUDE.md's Automa Workflow ID Registry). This is a distinct, faster
+// signal from the existing data-arrival inference: a workflow can report FAIL
+// the moment Automa itself errors, well before the 8min tab-activate handshake
+// window would even notice something's wrong. 2026-09-16, not yet wired into
+// any consuming logic (coordinator/feed-health) — logging + a read endpoint
+// only, pending live validation that events actually arrive as expected.
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS automa_workflow_events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        workflow_id TEXT NOT NULL,
+        event       TEXT NOT NULL,   -- 'success' | 'fail'
+        received_at TEXT NOT NULL,
+        stream      TEXT,
+        purpose     TEXT
+    )
+`).run();
+db.prepare(`CREATE INDEX IF NOT EXISTS idx_automa_events_workflow ON automa_workflow_events(workflow_id, id DESC)`).run();
 
 // Initialize Area 1 Scout Logs
 // Stores momentum coins vetted by Stream B independently from Stream A logs
@@ -981,12 +1004,14 @@ function analyzeProactiveStrategies(payload) {
         });
     }
 
-    // [AUDIT FIX]: Telegram showing -92% (Legacy) vs Frontend +37% (Genie).
-    // The payload.market_sentiment comes from the client scanner's legacy logic.
-    // We must RE-CALCULATE the "Genie Score" here to ensure Telegram matches the Dashboard.
-
-    // [GENIE SYNC]: Payload is already Sanitized at Ingress (app.post)
-    // We can trust payload.market_sentiment now.
+    // [GENIE SYNC]: Historical note — Telegram used to show -92% (raw browser
+    // sentiment) while the Dashboard showed +37% (recalculated Genie Score),
+    // because this function read payload.market_sentiment before the ingress
+    // sanitization pass existed. Fixed by moving score/sentiment recalculation
+    // to the /scan-report ingress itself (see calculateGenieScore() call site
+    // near the top of that handler) — by the time this function runs,
+    // payload.market_sentiment is already the sanitized Genie value, so it's
+    // safe to trust directly here without recalculating anything.
     const geniemood = payload.market_sentiment || { mood: 'NEUTRAL', moodScore: 0 };
 
     // Sync to Telegram Service
@@ -998,7 +1023,10 @@ function analyzeProactiveStrategies(payload) {
 }
 
 /**
- * 🦅 Phase 39: Intelligent Watchlist & Prune Engine (The "5+2" Rule)
+ * 🦅 Intelligent Watchlist & Prune Engine
+ * ("The 5+2 Rule" was this engine's pre-2026-08-18 name — fully replaced by
+ * the Watchdog Confidence Clock below; see CLAUDE.md's "Watchdog Confidence
+ * Clock" section for the current design.)
  */
 /* ─────────────────────────────────────────────────────────────────────────────
  * WATCHDOG CONFIDENCE CLOCK (2026-08-18)
@@ -1016,15 +1044,16 @@ function analyzeProactiveStrategies(payload) {
  *   settle_hours (default 12) — a coin younger than this is NEVER evaluated
  *     for pruning at all (frozen/score/volume checks are skipped entirely,
  *     same as a protected coin). At the settle mark, first-ever judgment runs.
- *   ghost_hours  (default 36) — MANUAL-MODE ONLY (auto-approve OFF). While a
- *     flagged coin sits in the queue, it's re-checked every cycle; the moment
- *     it stops matching the prune condition it's revived (existing "Momentum
- *     Rescue" behaviour, now additionally resetting the clock). If NO
- *     momentum ever returns by ghost_hours, it's force-reset anyway — not
- *     held forever, just recycled to a clean slate.
- *   With auto-approve ON, ghost_hours is irrelevant: a bad coin is pruned the
- *     instant it clears settle_hours, exactly like today, and carries no
- *     memory forward if it reappears later.
+ *   ghost_hours  (default 36) — 2026-09-16 redesign: applies in BOTH modes.
+ *     Once a coin fails its settle-mark judgment it's queued either way, and
+ *     re-checked every cycle — the moment it stops matching the prune
+ *     condition it's revived ("Momentum Rescue", clock reset). If NO momentum
+ *     returns by ghost_hours, the OUTCOME still depends on auto-approve:
+ *     ON auto-clears it (actually removed); OFF force-resets it to a fresh
+ *     clock instead (recycled, never auto-removed). Total time from a coin's
+ *     own clock start to a possible removal, at defaults: 12h + 36h = 48h.
+ *     See CLAUDE.md "Watchdog Confidence Clock" → "2026-09-16 redesign" for
+ *     the full before/after writeup and why the two modes used to diverge.
  * ────────────────────────────────────────────────────────────────────────── */
 
 function _getWatchdogSettings() {
@@ -1374,6 +1403,39 @@ function _getCoordinatedActivationTarget(askingStream) {
     }
 }
 
+// 2026-09-18: top-priority zero-count alarm. A/B/D all ultimately scan
+// against the same underlying TradingView watchlist selection — if that
+// watchlist itself is empty or corrupted (Automa clear/paste failure), EVERY
+// stream sees 0 records on its next scan regardless of which one happens to
+// report it first. Per explicit direction: this is the single highest-weight
+// signal in the whole pipe — worse than a slow/stuck ticker, worse than a
+// pending tab-activation handshake — because left unaddressed it means ALL
+// THREE streams keep producing zero scan data, not just one being stale.
+// Only Stream B's script actually has a handler for
+// watchlist_sync_fallback_workflow_id (opens a fresh tab, redoes the
+// copy+paste) — A's and D's scripts don't dispatch it themselves, so a zero
+// seen on EITHER of them is recorded here and then surfaces in Stream B's
+// very next response instead, the same "whichever endpoint the browser
+// happens to call next" pattern already used elsewhere in this file. Still
+// rate-limited by the fallback's own cooldown (shares
+// watchlist_sync_fallback_last_dispatch_at) — "top priority" means it jumps
+// the queue ahead of other checks, not that it fires without limit.
+function _flagWatchlistZeroAlarm(stream, nowISO) {
+    _setWatchdogSetting('watchlist_zero_alarm_stream', stream);
+    _setWatchdogSetting('watchlist_zero_alarm_at', nowISO);
+    console.warn(`[WATCHLIST-ZERO-ALARM] 🚨 Stream ${stream} reported 0 records — flagging top-priority watchlist-sync-fallback.`);
+}
+function _getWatchlistZeroAlarm() {
+    const stream = db.prepare("SELECT value FROM system_settings WHERE key = 'watchlist_zero_alarm_stream'").get()?.value;
+    const at = db.prepare("SELECT value FROM system_settings WHERE key = 'watchlist_zero_alarm_at'").get()?.value;
+    if (!stream || !at) return null;
+    return { stream, at };
+}
+function _clearWatchlistZeroAlarm() {
+    _setWatchdogSetting('watchlist_zero_alarm_stream', '');
+    _setWatchdogSetting('watchlist_zero_alarm_at', '');
+}
+
 // 2026-09-11: watchlist sync fallback. Confirmed live: watchlist_sync_audit
 // can show a ticker with 297 consecutive misses and 75 escalations (BCH/ETHFI,
 // stuck 15h+) where the normal in-place retry (reconcileWatchlistSync()'s
@@ -1402,17 +1464,46 @@ function _getWatchlistSyncFallbackSignal() {
         // this wasn't a real dispatch, so it shouldn't burn any of the
         // fallback's own cooldown; it just tries again on the very next
         // eligible call once the pending activation clears.
-        if (_getPendingActivation()) return null;
-
+        //
+        // 2026-09-18 refinement — user direction: when Stream B itself is
+        // CONFIRMED genuinely alive (tabLikelyAlive === true, not just
+        // "asking"), fire the watchlist-sync-fallback workflow with priority
+        // instead of deferring. The collision this defer exists to avoid is
+        // Automa switching tabs mid-copy-paste — but if B's own tab is
+        // independently confirmed live and stable right now, that risk is
+        // no longer the ambiguous case the original defer was written for.
+        // Ambiguous cases (health unknown/null, or B not confirmed alive)
+        // still defer exactly as before — this only removes the defer when
+        // we have positive proof B is fine.
         const settings = _getWatchdogSettings();
+
+        // 2026-09-18: top-priority path — a zero-count alarm from ANY of
+        // A/B/D outranks everything else here, including the defer-to-
+        // pending-activation check above and the normal stuck-ticker
+        // escalation gate below. Still shares the same cooldown floor so
+        // it can't fire more often than the fallback's own rate limit
+        // ("important, not aggressive" — explicit user direction).
+        const lastRow = db.prepare("SELECT value FROM system_settings WHERE key = 'watchlist_sync_fallback_last_dispatch_at'").get();
+        const lastDispatchAt = lastRow ? new Date(lastRow.value).getTime() : 0;
+        const cooldownElapsed = Date.now() - lastDispatchAt >= settings.watchlistSyncFallbackCooldownMin * 60000;
+
+        const zeroAlarm = _getWatchlistZeroAlarm();
+        if (zeroAlarm && cooldownElapsed) {
+            _setWatchdogSetting('watchlist_sync_fallback_last_dispatch_at', new Date().toISOString());
+            _clearWatchlistZeroAlarm();
+            console.warn(`[WATCHLIST-SYNC-FALLBACK] 🚨 TOP PRIORITY — Stream ${zeroAlarm.stream} reported 0 records at ${zeroAlarm.at}. Dispatching fallback workflow ${settings.watchlistSyncFallbackWorkflowId} immediately.`);
+            return settings.watchlistSyncFallbackWorkflowId;
+        }
+
+        const bConfirmedAlive = _getStreamDataHealthy('B') === true;
+        if (!bConfirmedAlive && _getPendingActivation()) return null;
+
         const stuck = db.prepare(
             'SELECT ticker, escalations FROM watchlist_sync_audit WHERE consecutive_misses > 0 AND escalations >= ? ORDER BY escalations DESC LIMIT 1'
         ).get(settings.watchlistSyncFallbackEscalationThreshold);
         if (!stuck) return null;
 
-        const lastRow = db.prepare("SELECT value FROM system_settings WHERE key = 'watchlist_sync_fallback_last_dispatch_at'").get();
-        const lastDispatchAt = lastRow ? new Date(lastRow.value).getTime() : 0;
-        if (Date.now() - lastDispatchAt < settings.watchlistSyncFallbackCooldownMin * 60000) {
+        if (!cooldownElapsed) {
             return null; // fired recently — give it time to land before trying again
         }
 
@@ -2421,6 +2512,10 @@ app.post('/api/market-context', (req, res) => {
             // historical zero-runs began from a populated watchlist). Recovery
             // ladder: safe re-read first, then rebuild. Internally rate-limited.
             _actionRequired = handleWatchlistWipe(now);
+            // Also feeds the top-priority zero-count alarm (2026-09-18) so the
+            // heavier open-tab fallback workflow gets a shot too, not just the
+            // in-place REFRESH/UPDATE_WATCHLIST ladder above.
+            _flagWatchlistZeroAlarm('B', now);
         }
 
         // UPDATE_WATCHLIST outranks REFRESH — it carries an actual list to apply.
@@ -2483,6 +2578,9 @@ app.post('/api/stream-d/technicals', (req, res) => {
 
         // Apply deduplication to Stream D to prevent duplicates (preferring .P pairs)
         payload.results = _deduplicateStreamA(payload.results);
+        if (payload.results.length === 0) {
+            _flagWatchlistZeroAlarm('D', timestamp);
+        }
 
         // Non-blocking: process after response is sent
         setImmediate(() => {
@@ -4215,6 +4313,105 @@ app.post('/api/ghosts/toggle-auto', (req, res) => {
 
         io.emit('ghost-update', { action: 'toggle-auto', enabled, cleared });
         res.json({ success: true, auto_approve: enabled, cleared });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Automa Workflow Registry — matches CLAUDE.md's "Automa Workflow ID Registry"
+// table exactly. Used only to label incoming events for readability; an
+// unregistered workflow_id still gets logged, just with stream/purpose = null.
+const AUTOMA_WORKFLOW_REGISTRY = {
+    'GNRPpM5H6q7VmXjxjlOQC': { stream: 'B', purpose: 'Re-select screened-coin filter' },
+    '3lcKzNfE_GyXzpUMKxwVi': { stream: 'A', purpose: 'Initial/filter setup' },
+    '3lt4ZkHylt3L0uQlo05iH': { stream: 'B', purpose: 'Tab activate' },
+    '9NoMligzmg3VE9SJMC942': { stream: 'A', purpose: 'Tab activate' },
+    'h3ixjpLixrztE_ZzhLWtk': { stream: 'D', purpose: 'Tab activate' },
+    '4mxKJE8VxWpqztNVK5Wn_': { stream: 'B', purpose: 'Watchlist sync fallback' },
+};
+
+// Catches any request under /api/automa/* regardless of exact sub-path or
+// method — so a typo'd URL (e.g. hitting a path that doesn't exist) still
+// shows up here instead of vanishing as a plain 404 with no trace. Same
+// temporary-debugging rationale as the raw-hit log inside the route itself.
+app.use('/api/automa', (req, res, next) => {
+    console.log(`[AUTOMA-EVENT-RAW] ${req.method} ${req.originalUrl}`);
+    next();
+});
+
+// Automa Workflow Events — hit directly by each workflow's native
+// "Finish (success)"/"Finish (failed)" event, wired to an HTTP Request action
+// node in Automa's own canvas (no Tampermonkey involvement at all). Pure
+// logging today; nothing downstream reads this table yet.
+app.post('/api/automa/workflow-event', (req, res) => {
+    // Logged unconditionally, before validation — otherwise a malformed call
+    // (typo'd param name, wrong path hit instead) is indistinguishable from
+    // Automa never sending anything at all. 2026-09-16: added specifically
+    // because a live wiring test produced total silence and there was no way
+    // to tell "never arrived" from "arrived malformed" — remove once the
+    // Automa side is confirmed reliably wired.
+    console.log(`[AUTOMA-EVENT-RAW] Incoming hit — query=${JSON.stringify(req.query)}`);
+    try {
+        const workflowId = String(req.query.workflow_id || '').trim();
+        const event = String(req.query.event || '').trim().toLowerCase();
+        if (!workflowId || !['success', 'fail'].includes(event)) {
+            return res.status(400).json({ error: "workflow_id and event=success|fail are required" });
+        }
+        const meta = AUTOMA_WORKFLOW_REGISTRY[workflowId] || { stream: null, purpose: null };
+        const receivedAt = new Date().toISOString();
+        db.prepare(`
+            INSERT INTO automa_workflow_events (workflow_id, event, received_at, stream, purpose)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(workflowId, event, receivedAt, meta.stream, meta.purpose);
+
+        const label = meta.purpose ? `Stream ${meta.stream} — ${meta.purpose}` : workflowId;
+        console.log(`[AUTOMA-EVENT] ${event === 'success' ? '✅' : '🔴'} ${event.toUpperCase()} — ${label} @ ${receivedAt}`);
+
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Read endpoint for validating the wiring — per-workflow last success/fail
+// timestamps + counts, plus the raw recent event tape.
+app.get('/api/automa/workflow-events', (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit, 10) || 200, 1000);
+        const summaryRows = db.prepare(`
+            SELECT
+                workflow_id,
+                MAX(CASE WHEN event = 'success' THEN received_at END) AS last_success_at,
+                MAX(CASE WHEN event = 'fail'    THEN received_at END) AS last_fail_at,
+                SUM(CASE WHEN event = 'success' THEN 1 ELSE 0 END)    AS success_count,
+                SUM(CASE WHEN event = 'fail'    THEN 1 ELSE 0 END)    AS fail_count,
+                MAX(received_at)                                      AS last_event_at
+            FROM automa_workflow_events
+            GROUP BY workflow_id
+            ORDER BY last_event_at DESC
+        `).all();
+
+        const summary = summaryRows.map(r => ({
+            ...r,
+            stream: AUTOMA_WORKFLOW_REGISTRY[r.workflow_id]?.stream || null,
+            purpose: AUTOMA_WORKFLOW_REGISTRY[r.workflow_id]?.purpose || 'Unregistered workflow',
+        }));
+
+        // Any registered workflow that hasn't reported at all yet — useful
+        // during initial wiring to see which ones still need hooking up.
+        const seenIds = new Set(summaryRows.map(r => r.workflow_id));
+        const neverReported = Object.entries(AUTOMA_WORKFLOW_REGISTRY)
+            .filter(([id]) => !seenIds.has(id))
+            .map(([id, meta]) => ({ workflow_id: id, ...meta }));
+
+        const recent = db.prepare(`
+            SELECT workflow_id, event, received_at, stream, purpose
+            FROM automa_workflow_events
+            ORDER BY id DESC
+            LIMIT ?
+        `).all(limit);
+
+        res.json({ success: true, summary, neverReported, recent });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
