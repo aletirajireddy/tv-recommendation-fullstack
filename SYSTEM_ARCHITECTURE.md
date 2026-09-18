@@ -20,15 +20,15 @@ The system is designed with a strict separation of concerns. It follows a "Pass-
     *   **Data Ingestion**: Receives HTTP POST payloads from local browser scripts and remote webhooks.
     *   **The "Genie Truth"**: It **does not** blindly trust browser math. At the `/scan-report` ingress, the server recalculates "Genie Scores" and Market Sentiment (Net Flow of Bulls vs Bears). This "Sanitized Truth" is stored directly as full JSON blobs in `scan_results`.
     *   **Socket Hub**: Emits real-time `scan-update` and `ledger-update` events to the React frontend.
-    *   **Watchlist 5+2 Engine**: Maintains the state of which coins are "Ghosting", "Graduates", or "Protected".
+    *   **Watchdog Confidence Clock Engine** *(renamed 2026-08-18 — "5+2 Engine" was the pre-redesign name, see CLAUDE.md "Watchdog Confidence Clock")*: Maintains the state of which coins are "Ghosting", "Graduates", or "Protected".
 
 ### Pillar 2: The Data Harvesters (`scripts/`)
 *   **Role**: The Eyes (Browser Automation & Webhooks).
 *   **Tech**: Tampermonkey/Greasemonkey scripts natively injected into TradingView.
 *   **Core Scripts**:
     *   `symbol_market_scanner.js` (Stream A): Scrapes the massive 40-coin overview table. Captures the 26-column technical schema (Support/Resistance levels, Momentum, Breakouts). Sends payloads directly to Backend Port `3000`.
-    *   `coin_scanner.js` (Stream B): Isolated scout that pings specific qualified individual coins. Sends heartbeats to `/api/stream/b-heartbeat`.
-    *   `technical_watchlist_coin_scanner.js` (Stream D): Technical screener — RSI, ATR, RelVol, EMA200 per timeframe. Sends to `/api/stream/d-technicals`.
+    *   `coin_scanner.js` (Stream B): Isolated scout that pings specific qualified individual coins. Sends to `/api/market-context` *(corrected — `/api/stream/b-heartbeat` never existed as a real route)*.
+    *   `technical_watchlist_coin_scanner.js` (Stream D): Technical screener — RSI, ATR, RelVol, EMA200 per timeframe. Sends to `/api/stream-d/technicals` *(corrected — was listed as `/api/stream/d-technicals`)*.
     *   `TradingView Webhooks` (Stream C): Remote alerts (Smart Levels, Institutional Volumes) sent from the TV Cloud directly to the public funnel URL. Highest-truth volume signal. Also `institutional_interest_events`.
     *   **Fallback Rehydrator** (`email_rehydrator/`): A standalone Node.js daemon using the Gmail API (OAuth 2.0). If webhooks fail, it reads raw TradingView alerts directly from the user's inbox, deduplicates them against the DB, and injects any missing data. It acts as an unbreakable historical safety net.
 

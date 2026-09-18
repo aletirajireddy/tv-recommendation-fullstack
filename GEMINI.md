@@ -169,11 +169,25 @@
     *   **Heartbeat Sync**: `coin_scanner.js` performs a "Sync Check" during every 5-minute telemetry heartbeat. This ensures that even if an Automa trigger was skipped or a tab crashed, the watchlist is **self-healing** and will align with the server's truth within minutes.
 
     ### Rule #15: The 4-Hour Sustained Ghost & 12-Hour Stale Flush
+    > **REMOVED 2026-08-18** — this entire mechanism (the 4h sustained-low-score
+    > requirement, the 240-scan lookback pardon, and its 12h stale-data cutoff)
+    > was replaced by the Watchdog Confidence Clock's single `settle_hours` gate
+    > (default 12h — a coin is never judged at all before this, so there's no
+    > need for a backward-looking pardon at judgment time). See CLAUDE.md's
+    > "Watchdog Confidence Clock" → "What this replaced" table. Kept below for
+    > historical record only — do not treat as current behavior.
+
     A coin cannot be marked as a "Ghost" unless it exhibits a sustained low score (<30) for 4 straight hours of active tracking. 
     *   **The Pardon**: The backend queries the last 240 active scans. If the coin had a score > 30 at any point, it is pardoned as a "temporary dip" and spared.
     *   **The Stale Flush**: To prevent massive offline gaps (e.g. PC sleeping for 3 days) from manipulating the prune engine, this pardon query is bound by a 12-hour age limit. If the system wakes up after a long nap, it rigidly ignores the stale pre-sleep data and aggressively flushes failing coins, reacting maturely to market volatility.
 
     ### Rule #16: The 8-Hour Graduate Grace Period
+    > **REMOVED 2026-08-18** — superseded by the Watchdog Confidence Clock's
+    > `settle_hours` gate. Graduation no longer grants a separate immunity
+    > window; a graduated coin is judged on the same clock as everything else.
+    > See CLAUDE.md's "Watchdog Confidence Clock" → "What this replaced" table.
+    > Kept below for historical record only — do not treat as current behavior.
+
     New Gate 20 graduates are forcefully granted an **8-Hour Immunity Window**. 
     *   The backend fetches all `STABLE` picks from the last 8 hours directly from the test logs (`area1_scout_logs`) and forces them into the `protectedAltcoins` array.
     *   By being in the protected shield, they are mathematically incapable of triggering the `shouldPrune` ghost evaluations, guaranteeing they survive their initial low-score gestation period.
@@ -184,6 +198,17 @@
     *   **Action**: The backend explicitly saves the payload as `ORPHANED_STABLE_RETRY`. These retries bypass the Pruning Engine and are forced back down into `master_targets` for another immediate attempt.
 
     ### Rule #18: The 2-Hour Injection Bridge
+    > **REPLACED 2026-08-19/20** — this blind, unverified 2h window (any
+    > graduate force-included in `master_targets` regardless of whether it was
+    > actually doing anything) was replaced by the **Momentum Watcher**: a real,
+    > resolvable per-coin trial gated by `watchdog_momentum_hours` (default 2h,
+    > same duration, but now genuinely verified — `momentum_proven`/
+    > `momentum_verified` flip the moment real momentum appears, and an unproven
+    > coin is pruned at the deadline instead of silently continuing to be
+    > injected). See CLAUDE.md's "Momentum Watcher, Fresh Session & Gated
+    > Addition" section. Kept below for historical record only — do not treat
+    > as current behavior.
+
     When a coin graduates in Stream B, it needs to be explicitly forced into `master_targets` so Automa can synchronize it.
     *   **The Bridge**: The backend actively maintains an injection window of **2 hours**. It revives any coin that graduated in the last 2 hours and forcefully injects it into `newGraduates`, rigidly bridging any offline sync gaps or 15-30 minute UI cooldowns smoothly.
 
