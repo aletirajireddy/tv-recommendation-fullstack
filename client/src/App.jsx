@@ -21,7 +21,8 @@ const ThemeBuilder           = lazy(() => import('./components/ThemeBuilder').th
 // Above-the-fold widgets get a smaller rootMargin; deeper sections get more aggressive
 // prefetch so the user never sees a skeleton during normal scroll.
 import { ValidatorTimelineWidget } from './components/AnalyticsWidgets/ValidatorTimelineWidget';
-import { LevelReactionWidget } from './components/AnalyticsWidgets/LevelReactionWidget';
+// 2026-09-19: temporarily disabled, see the commented-out <section id="section-levels"> below
+// import { LevelReactionWidget } from './components/AnalyticsWidgets/LevelReactionWidget';
 import { DistanceTracker } from './components/AnalyticsWidgets/DistanceTracker';
 import { BYCWidget } from './components/AnalyticsWidgets/BYCWidget';
 
@@ -134,12 +135,18 @@ function App() {
 
           {/* SECTION: LEVELS & CASCADE MONITOR (SPLIT ROW) */}
           <div className={styles.splitGrid}>
-            {/* LevelReactionWidget: gated — /api/level-reactions deferred until ready */}
-            <section id="section-levels" className={styles.widgetSection}>
+            {/* 2026-09-19: LevelReactionWidget temporarily disabled — diagnostic
+                pass to see whether it's a meaningful contributor to backend load
+                (unlike most widgets, it mounts eagerly via WidgetGate rather than
+                viewport-lazy LazyWidget, so it fetched /api/level-reactions on
+                every page load regardless of scroll position). Uncomment to
+                restore; the sidebar entry is disabled the same way in
+                Sidebar.jsx. Grid layout below still works with one column. */}
+            {/* <section id="section-levels" className={styles.widgetSection}>
               <WidgetGate minHeight={500}>
                 <LevelReactionWidget />
               </WidgetGate>
-            </section>
+            </section> */}
 
             {/* RIGHT COLUMN: CASCADE + SCOUT + GHOST
                 minHeights set to realistic rendered sizes so the IO doesn't see all

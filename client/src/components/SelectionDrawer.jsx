@@ -5,9 +5,13 @@ import styles from './SelectionDrawer.module.css';
 
 // Lazy: drawer only opens on user action — no need to ship these on first paint.
 // Keeping the same chunks the App.jsx LazyWidgets use means the second open is free.
-const LevelReactionWidget = lazy(() =>
-    import('./AnalyticsWidgets/LevelReactionWidget').then(m => ({ default: m.LevelReactionWidget }))
-);
+// 2026-09-19: LevelReactionWidget temporarily disabled here too (diagnostic —
+// this is the second of two places that render it, alongside the main
+// dashboard section in App.jsx; both must be off for a clean backend-load
+// test). Uncomment both this and the <LevelReactionWidget> usage below to restore.
+// const LevelReactionWidget = lazy(() =>
+//     import('./AnalyticsWidgets/LevelReactionWidget').then(m => ({ default: m.LevelReactionWidget }))
+// );
 const EMACascadeMonitor = lazy(() =>
     import('./AnalyticsWidgets/EMACascadeMonitor').then(m => ({ default: m.EMACascadeMonitor }))
 );
@@ -48,11 +52,12 @@ export const SelectionDrawer = () => {
                     {/* widgetBox no longer clips children — see CSS — so any chart that
                         renders taller than its initial estimate (Recharts ResponsiveContainer
                         on first paint) can grow without cropping. */}
-                    <div className={styles.widgetBox}>
+                    {/* 2026-09-19: LevelReactionWidget temporarily disabled, see note above */}
+                    {/* <div className={styles.widgetBox}>
                         <Suspense fallback={<DrawerFallback />}>
                             <LevelReactionWidget filterTicker={ticker} compact />
                         </Suspense>
-                    </div>
+                    </div> */}
                     <div className={styles.widgetBox}>
                         <Suspense fallback={<DrawerFallback />}>
                             <EMACascadeMonitor filterTicker={ticker} compact />

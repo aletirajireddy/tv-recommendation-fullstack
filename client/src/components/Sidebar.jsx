@@ -43,7 +43,13 @@ export const Sidebar = () => {
         { divider: true },
         { id: 'umpire',           label: '3rd Umpire',       icon: Target,     prefetch: () => import('./AnalyticsWidgets/ValidatorTimelineWidget') },
         { divider: true },
-        { id: 'levels',           label: 'Levels Monitor',   icon: Layers,     prefetch: () => import('./AnalyticsWidgets/LevelReactionWidget') },
+        // 2026-09-19: Levels Monitor temporarily disabled (diagnostic — checking
+        // whether it's a meaningful contributor to backend load, since unlike
+        // most widgets it uses an eager WidgetGate rather than viewport-lazy
+        // LazyWidget, so it fetches /api/level-reactions on load regardless of
+        // scroll position). Re-add this line to restore the sidebar entry —
+        // the section is still in App.jsx, just commented out alongside it.
+        // { id: 'levels',        label: 'Levels Monitor',   icon: Layers,     prefetch: () => import('./AnalyticsWidgets/LevelReactionWidget') },
         { id: 'cascade',          label: 'EMA Cascade',      icon: Activity,   prefetch: () => import('./AnalyticsWidgets/EMACascadeMonitor') },
         { id: 'cascade-trend',    label: 'Cascade Trend',    icon: Flame,      prefetch: () => import('./AnalyticsWidgets/CascadeTrendWidget').then(m => ({ default: m.CascadeTrendWidget })) },
         { id: 'scout',            label: 'Participation',    icon: Users,      prefetch: () => import('./AnalyticsWidgets/ParticipationPulseWidget') },
