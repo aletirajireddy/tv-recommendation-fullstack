@@ -4775,6 +4775,18 @@ app.get('/api/validator/trials', (req, res) => {
         const limit = parseInt(req.query.limit) || 30;
 
         // Active trials (not resolved): filter by detected_at <= refTime
+        //
+        // 2026-09-19 fix: was `t.state != 'RESOLVED'`, an inequality that can't
+        // use idx_trials_state's equality lookup — combined with the
+        // `detected_at <= refTime` range (which matches virtually every trial
+        // ever created, since refTime is normally "now"), this forced a scan
+        // across the ENTIRE validation_trials history on every call. Measured
+        // live: 141ms to match zero rows, against a 15k+ row table with no
+        // pruning (see below). Only 3 states exist in the state machine
+        // (COOLDOWN, WATCHING, RESOLVED — see UmpireEngine.js's own
+        // `state IN ('COOLDOWN', 'WATCHING')` query at line ~129), so this is
+        // an equality-friendly IN clause that can use idx_trials_state
+        // directly, with no dependency on how large the historical table gets.
         const active = db.prepare(`
             SELECT t.*,
                    (SELECT rule_snapshot FROM validation_state_log
@@ -4784,7 +4796,7 @@ app.get('/api/validator/trials', (req, res) => {
                     WHERE trial_id = t.trial_id AND unrealized_move_pct IS NOT NULL AND changed_at <= ?
                     ORDER BY changed_at DESC LIMIT 1) as latest_move
             FROM validation_trials t
-            WHERE t.detected_at <= ? AND t.state != 'RESOLVED'
+            WHERE t.state IN ('COOLDOWN', 'WATCHING') AND t.detected_at <= ?
             ORDER BY t.detected_at DESC
         `).all(refTime, refTime, refTime);
 
@@ -7259,7 +7271,28 @@ server.listen(PORT, '0.0.0.0', () => {
                 const s = db.prepare('DELETE FROM scans WHERE timestamp < ?').run(thirtyDaysAgo);
                 const m = db.prepare('DELETE FROM master_coin_store WHERE timestamp < ?').run(thirtyDaysAgo);
                 const v = db.prepare('DELETE FROM volume_events WHERE ts < ?').run(thirtyDaysAgo);
-                console.log(`[Maintenance] ✅ Pruned: ${s.changes} scans, ${r.changes} scan_results, ${m.changes} snapshots, ${v.changes} volume events.`);
+                // 2026-09-19: validation_trials/validation_state_log were never
+                // pruned at all — found live at 15,417 rows spanning back to
+                // 2026-04-25, growing forever, directly responsible for a
+                // 141-270ms cost on EVERY /api/validator/trials call (polled
+                // every 10s by the widget). Only RESOLVED trials past the
+                // cutoff are touched — an active (COOLDOWN/WATCHING) trial is
+                // never old enough to hit a 30-day cutoff under normal
+                // operation, but the resolved_at IS NOT NULL guard makes that
+                // explicit rather than assumed. state_log rows are deleted
+                // first since nothing enforces the FK-like relationship.
+                const vsl = db.prepare(`
+                    DELETE FROM validation_state_log
+                    WHERE trial_id IN (
+                        SELECT trial_id FROM validation_trials
+                        WHERE state = 'RESOLVED' AND resolved_at IS NOT NULL AND resolved_at < ?
+                    )
+                `).run(thirtyDaysAgo);
+                const vt = db.prepare(`
+                    DELETE FROM validation_trials
+                    WHERE state = 'RESOLVED' AND resolved_at IS NOT NULL AND resolved_at < ?
+                `).run(thirtyDaysAgo);
+                console.log(`[Maintenance] ✅ Pruned: ${s.changes} scans, ${r.changes} scan_results, ${m.changes} snapshots, ${v.changes} volume events, ${vt.changes} trials, ${vsl.changes} trial state-log rows.`);
             })();
         } catch (e) { console.error('[Maintenance] Pruning error:', e.message); }
     }, 24 * 60 * 60 * 1000); // Once every 24 hours

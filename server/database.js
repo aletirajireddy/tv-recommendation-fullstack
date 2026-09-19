@@ -230,6 +230,14 @@ db.exec(`
 db.exec(`CREATE INDEX IF NOT EXISTS idx_trials_state ON validation_trials(state);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_trials_detected ON validation_trials(detected_at);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_trials_ticker_time ON validation_trials(ticker, detected_at);`);
+// 2026-09-19: /api/validator/trials' "resolved" query does
+// WHERE state = 'RESOLVED' ORDER BY resolved_at DESC LIMIT 12 — without this
+// composite, idx_trials_state alone gets SQLite to the matching rows but then
+// forces "USE TEMP B-TREE FOR ORDER BY" (confirmed via EXPLAIN QUERY PLAN),
+// sorting the ENTIRE resolved set (15k+ rows and growing, never pruned until
+// the fix below) just to hand back the newest 12. This composite lets the
+// index itself satisfy both the filter and the ordering directly.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_trials_state_resolved ON validation_trials(state, resolved_at DESC);`);
 
 // ============================================================================
 // 13. VALIDATION STATE LOG (Trial State Transition Tape)
