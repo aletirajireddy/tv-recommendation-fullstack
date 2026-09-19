@@ -7240,18 +7240,50 @@ server.listen(PORT, '0.0.0.0', () => {
 
     // --- DAILY PRUNING ENGINE (Institutional Stability) ---
     // Deletes history older than 30 days to keep the database lean and fast.
+    //
+    // 2026-09-19 fix: this deleted from `scans` (the lightweight index row)
+    // but never from `scan_results` — the actual heavy full-JSON-blob table
+    // per CLAUDE.md's own schema notes. `scan_id` has no FK constraint tying
+    // it to `scans`, so those blobs just accumulated forever regardless of
+    // the "30 days" intent. Found while investigating a 3.3GB db file with a
+    // stuck/frozen backend — scan_results itself only turned out to be ~30MB
+    // (not the dominant bloat source; that was years of un-VACUUMed free-page
+    // fragmentation, fixed with a one-off manual VACUUM: 3.3GB -> 759MB), but
+    // it's still a genuine, silent pruning gap worth closing on its own merits.
     setInterval(() => {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
         console.log(`[Maintenance] 🧹 Pruning records older than ${thirtyDaysAgo}...`);
         try {
             db.transaction(() => {
+                const r = db.prepare('DELETE FROM scan_results WHERE scan_id IN (SELECT id FROM scans WHERE timestamp < ?)').run(thirtyDaysAgo);
                 const s = db.prepare('DELETE FROM scans WHERE timestamp < ?').run(thirtyDaysAgo);
                 const m = db.prepare('DELETE FROM master_coin_store WHERE timestamp < ?').run(thirtyDaysAgo);
                 const v = db.prepare('DELETE FROM volume_events WHERE ts < ?').run(thirtyDaysAgo);
-                console.log(`[Maintenance] ✅ Pruned: ${s.changes} scans, ${m.changes} snapshots, ${v.changes} volume events.`);
+                console.log(`[Maintenance] ✅ Pruned: ${s.changes} scans, ${r.changes} scan_results, ${m.changes} snapshots, ${v.changes} volume events.`);
             })();
         } catch (e) { console.error('[Maintenance] Pruning error:', e.message); }
     }, 24 * 60 * 60 * 1000); // Once every 24 hours
+
+    // --- WAL CHECKPOINT SAFETY NET (2026-09-19) ---
+    // Found live: dashboard_v3.db had grown to 3.3GB with a 198MB uncheckpointed
+    // WAL file — SQLite's default auto-checkpoint (every ~1000 pages) should
+    // handle this on its own, but evidently wasn't keeping up under this app's
+    // write volume, and nothing here ever checkpointed proactively. A
+    // perpetually growing WAL makes every read progressively slower (has to
+    // scan more WAL frames to find the current version of a page), which is a
+    // plausible contributor to a backend that intermittently stopped
+    // responding to ANY request (confirmed live: TCP connects fine, zero bytes
+    // ever returned) despite normal CPU/memory. PASSIVE mode never blocks
+    // other connections — it just checkpoints whatever it safely can right now.
+    setInterval(() => {
+        try {
+            const result = db.pragma('wal_checkpoint(PASSIVE)');
+            const r = Array.isArray(result) ? result[0] : result;
+            if (r && r.checkpointed > 0) {
+                console.log(`[Maintenance] 💾 WAL checkpoint: ${r.checkpointed}/${r.log} pages (busy=${r.busy}).`);
+            }
+        } catch (e) { console.error('[Maintenance] WAL checkpoint error:', e.message); }
+    }, 10 * 60 * 1000); // Every 10 minutes
 });
 
 /**
