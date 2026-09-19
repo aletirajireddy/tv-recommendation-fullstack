@@ -69,18 +69,43 @@ export const Sidebar = () => {
     ];
 
     // Idempotent prefetch: webpack/vite cache the dynamic import promise,
-    // so calling repeatedly costs nothing after the first.
-    const prefetched = React.useRef(new Set());
+    // so calling repeatedly costs nothing after the first. Returns that promise
+    // (cached per item.id) so callers that need to know when the chunk is
+    // actually ready — not just requested — can await it.
+    // NOTE: a plain object, not `new Map()` — this file already imports `Map`
+    // as a lucide-react icon component (used for the Market Structure item),
+    // which shadows the global Map constructor and breaks `new Map()` in
+    // production (minifier renamed the collision to `Map$5`, so it silently
+    // resolved to the icon component instead of the built-in — confirmed live
+    // via an unminified debug build after this crashed the whole app).
+    const prefetchPromises = React.useRef({});
     const handlePrefetch = (item) => {
-        if (prefetched.current.has(item.id)) return;
-        prefetched.current.add(item.id);
-        try { item.prefetch?.(); } catch { /* ignore */ }
+        const cache = prefetchPromises.current;
+        if (item.id in cache) return cache[item.id];
+        const p = Promise.resolve(item.prefetch?.()).catch(() => {});
+        cache[item.id] = p;
+        return p;
     };
 
-    const scrollTo = (item) => {
-        // Ensure chunk is requested before scroll begins (avoids skeleton flash)
-        handlePrefetch(item);
-        const el = document.getElementById(`section-${item.id}`);
+    // 2026-09-18 fix — a real bug found via live browser testing: clicking a
+    // sidebar item for a widget that hasn't been hover-prefetched yet (first
+    // click after page load, keyboard/focus navigation, or fast clicking
+    // before the mouseenter prefetch had time to land) found no
+    // `section-{id}` element in the DOM yet — the widget's lazy chunk hadn't
+    // resolved and mounted — so `if (el)` silently no-opped. Nothing scrolled,
+    // no error, the sidebar item still visually highlighted as active. A
+    // second click on the same item worked, because by then the import had
+    // resolved. Fixed by awaiting the prefetch when the element isn't found
+    // yet, then giving React two animation frames to complete the render
+    // (import resolving and the component actually mounting are two separate
+    // ticks) before retrying the lookup once.
+    const scrollTo = async (item) => {
+        let el = document.getElementById(`section-${item.id}`);
+        if (!el) {
+            await handlePrefetch(item);
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+            el = document.getElementById(`section-${item.id}`);
+        }
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         if (mobileMenuOpen) setMobileMenuOpen(false); // auto close on mobile
     };
